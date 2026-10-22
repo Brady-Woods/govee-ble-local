@@ -11,15 +11,18 @@ model, from which the shipped readers are generated).
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the segment
-  split that promotes H61D2-H61D6 and the live piece count that promotes 14 h705a SKUs, below): 119 admitted by
-  default (`app_traced`) and 39 behind `allow_modelled` (`modelled`). The entries below admit 68 more by default
-  (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read
-  command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and
-  H6631 on the device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme;
-  H615A-E, whose pairing write is read as an exact-pact condition; and through the live piece count H1A45 and the
-  five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 / H61B9 / H61F2 / H61F5 / H61F6) and 17 more behind
-  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1, H6609 and H706A / H706B /
-  H706C / H806A / H806C), for 285 admitted by default and 57 behind `allow_modelled` in all. None is
+  split that promotes H61D2-H61D6, the live piece count that promotes 14 h705a SKUs and the status rows' IC
+  reads that promote H3401 and H3510 / H3511, below): 122 admitted by default (`app_traced`) and 36 behind
+  `allow_modelled` (`modelled`). The entries below admit 80 more by default (16 through the resolver changes;
+  H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate;
+  the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card;
+  H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose pairing write is
+  read as an exact-pact condition; through the live piece count H1A45 and the five h61d3 SKUs behind
+  `allow_modelled` since 1.5.0, H61B8 / H61B9 / H61F2 / H61F5 / H61F6; through the status rows' IC reads H702A
+  / H702B / H702C, H7026 / H8026, H7027 and H30D0 / H30D1; and through the 0xA3 colour unit H3010 / H3011 /
+  H3012 / H3013) and 17 more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1
+  / H80A1, H6609 and H706A / H706B / H706C / H806A / H806C), for 300 admitted by default and 54 behind
+  `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -53,7 +56,8 @@ model, from which the shipped readers are generated).
   - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
     pact test (`h7017 Model.t`);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H705D / H705E / H705F / H805A / H805B / H805C / H805D**
-    (240), **H7067 / H7068 / H7069** (250), by the live piece count (below).
+    (240), **H7067 / H7068 / H7069** (250), by the live piece count (below);
+  - h705a: **H3401** (394); h7057: **H3510**, **H3511**† (349), by the status rows' IC reads (below).
 
   Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
   every unit; each row's `doc` names the difference):
@@ -63,8 +67,7 @@ model, from which the shipped readers are generated).
     (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
-  - h705a: **H608A / H608B / H608C / H608D / H808A** (184), **H3401** (394);
-  - h7057: **H3510**, **H3511**† (349);
+  - h705a: **H608A / H608B / H608C / H608D / H808A** (184);
   - h604a: **H604B** (109), **H604D** (133), traced on Govee Home 7.5.12 only: 7.7.02 runs their screen from
     the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so the shipped path
     is unseen (the rows' `doc`; their doc-refs under `govee-apk-decompiled/sources/` are 7.5.12 paths).
@@ -509,6 +512,77 @@ model, from which the shipped readers are generated).
   too (straightfloorlamp 69, h6069 284 and rgbiclight 351 / 352, whose `J3` also re-reads on a change; h7086 293,
   h7020 296, h7076 313 and h3700 383, whose `J3` sets the switch alone), but they were admitted reading it on
   every poll, and changing that waits on a decision. Source-modelled: no H703A / H703B is on the bench.
+- **A status row's pieces from its own IC read.** The 0xAC status screens that size their pieces by the IC take
+  it from the status read's TLV 0x40 (H3401, H3510 / H3511, H7026 / H8026, H7027, H6671 / H6672: the screen's
+  lambda stores each TLV 0x40's count, `Info4BleIotDevice.G0`, and reads it back at each 0xA5 TLV) or from aa 40
+  reads around that read (H702A-C, H30D0, H3010-H3013: h7020 `afterConnectedSingleReadDeviceInfo4702ABC$1`
+  sends aa 40 ahead of the 0xAC read, a mandatory step of the same connect read, and again once it succeeds,
+  `NewDetailVM.s5`). On such a profile (`readback="status"` with `color_readback_live_ic`) the IC rule's pieces
+  become `Device.segment_count` (the writes, at most `build.piece_cap`) and size the status read's colour
+  groups (uncapped):
+  - `reassemble.parse_status` takes `pieces_for_ic` and reads a burst again with the count of a TLV 0x40 that
+    leads its 0xA5 TLVs; `StatusReply.ic_count` is the last TLV 0x40 count the walk reads, kept on a read that
+    fails after it, as the lambda had stored it;
+  - `DeviceProfile.ic_reads_around_status` (keyword-only, default `(False, False)`) makes the aa 40 reads; an
+    unanswered or unusable first one ends the poll's status read, as it fails the app's connect read
+    (`AbsComposeControllerWithOpResult.onOvertime`);
+  - `DeviceProfile.color_readback_ic_raw` (keyword-only, default False) places the colour groups over the IC
+    count itself where the colour page writes another rule's pieces (`Support.getColorPieceSize(gt, IC)` = IC):
+    H3510 writes `ColorPieceConfig.b`'s 8 pieces at IC 8, else 4, and H30D0 15 at IC 15, else 30;
+  - a colour write before the first count runs the status read (the TLV 0x40 rows) or the aa 40 read first,
+    and raises GoveeBleError, sending nothing, without a count; segments past a smaller read-back count leave
+    the state, as the screen's colour arrays take the new size (`SubMode4Color.j`);
+  - `_readback.ic_rule_pieces` applies a profile's one-count rule to a count;
+  - an IC count that gives no pieces (0, or below 0 on the signed readers) sizes nothing: the library keeps the
+    counts it has and places the burst's colour groups over them. The app differs there (each row's `doc`):
+    its strip takes the IC's 0 pieces (`SubMode4Color.j`), so a second TLV 0xA5 group, or below 0 the first,
+    fails its read, which then applies nothing; on H3510 / H3511 it places no group (each lies past the IC / 4
+    whole groups) and applies the rest.
+
+  Promoted to the default table (`app_traced`), the live count having been their one modelled fact: h705a
+  **H3401** (394: IC pieces, its whole-device RGB at IC 20 `33 05 15 01 ff 00 00 00 00 00 00 00 ff ff 0f`, where
+  it wrote 56 positions, `ff` x 7) and h7057 **H3510**, **H3511**† (349: 4 pieces, or 8 at IC 8, the 2-byte mask
+  as before; its read-back places only the groups whole within the IC count and drops later ones, failing
+  nothing). Admitted by default, whole-device control (power, brightness, RGB, colour temperature; segments left
+  out, as on H7025, the Part tab being account-sized): h7020 **H702A / H702B / H702C** (316), **H7026 / H8026**
+  (318), **H7027** (337) and **H30D0**, **H30D1**† (391). For integrators: H3401 and H3510 / H3511 size their
+  segments from `device.segment_count` after the first refresh, as the other IC-sized rows do. Source-traced,
+  not live-verified: none of these SKUs is on the bench. Like every status row, the new rows also get the
+  library's aa 06 / aa 07 device-info reads, which no firmware or bench evidence backs on them yet
+  (status-row-versions-from-tlv07).
+- **The `h3010` colour scheme: goodsType 411's colour write as one 0xA3 unit** (`ColorScheme` gains
+  `"h3010"`). Config.E[411] makes `LightColorCapabilityCenter.b2` true, so the colour page's single colour and
+  colour temperature go through `ColorModeControllerConfig.j`: one MultiController unit
+  (`MultiController.c(value, 0x6e, ControllerMode.e([0x15]))`), the 0xA3 packets of `Config.gu`'s value (Bytes.j
+  `[01] RGB [00 x5] <mask>` for an RGB pick, Bytes.t `[01] ff ff ff <K> <tint> <mask>` for a colour temperature
+  or a Kelvin-tint pick), its mask every piece's bit with no cap (`BleUtils.X`), then `33 05 15 00`.
+  - `build.color_rgb_frames` builds the unit (red at 15 pieces: `a3 00 01 02 6e 01 ff 00 00 00 00 00 00 00 ff
+    7f ..`, `a3 ff ..`, `33 05 15 00 ..`); `build.color_temp_frames` is the whole-device colour temperature as
+    the frames the app sends (`[color_temp(...)]` on every other scheme, byte for byte); `color_rgb`,
+    `color_temp` and the segment builders refuse `h3010` with GoveeBleNotSupported (whole device only: the
+    Part tab is account-sized, ColorModeH3010). The unit is the spec's `color_multi_value`, written at its own
+    `len_value` with its `len_cap` mask; with no count it spans 15 pieces, H3010's before its first IC read.
+    `build.color_mode_switch` is `33 05 15 00`; `build.piece_cap` is the most pieces a scheme's whole-device
+    write carries (on `h3010` all one 0xA3 upload's mask can span, 34584, as `BleUtils.X` has no cap; 112, as
+    before, elsewhere), which bounds a live `Device.segment_count` after the row's own IC rule (4095 on 411)
+    and `Device.set_segment_count`, so a count the device reported always passes back in.
+  - `GoveeConnection.send_many` takes a run of 0xA3 frames, from its START, directly before a write as one
+    unit (`AbsControllerNoEvent4Multi`): the run streamed paced (`UNACKED_SEND_GAP`) with no drain between,
+    then the write, and the unit done on its `a3 <comm>` ack: a whole 20-byte frame whose byte 3 is 0 accepts
+    it (`onResult` at `MultiController.b()` = 3), and anything else raises GoveeBleCommandRejected; the write's
+    own `33` ack is not the unit's. No ack: the whole unit goes once more on a fresh link, then
+    GoveeBleTimeout. Every other frame list sends as before (each write ack-verified), and any other non-write
+    frame is still refused. `wire.parse.multi_unit_comm` / `parse_multi_ack` read the START's comm byte and the
+    ack (`upload_ack.is_multi_ok`) through the spec.
+  - `Device.set_color_temp` and `turn_on(kelvin=)` take `color_temp_frames`: one frame still goes out with
+    `send`, the unit with `send_many`.
+
+  Admitted by default (`app_traced`): h7020 **H3010 / H3011 / H3012 / H3013** (411), whole-device control
+  (power, brightness, RGB, colour temperature), with the 4702ABC connect's aa 40 reads around the status read
+  (above) and `ColorPieceConfig.b`'s `max(15, IC)` pieces for the writes, the read-back over the IC itself.
+  Source-traced, not live-verified: no H301x is on the bench, and which ack its firmware sends to end the unit
+  is the app's (`a3 6e`, byte 3 = 0), not a capture's. Every SKU the table had before resolves to the same
+  profile, field by field, and sends the same frames (the golden-frame suites pass unchanged).
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -623,6 +697,24 @@ model, from which the shipped readers are generated).
   changes no other SKU's profile: each resolves to the same one, field by
   field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`. Not
   hardware-verified: none is on the bench.
+- **H6671 / H6672 (rgbiclight 332) size their pieces by the status read's TLV 0x40, as the app does**
+  (`ic_pieces {0, 14, 1}`, where the row fixed 14): `min(IC, 14)` (`ColorPieceConfig.b` case 332, reached
+  through `ColorPieceConfig.j` and `.c`), over the IC `VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.o`
+  stores from each TLV 0x40 (`getSignedShort`, `Info4BleIotDevice.G0`) and reads back at each TLV 0xA5. Frames
+  change only on a strip cut below 14 ICs: its whole-device mask carries its IC's bits, where it carried 14, a
+  segment index at or past its IC is refused, and its read-back places the colour groups over its
+  IC pieces. An uncut strip (44 / 56 ICs,
+  `AcCutCaliH667172.l2`) sends and reads the same bytes as before. `Device.segment_count` follows the device
+  from the first poll (14 before it), and a colour write before the first poll runs the status read first,
+  sending nothing without a TLV 0x40 count, as on H3401. The profile's `color_readback_live_ic`,
+  `color_writes_live_ic` and `color_readback_ic_range` (0, 14) change; nothing else does. Source-traced, not
+  live-verified: neither SKU is on the bench.
+- **H7025 / H8025 (h7020 296) and H7045 / H7046 (h7045 338) read a TLV 0x40 with the unsigned reader their
+  screens use** (`f_40: one_count_u16`, `SegmentSettingController.Companion.b`; their status decode said the
+  signed one). Neither sizes anything by it (296 doesn't request it), so no frame, read or decoded state
+  changes; only the profiles' `status_decode` does. Every other SKU the table had before the status rows' IC
+  reads resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at none, with
+  and without `allow_modelled`, but H3401 and H3510 / H3511 (Added) and H6671 / H6672 (above).
 - For integrators: on a `DeviceProfile.color_writes_live_ic` profile (H6641 and every other IC-sized row,
   Fixed below) `Device.segment_count` follows the device from the first poll on, where it was the profile's
   static count, and the library refuses a segment index at or past it. hass-govee-ble-local builds one segment
@@ -683,9 +775,9 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 208 with `support` (66), of them 171
-    `app_traced`, 33 `modelled` and the same 4 `hardware_verified`, and 97 without (118). 66 of the 208 had
-    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 55 take it through the library
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 213 with `support` (66), of them 178
+    `app_traced`, 31 `modelled` and the same 4 `hardware_verified`, and 92 without (118). 66 of the 213 had
+    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 60 take it through the library
     and spec changes under Added, Changed, Fixed and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269,
     bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows (h6092 334 / 333 /
     401, h7072 371 / 294, h70b6 341), the nine BK target rows, the five Glide panel rows (h6061 96 / 97 / 121 /
@@ -695,9 +787,11 @@ model, from which the shipped readers are generated).
     the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
     (h70b2 185, h6630 285 / 286), h6092 283 (H7070's exact-pact status read), h6071 57 / 67 (the
     `kelvin_v9` scheme), stringlightv2 40 / 108 (the exact-pact pairing write), h61d3 375 and h6609 173 (the IC
-    piece rules) and h705a 180 (the special-info read), all `app_traced` but h7072 294, h6119 44, the Glide
-    panels, h60ax 235, h61d3 239 / 246, h6609 173 and h705a 180 (`modelled`). The segment split promoted the
-    trace's h61d3 202, and the live piece count h705a 125 / 240 / 250 and h61d3 299 / 261, to `app_traced`.
+    piece rules), h705a 180 (the special-info read), h7020 316 / 318 / 337 / 391 (the status rows' IC reads)
+    and h7020 411 (the 0xA3 colour unit), all `app_traced` but h7072 294, h6119 44, the Glide panels, h60ax
+    235, h61d3 239 / 246, h6609 173 and h705a 180 (`modelled`). The segment split promoted the trace's h61d3
+    202, the live piece count h705a 125 / 240 / 250 and h61d3 299 / 261, and the status rows' IC reads h705a 394
+    and h7057 349, to `app_traced`.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -995,6 +1089,30 @@ model, from which the shipped readers are generated).
   light's rule, on at 1 (`BleComm.G`, `ShareVM.N3`), which `parse.parse_light_power(heartbeat=True)` reads. The
   h61d3 `status_read` note's "absent TLVs leave brightness 0" is corrected to 100, the fresh
   `DeviceBaseInfoFromDevice`'s (`DeviceBaseInfoFromDevice.java:70-80`).
+- **TLV 0x40's two one-count readers, the whole-group placement and a status row's IC sources.** govee_common
+  `form_40::one_count_u16` reads bytes 0-1 unsigned (`SegmentSettingController.Companion.b`; govee_state
+  `ic_count.ic_count_u16`), beside `one_count`, signed (`BleUtil.getSignedShort`), each with no byte-order
+  check; `group_count_rule::whole_groups` is fixed records whose status TLV groups are placed only where whole
+  within the pieces, later ones dropped without failing the read (`VM4LightH351011$...$1.p`; govee_state
+  `color_group.drops_past_whole`). devices.schema.json clientRow: `ic_pieces` on a status row takes its IC from
+  `status_read` `ic_num` (TLV 0x40) or from aa 40 reads around it, `connect_reads` before and the new
+  `post_status_reads` after; the new `readback_pieces: ic_count` places the status read's colour groups over
+  the IC count itself. Rows: h705a 394 and h7057 349 become `app_traced` (349's `by_model` counts, the
+  catalogue's IC, are gone: `num_segments` 8 is only the count before the first read); h7020 316 / 318 / 337 /
+  391 are written out, `app_traced`; h7020 296 / 318 / 337 / 361 and h7045 take `f_40: one_count_u16`;
+  rgbiclight 332 takes `ic_pieces {0, 14, 1}` (its `num_segments` 14 is only the count before the first read).
+  The rows' docs state where an IC count of 0 leaves the library apart from the app. The reference self-test
+  checks both readers and the whole-group rule.
+- **goodsType 411's 0xA3 colour value and its unit's ack.** govee_ble_frame `comm_byte::sub_mode_color_multi`
+  (0x6e, BleProtocolConstants) and `upload_ack.multi_result` / `is_multi_ok` (frame byte 3, which a
+  MultiController unit reads as its result, accepting it only on a whole 20-byte frame:
+  `AbsControllerNoEvent4Multi.onResult`); govee_upload `upload_kind::color_multi` and `color_multi_value`
+  (`[op][colour][kelvin][tint][mask]`, Config.gu's Bytes.j / Bytes.t, its mask a `seg_mask` with no cap,
+  `len_cap`, and its `len_head` / `len_value` the lengths it is written at); govee_common `seg_mask`'s cap is a
+  `u2`, so an uncapped mask can carry more than 255 bytes. devices.schema.json `color_scheme` gains `h3010`;
+  h7020 411 is written out with `color_scheme: h3010`, `ic_pieces {15, 4095, 1}` and `readback_pieces:
+  ic_count`, `app_traced`. The reference self-test reads the value, its length and the acks, a short one
+  refused.
 
 ## [1.6.1] — 2026-10-21
 

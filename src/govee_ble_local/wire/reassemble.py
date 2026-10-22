@@ -24,7 +24,7 @@ reader (:func:`read_segment_ic`), as the analyzer does for a burst whose first c
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
@@ -42,11 +42,14 @@ TYPE_BRIGHTNESS = int(_C.Command.brightness)     # 0x04
 TYPE_MODE = int(_C.Command.mode)                 # 0x05
 TYPE_DEVICE_INFO = int(_C.Command.device_info)   # 0x07
 TYPE_ZONE = int(_C.Command.cmd_30)               # 0x30
+TYPE_IC_COUNT = int(_C.Command.ic_num)           # 0x40: the IC count TLV
 TYPE_SEG_INFO = int(_C.Command.cmd_41)           # 0x41: the seg / IC info (power memory) TLV
 TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags), from the device's decode.
 _TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3", "f_a5")
 _COLOR_DECODES: Final = ("c02", "c0b", "c0d", "c14", "c15")
+# The TLV 0x40 forms read as one IC count (govee_common::form_40): signed, then unsigned.
+_ONE_COUNT_FORMS: Final = (int(_C.Form40.one_count), int(_C.Form40.one_count_u16))
 # The tags whose value parse_status reads fields of (the mode's is kept whole, None when it is empty).
 _READS_A_VALUE: Final = frozenset({TYPE_SWITCH, TYPE_BRIGHTNESS, TYPE_ZONE, TYPE_DEVICE_INFO})
 # The brightness a successful status read applies when its stream has no 0x04 TLV: DeviceBaseInfoFromDevice's
@@ -107,6 +110,11 @@ class StatusReply:
     # carries (pact_h60a0 h60a1.Info4Detail.Q reads it; the last 0x05 TLV wins, as each overwrites there).
     # Left out of equality: a generated object compares by identity, and the fold reads it.
     mode: Any = field(default=None, compare=False)
+    # The IC count of the last 0x40 TLV the screen's one-count reader read (the decode's f_40 one_count:
+    # signed, one_count_u16: unsigned; None under any other form or without one). The screen's lambda
+    # stores it as the walk reaches it (Info4BleIotDevice.G0), so it is kept even where a later TLV fails
+    # the read and no other state is used.
+    ic_count: int | None = None
 
 
 def _chunk_of(fr: bytes) -> Any:
@@ -333,7 +341,39 @@ def _color_group(tlv: Any, pieces: int | None) -> _GroupRead:
         (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in group.records]
 
 
-def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any = None) -> StatusReply:
+def _ic_of(tlv: Any, form_40: int) -> int | None:
+    """A 0x40 TLV's IC count as the screen's one-count reader returns it (no byte-order check): signed under
+    ``one_count`` (``BleUtil.getSignedShort``), unsigned under ``one_count_u16``
+    (``SegmentSettingController.Companion.b``); None under any other form, or with no count in the value."""
+    v = getattr(tlv.value, "body", None)
+    if v is None or form_40 not in _ONE_COUNT_FORMS:
+        return None
+    count = v.ic_count_u16 if form_40 == _ONE_COUNT_FORMS[1] else getattr(v, "ic_count", None)
+    return None if count is None else int(count)
+
+
+def _last_ic(tlvs: Iterable[Any], form_40: int) -> int | None:
+    """The IC count of the last 0x40 TLV of ``tlvs`` that gives one (:func:`_ic_of`), or None."""
+    ic = None
+    for tlv in tlvs:
+        got = _ic_of(tlv, form_40) if int(tlv.tag) == TYPE_IC_COUNT else None
+        ic = ic if got is None else got
+    return ic
+
+
+def _leading_ic(tlvs: Iterable[Any], form_40: int) -> int | None:
+    """:func:`_last_ic` of the TLVs ahead of the first 0xA5 TLV: the count the screen holds when it places
+    the burst's first colour group."""
+    ahead = []
+    for tlv in tlvs:
+        if int(tlv.tag) == TYPE_COLOR_GROUP:
+            break
+        ahead.append(tlv)
+    return _last_ic(ahead, form_40)
+
+
+def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any = None,
+                 pieces_for_ic: Callable[[int], int | None] | None = None) -> StatusReply:
     """Reassemble a 0xAC burst and decode it through the spec's ``govee_status_stream`` root.
 
     Only the cross-frame de-chunk (:func:`reassemble`) is hand-done — Kaitai can't join frames. The
@@ -383,7 +423,14 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     other modes it reports no bytes for (``govee_state.app_empty_mode_fails``; H60A6 FUN_9b025dc8
     @0x9b025dd2-0x9b025ddc). The app's read fails on it, so its power and brightness go stale; the library
     reads past it with the mode unknown (``StatusReply.mode`` None, the state's mode left as it was) and
-    applies the rest of the burst. A short mode value still fails the read."""
+    applies the rest of the burst. A short mode value still fails the read.
+
+    ``pieces_for_ic`` (a live-IC status screen's: the colour pieces for an IC count, None for no count) reads
+    the burst's own IC: the screen's lambda stores a 0x40 TLV's count as it reaches it and reads it back at
+    each 0xA5 TLV (``H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.o``, the h7050 and h7020 lambdas), so
+    where a 0x40 TLV leads the 0xA5 TLVs the stream is read again with its pieces in place of ``pieces``, when
+    they differ. None (the default) reads it once with ``pieces``. Either way the last 0x40 count the walk
+    reads is :attr:`StatusReply.ic_count`, kept on a read that fails after it (the lambda had stored it)."""
     st = StatusReply()
     buf, complete = _joined(frames)
     if not complete:
@@ -393,17 +440,24 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     reads_groups = int(prof.forms.f_a5) == int(_C.FormA5.color_group)
     reads_record = int(prof.forms.f_a5) == int(_C.FormA5.single_record)
     reads_zones = int(prof.forms.f_30) == int(_C.Form30.zone_power)
+    form_40 = int(prof.forms.f_40)
     stream, err = read_status_stream(buf, pieces=pieces, decode=decode)
     tlvs = list(getattr(stream, "tlvs", None) or [])
+    lead = None if pieces_for_ic is None else _leading_ic(tlvs, form_40)
+    sized = None if pieces_for_ic is None or lead is None else pieces_for_ic(lead)
+    if sized is not None and sized != pieces:
+        pieces = sized
+        stream, err = read_status_stream(buf, pieces=pieces, decode=decode)
+        tlvs = list(getattr(stream, "tlvs", None) or [])
     if err is not None:
         last = tlvs[-1] if tlvs else None
         _LOGGER.debug("status reply stopped at TLV 0x%02x (record %d of a %d-byte stream): %s; the app's "
                       "read fails here; no state used", int(getattr(last, "tag", 0)), len(tlvs), len(buf),
                       type(err).__name__)
-        return st
+        return StatusReply(ic_count=_last_ic(tlvs[:-1], form_40))
 
     groups: list[tuple[int, list[parse.GroupRecord]]] = []
-    for tlv in tlvs:
+    for at, tlv in enumerate(tlvs):
         typ = int(tlv.tag)
         if typ == TYPE_COLOR_GROUP and reads_record:
             # $afterConnectedSingleReadDeviceInfo$1.n:114-124 reads one record from a value of 5 bytes or
@@ -421,7 +475,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
                 _LOGGER.debug("status reply: colour group TLV (len %d) is short of the app's record count "
                               "or can't be placed among %s pieces: the app's read fails here; no state used",
                               int(tlv.len_value), pieces)
-                return StatusReply()
+                return StatusReply(ic_count=_last_ic(tlvs[:at], form_40))
             if group != "skip":
                 groups.append(group)
             continue
@@ -433,7 +487,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
         if tlv.app_read_fails and not tlv.value.app_empty_mode_fails:
             _LOGGER.debug("status reply: TLV 0x%02x (len %d) fails the app's read; no state used", typ,
                           int(tlv.len_value))
-            return StatusReply()
+            return StatusReply(ic_count=_last_ic(tlvs[:at], form_40))
         v: Any = getattr(tlv.value, "body", None)
         if typ == TYPE_ZONE:
             v = getattr(v, "body", None)   # the zone_bits
@@ -442,7 +496,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
             # the read here as well, rather than raising out of the device's poll.
             _LOGGER.debug("status reply: TLV 0x%02x (len %d) has no value to read; no state used", typ,
                           int(tlv.len_value))
-            return StatusReply()
+            return StatusReply(ic_count=_last_ic(tlvs[:at], form_40))
         if typ == TYPE_SWITCH:
             # power_state.is_on on the status path: != 0, as the app's status walker reads it
             # (Compose4BaseInfoSingleRead.u), unlike a light's aa 01 reply (== 1; approval item A4).
@@ -473,6 +527,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
                 if info.serial is not None:
                     st.serial_number = info.serial
                 st.firmware_version, st.hardware_version = info.sw_version, info.hw_version
+    st.ic_count = _last_ic(tlvs, form_40)
     # Same positional assembly as the direct group replies (oneGroupColorSize stride).
     st.segments = parse.direct_groups_to_segments(groups, int(prof.group.num_per_group))
     if pieces:   # the device's piece count bounds the segment index (a from_len count is the TLV len's)

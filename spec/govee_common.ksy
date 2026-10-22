@@ -173,8 +173,10 @@ types:
         doc: |
           the piece count, rounded up to a multiple of 8 on the brightness path
       - id: cap
-        type: u1
-        doc: the most mask bytes the body carries
+        type: u2
+        doc: |
+          the most mask bytes the body carries (0xffff: no cap, the 0xA3 colour
+          value's BleUtils.X)
     seq:
       - id: bits
         type: b1
@@ -1489,6 +1491,16 @@ enums:
         ceil(num_pieces / num_per_group) groups; the last holds the remainder
       doc-ref:
         - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:105-121
+    4:
+      id: whole_groups
+      doc: |
+        num_per_group records in every group, as fixed; on the status TLV the
+        screen places only the groups that lie whole within num_pieces (group
+        index <= num_pieces / num_per_group) and drops every later one, which
+        then fails nothing; group 0 still fails
+      doc-ref:
+        - split_h7050/com/govee/h7050/newdetail/h351011/VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.java:109-116,132-148
+        - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-147
   form_01:
     0:
       id: unknown
@@ -1654,10 +1666,14 @@ enums:
         - split_h705a/com/govee/h705a/adjust/h608a/ControllerStrategyConfig.java:283-287
     2:
       id: one_count
-      doc: one 16-bit IC count from bytes 0-1; it throws below 2 bytes
+      doc: |
+        one 16-bit IC count from bytes 0-1 read signed (BleUtil.getSignedShort,
+        govee_state ic_count ic_count; no byte-order check); it throws below 2
+        bytes
       doc-ref:
         - split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:96-97
-        - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailVM$afterConnectedSingleReadDeviceInfo$1.java:80-81
+        - split_h705a/com/govee/h705a/h3401/H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.java:134-145
+        - base-classes10/com/govee/base2light/ble/BleUtil.java:304-306
     3:
       id: device_count
       doc: |
@@ -1666,6 +1682,19 @@ enums:
       doc-ref:
         - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:887-895
         - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345Splicing.java:487-489
+    4:
+      id: one_count_u16
+      doc: |
+        one 16-bit IC count from bytes 0-1 read unsigned
+        (SegmentSettingController.Companion.b: BleUtil.getSignedInt(bytes, true),
+        govee_state ic_count ic_count_u16; no byte-order check); it throws below
+        2 bytes
+      doc-ref:
+        - split_h7050/com/govee/h7020/newDetail/controller/SegmentSettingController.java:34-37
+        - base-classes10/com/govee/base2light/ble/BleUtil.java:285-302
+        - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailVM$afterConnectedSingleReadDeviceInfo$1.java:80-81
+        - split_h7050/com/govee/h7050/newdetail/h351011/VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.java:117-121
+        - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:66-68
   form_41:
     0:
       id: unknown

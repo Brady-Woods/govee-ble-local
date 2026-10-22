@@ -660,6 +660,30 @@ def _selftest(*, strict: bool = False) -> int:
           ic_reply(0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08).section_sum == 18
           and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
           and ic_reply(0x10, 0x00, 0x05).section_sum is None)
+    ic40 = parse_status(bytes([0x40, 3, 0x9C, 0x40, 0x00]), make_profile(f_40="one_count_u16")).tlvs[0]
+    check("TLV 0x40: bytes 0-1 signed in ic_count (getSignedShort), unsigned in ic_count_u16 "
+          "(SegmentSettingController.b)",
+          (ic40.value.body.ic_count, ic40.value.body.ic_count_u16) == (0x9C40 - 0x10000, 0x9C40)
+          and not ic40.app_read_fails)
+    upload = _module("govee_upload").GoveeUpload
+    multi = _ready(upload(upload.UploadKind.color_multi, upload.UploadForm.wire,
+                          _stream(bytes.fromhex("01ffffff0fa0ffd5a1ff7f")), None, None))
+    acks = [parse_frame(raw, "rx").body for raw in (
+        append_bcc(bytes([0xA3, 0x6E, 0x00, 0x01]) + bytes(15)), append_bcc(bytes([0xA3, 0x6E, 0x00, 0x00])),
+        bytes([0xA3, 0x6E, 0x00, 0x00, 0xA3 ^ 0x6E]))]   # a refused byte 3, a whole ack, a short frame
+    check("0xA3 colour value (Config.gu: Bytes.t over 15 pieces) and the unit ack: byte 3 of a whole 20-byte "
+          "frame (MultiController, AbsControllerNoEvent4Multi.onResult)",
+          (multi.value.kelvin, multi.value.tint.g, multi.value.mask.bits[14:17], multi.value.len_value)
+          == (4000, 0xD5, [True, False], 11)
+          and multi.value.is_cct and acks[0].multi_result == 1 and acks[0].is_ok
+          and [a.is_multi_ok for a in acks] == [False, True, False])
+    whole = make_profile(f_a5="color_group", rule="whole_groups", num_per_group=4, has_brightness=True,
+                         num_pieces=10)
+    placed = [parse_status(bytes([0xA5, 17, g, *([1] * 16)]), whole).tlvs[0].value.body.body
+              for g in (2, 3, 4)]
+    check("whole_groups (VM4LightH351011): only the groups whole within num_pieces are placed, the rest "
+          "dropped without failing the read",
+          [g.is_placed for g in placed] == [True, False, False] and not any(g.app_read_fails for g in placed))
 
     seg = parse_status(reassemble_ac(chunk_ac(bytes([12] + [5] * 12), 0xA1, 0x0B)), reader=0xA1).segment_ic
     check("ac a1 special-info reply (sub 0x0B): two packets join to [12][IC x 12] (the stream's segment_ic, "

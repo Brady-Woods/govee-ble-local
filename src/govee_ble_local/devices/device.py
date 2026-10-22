@@ -119,10 +119,9 @@ def _unhandled(value: Never, field: str) -> Never:
     raise GoveeBleError(f"unsupported {field} {value!r}")
 
 
-def _check_segment_count(count: int) -> None:
-    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= build.MAX_MASK_SEGMENTS:
-        raise GoveeBleInvalidValue(
-            f"segment count must be an integer in 1..{build.MAX_MASK_SEGMENTS}, got {count!r}")
+def _check_segment_count(count: int, cap: int) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= cap:
+        raise GoveeBleInvalidValue(f"segment count must be an integer in 1..{cap}, got {count!r}")
 
 
 def _mask(indices: Sequence[int], segments: int) -> int:
@@ -194,6 +193,10 @@ class Device:
         # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
         # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
         self._polled_color_mode: bool | None = None
+        # A live-IC status profile's read-back pieces, the count its status read places the TLV 0xA5 groups
+        # over (_adopt_ic: the IC rule's pieces, or the IC itself under color_readback_ic_raw), uncapped;
+        # None until a count is known: segment_count stands in.
+        self._status_count: int | None = None
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -357,21 +360,23 @@ class Device:
         ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
         ``section_count_read`` profile (H6062's aa 41), on a ``special_info_read`` one (goodsType 180's ac a1)
         and on a ``color_writes_live_ic`` one (the live pieces of each poll's aa 40 read: H6641, the other
-        IC-sized rows), as does :meth:`set_segment_count`, until the next such read. A caller that offers one
-        entity per segment reads it after the first
-        :meth:`update`."""
+        IC-sized rows; on a status row, of its status read's TLV 0x40 or the aa 40 reads around it), as does
+        :meth:`set_segment_count`, until the next such read. A caller that offers one entity per segment reads
+        it after the first :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
     def set_segment_count(self, count: int | None) -> None:
         """Override the profile's segment count with one the device reported (e.g. a
         runtime read of its segment/section count); ``None`` reverts to the profile value.
 
-        Raises GoveeBleInvalidValue unless ``count`` is 1..112 (``build.MAX_MASK_SEGMENTS``, the most
-        positions any body the library writes carries). Does not touch the connection or any state; on a
+        Raises GoveeBleInvalidValue unless ``count`` is between 1 and ``build.piece_cap`` of the profile's
+        colour scheme, the most positions its whole-device write carries: 112 on the 0x15 bodies
+        (``build.MAX_MASK_SEGMENTS``), and on ``h3010`` every piece one 0xA3 colour unit's mask spans, so any
+        :attr:`segment_count` the device reported passes. Does not touch the connection or any state; on a
         profile whose device reports its count (see :attr:`segment_count`) the next poll's read replaces
         it."""
         if count is not None:
-            _check_segment_count(count)
+            _check_segment_count(count, build.piece_cap(self.profile.color_scheme))
         self._segment_count = count
 
     @property
@@ -1174,9 +1179,9 @@ class Device:
                     frames += self._color_rgb_frames(pick, span)
                 elif kelvin is not None:
                     self._require(Capability.COLOR_TEMP)
-                    frames.append(self._build_or_unsupported(
-                        build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                        pieces=self.profile.segments or None, white_type=self.profile.white_type))
+                    frames += self._build_or_unsupported(
+                        build.color_temp_frames, kelvin, self.profile.color_scheme, self.segment_count,
+                        pieces=self.profile.segments or None, white_type=self.profile.white_type)
                     if pair:
                         self._require(Capability.BRIGHTNESS)
                         level = pct if pct is not None else await self._held_brightness()
@@ -1309,15 +1314,16 @@ class Device:
         async with self._held_brightness_lock():
             with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
                 await self._ensure_segment_count()
-                frame = self._build_or_unsupported(
-                    build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+                built = self._build_or_unsupported(
+                    build.color_temp_frames, sent, self.profile.color_scheme, self.segment_count,
                     pieces=self.profile.segments or None, white_type=self.profile.white_type)
-                frames: bytes | list[bytes] = frame
+                # One frame goes out with send, as before; goodsType 411's 0xA3 unit with send_many.
+                frames: bytes | list[bytes] = built[0] if len(built) == 1 else built
                 level: int | None = None
                 if self.profile.kelvin_with_brightness:
                     # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
                     level = await self._held_brightness()
-                    frames = [frame, self._brightness_frame(level)]
+                    frames = [*built, self._brightness_frame(level)]
 
                 def apply() -> None:
                     _fold.apply_kelvin(self.profile, self._state, sent)
@@ -2021,8 +2027,8 @@ class Device:
     async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
         """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a
         ``color_writes_live_ic`` profile a count of 1 or more becomes :attr:`segment_count`, at most
-        ``build.MAX_MASK_SEGMENTS`` (a body carries no more: every count above writes the same bytes): the
-        screen's strip takes its count from the IC the read stores (``ColorPieceConfig.c``). The h705a
+        ``build.piece_cap`` (a 0x15 body carries no more than 112: every count above writes the same bytes):
+        the screen's strip takes its count from the IC the read stores (``ColorPieceConfig.c``). The h705a
         screens resize a built strip when a read changes it (``ColorMode.Y``, ``ColorModeV1.K``); the h61d3
         and H7067 ones store the count without resizing (``VM4Light.k5`` / ``h5`` / ``Q4``), so in the first
         app session after the IC changed with no app connected their strip keeps the old count, where the
@@ -2030,7 +2036,7 @@ class Device:
         whatever a setter did meanwhile; no count leaves it as it was."""
         pieces = await _readback.read_live_ic(self, lambda f: self._read_reply(f, budget))
         if self.profile.color_writes_live_ic and pieces is not None and pieces >= 1:
-            self._segment_count = min(pieces, build.MAX_MASK_SEGMENTS)
+            self._segment_count = min(pieces, build.piece_cap(self.profile.color_scheme))
         return pieces
 
     def _wants_color_groups(self) -> bool:
@@ -2062,8 +2068,74 @@ class Device:
                 build.status_query(types=self._status_types()), timeout=STATUS_READ_TIMEOUT,
                 **_budget_kw(budget))
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
-        status = reassemble.parse_status(ac, pieces=self.segment_count, decode=wire_profile(self.profile))
+        tlv_ic = self._status_ic_source() == "tlv"
+        status = reassemble.parse_status(
+            ac, pieces=self._status_pieces(), decode=wire_profile(self.profile),
+            pieces_for_ic=self._status_pieces_for if tlv_ic else None)
+        if tlv_ic and status.ic_count is not None:
+            self._adopt_ic(status.ic_count)
         return status, ac, frames
+
+    def _status_ic_source(self) -> Literal["", "tlv", "aa40"]:
+        """Where a live-IC status profile takes its IC: ``"tlv"``, its status read's TLV 0x40 (H3401's,
+        H3510's: the screen's lambda stores it, ``Info4BleIotDevice.G0``), or ``"aa40"``, the aa 40 reads
+        around that read (:attr:`.DeviceProfile.ic_reads_around_status`; the h7020 4702ABC lambda has no
+        0x40 branch, so a TLV 0x40 there sizes nothing); ``""`` on every other profile."""
+        if self.profile.readback != "status" or not self.profile.color_readback_live_ic:
+            return ""
+        return "aa40" if any(self.profile.ic_reads_around_status) else "tlv"
+
+    def _status_pieces(self) -> int:
+        """The pieces the status read places its TLV 0xA5 colour groups over: a live-IC status profile's
+        read-back count once known (:meth:`_adopt_ic`), else :attr:`segment_count`."""
+        return self._status_count if self._status_count is not None else self.segment_count
+
+    def _status_pieces_for(self, ic: int) -> int | None:
+        """The read-back pieces for an IC count (:meth:`_ic_counts`), None for no count: the status read's
+        ``pieces_for_ic``."""
+        return self._ic_counts(ic)[1]
+
+    def _ic_counts(self, ic: int) -> tuple[int | None, int | None]:
+        """``(write pieces, read-back pieces)`` for a live-IC status profile's IC count, each None for no
+        count (below 1): the IC rule's pieces (:func:`._readback.ic_rule_pieces`) size the writes, and the
+        status read's colour groups too unless :attr:`.DeviceProfile.color_readback_ic_raw` places them over
+        the IC count itself (``Support.getColorPieceSize(gt, IC)``), at most the 0xFFFF pieces the read can
+        place."""
+        pieces = _readback.ic_rule_pieces(self.profile, ic)
+        readback = ic if self.profile.color_readback_ic_raw else pieces
+        return ((pieces if pieces is not None and pieces >= 1 else None),
+                (min(readback, 0xFFFF) if readback is not None and readback >= 1 else None))
+
+    def _adopt_ic(self, ic: int) -> None:
+        """Adopt a live-IC status profile's IC count, as the screen stores it (``Info4BleIotDevice.G0``): its
+        write pieces become :attr:`segment_count` (at most ``build.piece_cap``, as :meth:`_read_live_ic`) and
+        its read-back pieces the status read's (:meth:`_status_pieces`); a count
+        that gives none keeps the counts there are. The screen's colour arrays take the new size
+        (``SubMode4Color.j``), so segments past a smaller read-back count leave the state. A device fact, not
+        optimistic state, so it is adopted whatever a setter did meanwhile."""
+        pieces, readback = self._ic_counts(ic)
+        if pieces is None and readback is None:
+            _LOGGER.debug("%s (%s): IC count %d gives no colour pieces; keeping the counts", self.address,
+                          self._sku, ic)
+        if pieces is not None:
+            self._segment_count = min(pieces, build.piece_cap(self.profile.color_scheme))
+        if readback is not None:
+            self._status_count = readback
+            self._state.segments = [seg for seg in self._state.segments if seg.index < readback]
+
+    async def _read_status_ic(self, budget: ConnectBudget | None = None) -> bool:
+        """One of the aa 40 reads around the status read (:attr:`.DeviceProfile.ic_reads_around_status`;
+        h7020 ``Controller4IcNumber``, the checking one-count reader): its count adopted (:meth:`_adopt_ic`).
+        False when the read failed or its reader stores no count (a count of 0x1000 or more throws in it)."""
+        reply = await self._read_reply(build.ic_count_query(), budget)
+        ic = parse.parse_ic_count(reply) if reply else None
+        count = None if ic is None else ic.ic_count_checked
+        if count is None:
+            _LOGGER.debug("%s (%s): the aa 40 read around the status read gave no IC count", self.address,
+                          self._sku)
+            return False
+        self._adopt_ic(count)
+        return True
 
     async def _read_status(self, budget: ConnectBudget | None = None) -> bool:
         # `applied` (returned): a live field came back (state no longer optimistic). `power_read`:
@@ -2086,6 +2158,20 @@ class Device:
         # trusted to rule a wake out either (_power_unsure).
         applied = power_read = False
         since = self._power_unsure_seq
+        before, after = self.profile.ic_reads_around_status
+        if before and not await self._read_status_ic(budget):
+            # The aa 40 read is a mandatory step of the app's connect read, ahead of the 0xAC read
+            # (Compose4BaseInfoSingleRead.Companion.c): a timeout or a count its reader throws on fails the
+            # whole read (AbsComposeControllerWithOpResult.onOvertime), and the 0xAC read is never sent.
+            _LOGGER.debug("%s (%s): no IC count from the aa 40 read; skipping the status read, as the app's "
+                          "connect read stops there", self.address, self._sku)
+            return False
+        bursts: list[reassemble.StatusReply] = []
+
+        async def burst() -> reassemble.StatusReply:
+            st = await _readback.status_burst(self, lambda: self._query_status(budget))
+            bursts.append(st)
+            return st
 
         def apply(st: reassemble.StatusReply) -> None:
             nonlocal applied, power_read
@@ -2100,11 +2186,14 @@ class Device:
 
         # The burst is the whole poll, as the app's connect read is: its 0x05 TLV carries the mode
         # (_fold.apply_status), so no aa 05 read follows it.
-        await self._read_fresh(
-            "status", lambda: _readback.status_burst(self, lambda: self._query_status(budget)), apply)
+        await self._read_fresh("status", burst, apply)
         self._finish_read(applied, power_read, since)
         if applied:
             self._status_link = self._conn.link_number   # the link this read was made on (_status_on_link)
+        if after and bursts and bursts[-1].is_on is not None:
+            # The screen's success callback reads aa 40 again (NewDetailVM.s5 from
+            # NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o); a read that failed runs no s5.
+            await self._read_status_ic(budget)
         return applied
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
@@ -2226,11 +2315,12 @@ class Device:
         (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read; the ac a1 read's
         ``isTempTryComm`` is false), so a profile with ``section_count_read`` (aa 41), ``special_info_read``
         (ac a1) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so every pick's position set
-        take) does the same lazily here and sends nothing if the device gives no usable count, rather than
-        guessing a mask. A no-op on every other profile and once the count is known. Every caller holds the
-        heartbeat across this read and the write it sizes (``GoveeConnection.hold_heartbeat``), as
-        :meth:`update` holds its reads: the app reads the count in its connect read, during which it sends
-        none (``ShareVM.R`` -> ``updateSkipHeart``)."""
+        take; on a status row the status read that carries its TLV 0x40, or the aa 40 read that starts it:
+        :meth:`_status_ic_source`) does the same lazily here and sends nothing if the device gives no usable
+        count, rather than guessing a mask. A no-op on every other profile and once the count is known. Every
+        caller holds the heartbeat across this read and the write it sizes
+        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count in
+        its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
         if (self._reads_segment_count and self._segment_count is None
                 and not await self._read_segment_count()):
             read = "ac a1" if self.profile.special_info_read else "aa 41"
@@ -2238,10 +2328,19 @@ class Device:
                 f"{self._sku}: the device did not report its segment count ({read}); "
                 "not sending a colour frame with a guessed segment mask")
         if self._segment_count is None and self.profile.color_writes_live_ic:
-            await self._read_live_ic()
+            # A status row's IC comes with its status read, the TLV 0x40 (the app's connect read), or from the
+            # aa 40 read that starts that read; any other IC-sized row's from its aa 40 read.
+            source = self._status_ic_source()
+            if source == "tlv":
+                await self._read_status()
+            elif source == "aa40":
+                await self._read_status_ic()
+            else:
+                await self._read_live_ic()
             if self._segment_count is None:
+                read = "the status read's TLV 0x40" if source == "tlv" else "aa 40"
                 raise GoveeBleError(
-                    f"{self._sku}: the device did not report a usable IC count (aa 40); "
+                    f"{self._sku}: the device did not report a usable IC count ({read}); "
                     "not sending a colour frame with a guessed segment mask")
 
     async def _read_fresh(

@@ -136,7 +136,8 @@ instances:
       and profile.forms.f_40 == govee_common::form_40::ic_pair
       and body.as<ic_count>.app_pair_fails)
       or (command == govee_common::command::ic_num
-      and profile.forms.f_40 == govee_common::form_40::one_count
+      and (profile.forms.f_40 == govee_common::form_40::one_count
+      or profile.forms.f_40 == govee_common::form_40::one_count_u16)
       and body.as<ic_count>.is_short)
       or (command == govee_common::command::color_group
       and profile.forms.f_a5 == govee_common::form_a5::color_group
@@ -1364,9 +1365,17 @@ types:
       places_by_group:
         value: >-
           checks_group or (source == source::status_tlv
-          and group.rule == govee_common::group_count_rule::fixed
+          and (group.rule == govee_common::group_count_rule::fixed
+          or group.rule == govee_common::group_count_rule::whole_groups)
           and group.num_pieces != 0)
         doc: the TLV screen places records by the group byte; piece count known
+      drops_past_whole:
+        value: >-
+          places_by_group
+          and group.rule == govee_common::group_count_rule::whole_groups
+        doc: |
+          the screen drops a group past the whole groups instead of placing it
+          (group_count_rule whole_groups)
       num_records_wanted:
         value: >-
           group.rule == govee_common::group_count_rule::from_len
@@ -1390,14 +1399,18 @@ types:
         value: >-
           places_by_group and (group_index == 0
           or (checks_group and group_index >= 0x80)
-          or (not is_last_group
+          or (not drops_past_whole and not is_last_group
           and (group_index - 1) * group.num_per_group > group.num_pieces))
         doc: the app throws (group 0, past the last piece, >= 0x80 on H60A6)
       is_placed:
         value: >-
-          not places_by_group or is_last_group
-          or (group_index - 1) * group.num_per_group != group.num_pieces
-        doc: false when the group starts exactly at the end (nothing is copied)
+          drops_past_whole
+          ? group_index * group.num_per_group <= group.num_pieces
+          : (not places_by_group or is_last_group
+          or (group_index - 1) * group.num_per_group != group.num_pieces)
+        doc: |
+          false when the group starts exactly at the end (nothing is copied), or
+          under whole_groups lies past the whole groups (it is dropped)
       app_read_fails:
         value: places_by_group and (is_short or app_rejects_group)
         doc: the TLV screen's colour-group parse throws on this group
@@ -1526,11 +1539,21 @@ types:
         doc: the IC pair reader (TLV form_40 ic_pair) throws on this value
         doc-ref:
           - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,141-161
+      ic_count_u16:
+        value: 'ic_count < 0 ? ic_count + 0x10000 : ic_count'
+        if: _io.size >= 2
+        doc: |
+          bytes 0-1 read unsigned, as the TLV form_40 one_count_u16 reader
+          returns them (SegmentSettingController.Companion.b,
+          BleUtil.getSignedInt(bytes, true)), with no byte-order check
+        doc-ref:
+          - split_h7050/com/govee/h7020/newDetail/controller/SegmentSettingController.java:34-37
+          - base-classes10/com/govee/base2light/ble/BleUtil.java:285-302
       is_short:
         value: _io.size < 2
         doc: |
           fewer than 2 bytes: no 16-bit IC count (the one-count readers throw;
-          TLV form_40 one_count)
+          TLV form_40 one_count and one_count_u16)
         doc-ref:
           - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:98-103
       ic_count_byte_order_suspect:

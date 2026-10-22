@@ -254,9 +254,17 @@ def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
         if len(pair) == 2 and pair[0] != 0 and pair[1] > 0:
             return max(0, min(pair[0], cap) + min(pair[1], cap))
         return otherwise
-    count = ic.ic_count_checked
+    return ic_rule_pieces(profile, ic.ic_count_checked)
+
+
+def ic_rule_pieces(profile: DeviceProfile, count: int | None) -> int | None:
+    """Colour pieces (0 or more) for an IC ``count`` by the profile's one-count rule (:func:`live_ic_pieces`'s
+    table or clamp and divisor), or None for no count: ``count`` None, or 0 under
+    ``color_readback_ic_skip_zero``. A status profile's TLV 0x40 count comes here as the screen's reader
+    returns it (``reassemble.StatusReply.ic_count``)."""
     if count is None or (count == 0 and profile.color_readback_ic_skip_zero):
         return None
+    otherwise = profile.color_readback_ic_otherwise or 0   # set with the table (DeviceProfile)
     if profile.color_readback_ic_table:
         return dict(profile.color_readback_ic_table).get(count, otherwise)
     ic_range = profile.color_readback_ic_range

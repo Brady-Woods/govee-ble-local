@@ -181,9 +181,12 @@ class DeviceProfile:
     :attr:`segments`. Ignored when :attr:`color_readback_live_ic` is True (the live 0x40 read
     supplies the count instead)."""
     color_readback_live_ic: bool = False
-    """mechanism_a_direct only: read the live 0x40 IC count first and derive the colour-piece count
+    """mechanism_a_direct: read the live 0x40 IC count first and derive the colour-piece count
     from it instead of a static :attr:`color_readback_segments`, as the app does for SKUs whose
-    segmentation isn't knowable from the static device table (H6641).
+    segmentation isn't knowable from the static device table (H6641). On a ``readback="status"`` profile
+    the count comes from the status read's TLV 0x40 (requested in :attr:`status_read`, read as
+    :attr:`status_decode`'s ``f_40`` says) or from :attr:`ic_reads_around_status`, and the pieces size the
+    status read's colour groups (else :attr:`color_readback_ic_raw`'s IC count).
 
     The IC count is clamped to :attr:`color_readback_ic_range` and divided by
     :attr:`color_readback_ic_per_piece`, rounding as :attr:`color_readback_ic_rounding` says (up by
@@ -504,11 +507,13 @@ class DeviceProfile:
     built strip when a read changes it, ``ColorMode.Y`` / ``ColorModeV1.K``, while the h61d3 and H7067 strips
     keep the count they were built with until a calibration or settings event, a first-session difference
     their rows' docs name): :attr:`~.device.Device.segment_count` becomes each poll's count (at most
-    ``build.MAX_MASK_SEGMENTS``), so it is the whole-device mask and the segment index bound, and a write that
-    carries a mask before any count is known reads ``aa 40`` first and raises GoveeBleError, sending nothing,
-    when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then
-    only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it;
-    False (the default): the writes keep :attr:`segments`."""
+    ``build.piece_cap`` of :attr:`color_scheme`: 112 on the 0x15 bodies, more on ``h3010``'s uncapped 0xA3
+    mask), so it is the whole-device mask and the segment index bound, and a write that
+    carries a mask before any count is known reads ``aa 40`` first (on a status profile its IC read: the
+    status read whose TLV 0x40 carries it, or the first of :attr:`ic_reads_around_status`) and raises
+    GoveeBleError, sending nothing, when the device gives no usable count, as a ``section_count_read`` profile
+    does. :attr:`segments` is then only the count before the first read. Every IC-sized devices.yaml row
+    (``ic_pieces`` object form) sets it; False (the default): the writes keep :attr:`segments`."""
     special_info_read: bool = field(default=False, kw_only=True)
     """``readback="polled"`` only, and not with :attr:`section_count_read`: the device reports its own
     segment count in the 0xAC special-info read (``ac a1``, its reply's segment IC record
@@ -547,6 +552,20 @@ class DeviceProfile:
     other profile, among them the other status rows on the aa 01 keep-alive, whose screens do the same, and
     the ones on the aa 00 keep-alive, H60A6's, whose reply carries no switch): the status read on every poll,
     the reply left unread."""
+    ic_reads_around_status: tuple[bool, bool] = field(default=(False, False), kw_only=True)
+    """``readback="status"`` with :attr:`color_readback_live_ic`: the poll's ``aa 40`` reads ``(before,
+    after)`` the 0xAC status read, which give the live IC in place of a TLV 0x40 (a devices.yaml status row's
+    ``connect_reads`` / ``post_status_reads`` ``ic_num``: h7020
+    ``NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1``, whose connect read sends aa 40 ahead of the
+    0xAC read, as a mandatory step of the same read, and aa 40 again once it succeeds, ``NewDetailVM.s5``). An
+    unanswered or unusable first read ends the poll's status read, as it fails the app's. ``(False, False)``
+    (the default): a live-IC status profile takes the IC from the status read's TLV 0x40."""
+    color_readback_ic_raw: bool = field(default=False, kw_only=True)
+    """``readback="status"`` with :attr:`color_readback_live_ic`: the status read's TLV 0xA5 colour groups are
+    placed over the IC count itself, while the IC rule's pieces size the writes (a devices.yaml status row's
+    ``readback_pieces: ic_count``: ``Support.getColorPieceSize(gt, IC)`` = IC on the h7050 and h7020 status
+    screens, where the colour page writes ``ColorPieceConfig.b``'s pieces). False (the default): the rule's
+    pieces size both."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -634,6 +653,16 @@ class DeviceProfile:
         if self.color_writes_live_ic and not self.color_readback_live_ic:
             raise GoveeBleInvalidValue(f"{where}: color_writes_live_ic without color_readback_live_ic (the "
                                        "live pieces come from its aa 40 read)")
+        if isinstance(self.ic_reads_around_status, list):
+            object.__setattr__(self, "ic_reads_around_status", tuple(self.ic_reads_around_status))
+        around = self.ic_reads_around_status
+        status_ic = self.readback == "status" and self.color_readback_live_ic
+        if (not (isinstance(around, tuple) and len(around) == 2 and all(isinstance(r, bool) for r in around))
+                or ((any(around) or self.color_readback_ic_raw) and not status_ic)):
+            raise GoveeBleInvalidValue(
+                f"{where}: ic_reads_around_status={around!r}, color_readback_ic_raw="
+                f"{self.color_readback_ic_raw!r} (two flags; either needs readback='status' with "
+                "color_readback_live_ic)")
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))

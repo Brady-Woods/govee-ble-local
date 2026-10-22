@@ -120,12 +120,13 @@ from ..exceptions import (
 from ..models import Encryption
 from ..wire._spec import BgcInfo as _BgcInfo, Frame as _Frame
 from ..wire.build import (
+    PRO_MULTI_A3,
     PRO_MULTI_AC,
     PRO_READ,
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
-from ..wire.parse import bgc_encrypt_version, parse_write_ack, write_command
+from ..wire.parse import bgc_encrypt_version, multi_unit_comm, parse_multi_ack, parse_write_ack, write_command
 from ..wire.reassemble import BurstAssembler
 from ..wire.redact import carries_secret, mask_secret, shown_hex
 from . import handshake
@@ -1069,15 +1070,44 @@ class GoveeConnection:
         one connection (each still individually ack-verified), so a multi-part
         change (e.g. power + brightness + colour) can't be interleaved with a
         poll and never pays more than one connect. Every frame must be a write
-        (proType 0x33); anything else raises GoveeBleInvalidValue before any I/O."""
-        for frame in frames:
-            self._check_write_frame(frame)
+        (proType 0x33), but for a run of 0xA3 upload frames, from its START, directly before one: a
+        MultiController unit (goodsType 411's colour write, ``ColorModeControllerConfig.j``), which goes out
+        as one (:meth:`_write_unit_locked`). Anything else raises GoveeBleInvalidValue before any I/O."""
+        units = self._write_units(frames)
 
         async def op() -> None:
-            for frame in frames:
-                await self._write_locked(frame)
+            for run, frame in units:
+                if run:
+                    await self._write_unit_locked(run, frame)
+                else:
+                    await self._write_locked(frame)
 
         await self._run(op, extend_warm=True)
+
+    def _write_units(self, frames: list[bytes]) -> list[tuple[list[bytes], bytes]]:
+        """``frames`` as ``(0xA3 run, write)`` units in order, the run empty for a plain write: each 0x33
+        write closes the 0xA3 frames directly before it. GoveeBleInvalidValue for any other frame, a run whose
+        first frame isn't an 0xA3 START (:func:`..wire.parse.multi_unit_comm`) or one that no write closes."""
+        units: list[tuple[list[bytes], bytes]] = []
+        run: list[bytes] = []
+        for frame in frames:
+            self._check_frame(frame)
+            if frame[0] == PRO_MULTI_A3:   # the header the transport routes on, as every RX filter here
+                run.append(frame)
+                continue
+            self._check_write_frame(frame)
+            if run:
+                try:
+                    multi_unit_comm(run[0])
+                except ValueError as err:
+                    raise GoveeBleInvalidValue(f"{self.address}: an 0xA3 run starts with its START; {err}") \
+                        from None
+            units.append((run, frame))
+            run = []
+        if run:
+            raise GoveeBleInvalidValue(
+                f"{self.address}: an 0xA3 run must be followed by the write that ends its unit")
+        return units
 
     async def _write_locked(self, frame_plaintext: bytes, budget: ConnectBudget | None = None) -> bytes:
         """Ack-verified write with one reconnect-and-retry. Only failures AFTER the
@@ -1099,6 +1129,49 @@ class GoveeConnection:
             await self._disconnect_locked()
         await self._ensure_connected_locked(budget)
         return await self._send_write_verified(frame_plaintext)
+
+    async def _write_unit_locked(self, run: list[bytes], frame: bytes) -> bytes:
+        """A MultiController unit with one reconnect-and-retry of the whole unit, as :meth:`_write_locked`
+        retries a write: the device reassembles an 0xA3 upload from its START, so a unit is resent whole
+        (:meth:`_send_unit_verified`)."""
+        await self._ensure_connected_locked()
+        try:
+            return await self._send_unit_verified(run, frame)
+        except (
+            _LinkLost, *_TRANSPORT_ERRORS, TimeoutError, GoveeBleTimeout, GoveeBleConnectionError,
+        ) as err:
+            _LOGGER.debug("%s: 0xA3 unit failed on this link (%s); reconnecting to retry", self.address,
+                          _err_text(err))
+            await self._disconnect_locked()
+        await self._ensure_connected_locked()
+        return await self._send_unit_verified(run, frame)
+
+    async def _send_unit_verified(self, run: list[bytes], frame: bytes) -> bytes:
+        """One MultiController unit (``AbsControllerNoEvent4Multi``): every packet but the last goes on its
+        write's completion, so the 0xA3 ``run`` is streamed paced (``UNACKED_SEND_GAP``, as
+        :meth:`send_unacked` paces an upload) with no drain between them, then ``frame``, the unit's last
+        packet (the ``33 05 15 00`` of goodsType 411's colour write), and the unit is done on the first
+        ``a3 <comm>`` notification (``isSameController``: proType 0xA3 and the START's comm byte), which may
+        come before ``frame`` goes out: a whole frame whose byte 3 is 0 accepts the unit (``onResult`` at
+        ``MultiController.b()`` = 3; :func:`..wire.parse.parse_multi_ack`), and anything else raises
+        :class:`GoveeBleCommandRejected`. A ``33`` ack of ``frame`` is not the unit's, as the app's controller
+        doesn't take it. No ack within ``WRITE_ACK_TIMEOUT``: GoveeBleTimeout."""
+        comm = multi_unit_comm(run[0])   # checked by _write_units before the operation
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("%s: TX 0xA3 unit 0x%02X: %d packets, then %s", self.address, comm, len(run),
+                          describe_frame(frame, "tx")[0])
+        self._drain()
+        for packet in run:
+            await self._send_frame(packet)
+            await asyncio.sleep(UNACKED_SEND_GAP)
+        await self._send_frame(frame)
+        ack = await self._await_reply(PRO_MULTI_A3, comm, WRITE_ACK_TIMEOUT)
+        if ack is None:
+            raise GoveeBleTimeout(f"{self.address}: no ack for the 0xA3 unit 0x{comm:02X}")
+        if not parse_multi_ack(ack):
+            _LOGGER.debug("%s: device rejected the 0xA3 unit 0x%02X (%s)", self.address, comm, shown_hex(ack))
+            raise GoveeBleCommandRejected(f"{self.address}: device rejected the 0xA3 unit 0x{comm:02X}")
+        return ack
 
     async def send_unacked(
         self, frames: list[bytes] | Callable[[int], list[bytes]], *, gap: float = UNACKED_SEND_GAP

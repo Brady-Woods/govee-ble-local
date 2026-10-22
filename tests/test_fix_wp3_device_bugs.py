@@ -892,23 +892,75 @@ def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
     assert [q[1] for q in _queried(d)] == [0x40] and d.state.segments == []
 
 
-@pytest.mark.parametrize(("ic", "count"), [
-    (None, None),                   # no aa 40 reply
-    ((0x00, 0x00, 0x00), None),     # IC 0: no pieces
-    ((0x00, 0xC8, 0x00), 112),      # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+def _tlv(tag: int, *value: int) -> bytes:
+    return bytes([tag, len(value), *value])
+
+
+def _status(ic: int | None, groups: int, *extra: bytes) -> list[bytes]:
+    """A status burst: power on, brightness, power memory, a TLV 0x40 of ``ic`` (None: none), ``groups`` TLV
+    0xA5 colour groups of 4 records from group 1, then ``extra`` TLVs."""
+    body = _tlv(0x01, 1) + _tlv(0x04, 80) + _tlv(0x41, 2, 0)
+    body += b"" if ic is None else _tlv(0x40, ic >> 8, ic & 0xFF, 0)
+    body += b"".join(_tlv(0xA5, g, *([50, g, 2, 3] * 4)) for g in range(1, groups + 1))
+    return status_burst(body + b"".join(extra))
+
+
+@pytest.mark.parametrize(("sku", "replies", "count"), [
+    ("H7067", None, None),                                           # no aa 40 reply
+    ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0x00, 0x00)]}, None),  # IC 0: no pieces
+    ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0xC8, 0x00)]}, 112),   # IC 200, no app cap: the widest mask
+    # A status row's IC: H3401's comes with its status read's TLV 0x40 (the app's connect read), H702A's from
+    # the aa 40 read that starts that read.
+    ("H3401", {0x03: _status(None, 2)}, None),
+    ("H3401", {0x03: _status(20, 5)}, 20),
+    ("H702A", {0x40: [_frame(0xAA, 0x40, 0x00, 30, 0x00)]}, 30),
+    # H3010: ColorPieceConfig.b's max(15, IC) pieces, its colour one 0xA3 unit (ColorModeControllerConfig.j).
+    ("H3010", {0x40: [_frame(0xAA, 0x40, 0x00, 8, 0x00)]}, 15),
 ])
-def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(ic: tuple[int, ...] | None,
+def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(sku: str, replies: Replies | None,
                                                                    count: int | None) -> None:
-    # color_writes_live_ic: before the first poll a masked write reads aa 40 (ColorPieceConfig.c sizes the
-    # strip from the IC it stores), and without a usable count nothing is sent, as on H6062's aa 41.
-    d = _dev("H7067", {0x40: [_frame(0xAA, 0x40, *ic)]} if ic else None)
+    # color_writes_live_ic: before the first poll a masked write reads its IC first (ColorPieceConfig.c sizes
+    # the strip from the IC it stores), and without a usable count nothing is sent, as on H6062's aa 41.
+    d = _dev(sku, replies)
     if count is None:
-        with pytest.raises(GoveeBleError, match=r"\(aa 40\)"):
+        with pytest.raises(GoveeBleError, match="usable IC count"):
             run(d.set_rgb((1, 2, 3)))
-        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x40]
+        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x03 if sku == "H3401" else 0x40]
     else:
         run(d.set_rgb((1, 2, 3)))
-        assert d.segment_count == count and _sent(d) == [build.color_rgb(1, 2, 3, "h60a6", count)]
+        assert d.segment_count == count
+        # One send_many: the transport sends an 0xA3 run and the write after it as one unit.
+        d._conn.send_many.assert_awaited_once_with(  # type: ignore[attr-defined]
+            build.color_rgb_frames(1, 2, 3, d.profile.color_scheme, count))
+
+
+@pytest.mark.parametrize(("sku", "bursts", "aa40", "reads", "count", "pieces"), [
+    # H3401 (Support.b(394, IC) = IC): each burst's TLV 0x40 leads its 0xA5 groups and places them, over 20
+    # pieces (not the 56 before the first read), then over 4, which drops the read-back past them.
+    ("H3401", [_status(20, 5), _status(4, 2)], None, [0x03, 0x03], 4, 4),
+    # A group the app can't place (0) fails the read, but the TLV 0x40 ahead of it is stored.
+    ("H3401", [_status(20, 0, _tlv(0xA5, 0, *([1] * 16)))], None, [0x03, 0x03], 20, 0),
+    # H3510: IC 10 writes ColorPieceConfig.b's 4 pieces, and the read-back takes the two groups whole within
+    # the 10 pieces (getColorPieceSize(349, IC) = IC); the third is dropped, failing nothing.
+    ("H3510", [_status(10, 3)], None, [0x03], 4, 8),
+    # An IC count of 0 sizes nothing: no count yet, and the groups go over the count before the first read.
+    ("H3401", [_status(0, 1)], None, [0x03], None, 4),
+    # H702A: aa 40, the status read, aa 40 again; without an answer to the first, the app sends no 0xAC read.
+    ("H702A", [_status(None, 8)], 30, [0x40, 0x03, 0x40], 30, 30),
+    ("H702A", [_status(None, 8)], None, [0x40], None, 0),
+])
+def test_a_live_ic_status_row_sizes_its_pieces_by_its_ic_read(sku: str, bursts: list[list[bytes]],
+                                                               aa40: int | None, reads: list[int],
+                                                               count: int | None, pieces: int) -> None:
+    queue = list(bursts)
+    replies: Replies = {0x03: lambda _f: queue.pop(0) if len(queue) > 1 else queue[0]}
+    if aa40 is not None:
+        replies[0x40] = [_frame(0xAA, 0x40, 0x00, aa40, 0x00)]
+    d = _dev(sku, replies)
+    for _poll in bursts:
+        run(d.update())
+    assert [q[1] for q in _queried(d) if q[1] in (0x03, 0x40)] == reads
+    assert d._segment_count == count and len(d.state.segments) == pieces
 
 
 # ── scene upload + activation are not split by a concurrent scene write ───────────────────
