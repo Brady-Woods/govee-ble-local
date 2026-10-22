@@ -104,7 +104,9 @@ model, from which the shipped readers are generated).
     device-reported fact, the aa 40 section sum that sizes the app's connect aa a5 walk (`VM4Light.N5`), was
     read as 0 on the bench H61C3 (`BENCH_20261021_h6076_h61c3.md`), so the app walks the row's 15 pieces; the
     user accepted that reading for H61C2 / H61C5, which were not on the bench. Left out: gradual (the app reads
-    no aa a3 here), the `33 09` time sync and scenes (no catalog). Control is not hardware-verified.
+    no aa a3 here), the `33 09` time sync and scenes (no catalog). The library sends the app's connect reads in
+    its own fixed poll order: aa 05 before aa 40, and the device-info reads last rather than first. The row's
+    `doc` records this. Control is not hardware-verified.
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
   - Spec corrections the trace made inside family blocks change no admitted SKU. For example, H6171 is off
     barelightv1 17 (it reads aa 40 there, which the row's other SKUs don't), H6119 is off h7090 44 (h7090's

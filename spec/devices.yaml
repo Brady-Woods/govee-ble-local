@@ -7659,7 +7659,13 @@ families:
             the 33 09 time sync (TimerConfig.f, not listed, as on 19 / 70), timer / wake / sleep, aa 01, aa 04, Wi-Fi,
             aa 40 (ControllerIcNum.d), aa 05 (SubMode4Color default parse, the family's kelvin), then VM4Light.t5 ->
             N5's aa a5 <g> reads of Support.d = 3 four-byte [bri, R, G, B] records (Support.D true), placed by the
-            request. No aa a3 (supportGradual(141) false), no 0xAC read (Support.H: 351 / 352), no 0xB1 / 0xB2. Pieces:
+            request. No aa a3 (supportGradual(141) false), no 0xAC read (Support.H: 351 / 352), no 0xB1 / 0xB2. The
+            library sends these reads in its fixed, library-wide poll order instead (Device.update: _read_polled, then
+            the walk, then read_device_info; the bench TX below): aa 01, aa 04, aa 05 01, aa 40, the aa a5 walk, then on
+            the first poll aa 06 / aa 07 03 / aa 07 02. So aa 05 comes before aa 40 and the device info last. That is
+            an order divergence (CLAUDE.md rule 1), not a missing read. It doesn't block the row: the reads are
+            idempotent and each was answered on the bench, as with the aa 01 / aa 04 order of the admitted H6002
+            (bulblightv3 31; bulblightstringv2.md G3). Following the app's connect order is a library-wide item. Pieces:
             ColorPieceConfig.j(141) = 15 for the colour page and writes, whatever the IC (28 / 42 / 70). Read-back: N5
             reads ceil(N / 3) groups, N = the signed sum of the aa 40 bytes 2 and 5 when non-zero (ControllerIcNum.d ->
             R1 -> Info4BleIot.q), else 15; the off->on re-read (VM4Light.J3 -> Compose4Off2On -> G5 -> O5 with no
