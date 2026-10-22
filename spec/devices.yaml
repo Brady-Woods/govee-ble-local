@@ -804,7 +804,7 @@ families:
           pacts: ["1,1", "1,2", "1,3"]
           support: hardware_verified
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: main, power_index: 0, segments: [12] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
@@ -833,11 +833,13 @@ families:
             as it is, except on pact (1, >= 3) (H -> Support.supportPartTem; the bench units advertise (1,3)) while a ring
             piece is selected (F) and the 12 ring pieces show one Kelvin-table colour (G -> ColorUtils.r): then the 15 02
             mask covers the whole ring 0-11, with piece 12 as picked. No fixed segment_brightness_groups says that, so the
-            row carries none and the library sends the selection's own bits. As at 1.6.1, the Part tab's Kelvin item
-            widens a selection that holds a ring piece to the whole ring 0-11, with piece 12 as picked
-            (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), where set_segment_color_temp sends the selection
-            as it is. The user has decided (2026-10-22) to drop the Kelvin on a piece selection here (segment_color_temp
-            false), with the zones keeping theirs; not applied yet. Timing:
+            row carries none and the library sends the selection's own bits. No Kelvin on a piece selection
+            (segment_color_temp false, the user's decision 24, 2026-10-22): the Part tab's Kelvin item, which 303 has
+            (SupportPartColorTemConfig list d), widens a selection that holds a ring piece to the whole ring 0-11, with
+            piece 12 as picked (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), so the screen sends no Kelvin to
+            part of a zone, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent the selection as it is).
+            The zone lights keep Kelvin: set_zone_color_temp sends the zones' own masks, the ring ff 0f and the panel
+            00 10, which that widening gives; segment brightness is unchanged. Timing:
             the app reads the burst once per connect and then keeps the link with the aa 00 heartbeat and its ee 30
             pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16): the segment-map probe drove piece 12
             (the main panel) and pieces 0-11 (the ring) to opposite colours and read them back apart; 33 01 00 clears
@@ -1213,7 +1215,7 @@ families:
           pacts: ["1,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: left, power_index: 0, segments: [0, 1, 2, 3, 4] }
             - { id: right, power_index: 1, segments: [5, 6, 7, 8, 9] }
@@ -1244,15 +1246,17 @@ families:
             not captured): with the left bar switched off (33 36 00 01) while the fixture was on, 33 01 00 then 33 01 01 lit
             both bars again, as the next poll's aa 36 read back; so did an off and on alone, and one after both bars were
             switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: the power handler sets both bar
-            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). As at 1.6.1, the Part tab's Kelvin
-            item widens the selection to each bar it touches, 0-4 and 5-9 (DetailConfig's strip ColorMode10Segment; its
-            canClickColorTem:655-690 with q0:799-801 / r0:803-805 over p0:425-436), where set_segment_color_temp sends the
-            selection as it is. The user has decided (2026-10-22) to drop the Kelvin on a piece selection here
-            (segment_color_temp false), with the bars keeping theirs; not applied yet.
+            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). No Kelvin on a piece selection
+            (segment_color_temp false, the user's decision 24, 2026-10-22): the Part tab's Kelvin item, which 119 has
+            (SupportPartColorTemConfig list d), widens the selection to each bar it touches, 0-4 and 5-9 (DetailConfig's
+            strip ColorMode10Segment; its canClickColorTem:655-691 with q0:799-801 / r0:803-805 over p0:425-436), so the
+            screen sends no Kelvin to part of a bar, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent
+            the selection as it is). The zone lights keep Kelvin: set_zone_color_temp sends the bars' own masks, left
+            1f 00 and right e0 03, which that widening gives; segment brightness is unchanged.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
             - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:100-108
-            - split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:425-436,655-690,799-805
+            - split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:425-436,655-691,799-805
             - base-classes2/com/govee/shared/config/h6047/H6047SceneConfig.java:45-47
             - split_h6047/com/govee/h6047/detail/NewDetailVm$connectBleSuc$1.java:141-161
             - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864

@@ -240,7 +240,7 @@ def test_zone_and_segment_color_temp() -> None:
     asyncio.run(dm.set_zone_color_temp("main", 5000))
     assert _sent(dm)[0][12:14] == bytes([0x00, 0x10])        # mask 0x1000 (bit 12 only)
 
-    d2 = _dev("H60A6")
+    d2 = _dev("H6098")   # no Kelvin to an H60A6 piece selection (decision 24); the H6098 sends the selection
     asyncio.run(d2.set_segment_color_temp([0, 1, 2], 3000))
     assert _sent(d2)[0][12:14] == bytes([0x07, 0x00])        # mask {0,1,2}
 

@@ -436,7 +436,7 @@ _SETTERS: list[tuple[str, Callable[[Device], Any], bool]] = [
     ("H6008", lambda d: d.set_color_temp(4000), True),
     ("H60A6", lambda d: d.set_segment_rgb([0], (1, 2, 3)), True),
     ("H60A6", lambda d: d.set_segment_brightness([0], 30), True),
-    ("H60A6", lambda d: d.set_segment_color_temp([0], 4000), True),
+    ("H6098", lambda d: d.set_segment_color_temp([0], 4000), True),   # none on an H60A6 (decision 24)
     ("H60A6", lambda d: d.set_zone_power("main", True), True),
     ("H60A6", lambda d: d.set_zone_rgb("main", (1, 2, 3)), True),
     ("H60A6", lambda d: d.set_zone_color_temp("main", 4000), True),

@@ -299,21 +299,24 @@ def test_device_wide_cct_frames_carry_tint_and_runtime_width() -> None:
     d.set_segment_count(24)
     run(d.set_color_temp(4000))
     assert _sent(d)[0][:15].hex() == "33051501ffffff0fa0ffd5a1ffffff"
-    # Per-segment CCT on a >16-segment device: tint plus the wide mask.
+    # Per-segment CCT on a >16-segment device: tint plus the wide mask (an H6098: no Kelvin to an H60A6
+    # piece selection, decision 24).
+    s = _dev("H6098")
+    s.set_segment_count(24)
+    run(s.set_segment_color_temp([17], 4000))
+    assert _sent(s)[0][:15].hex() == "33051501ffffff0fa0ffd5a1000002"
+    # The per-zone frames keep the tint and use the wide width too.
     d2 = _dev("H60A6")
     d2.set_segment_count(24)
-    run(d2.set_segment_color_temp([17], 4000))
-    assert _sent(d2)[0][:15].hex() == "33051501ffffff0fa0ffd5a1000002"
-    # The per-zone frames keep the tint and use the wide width too.
     run(d2.set_zone_color_temp("main", 4000))
     run(d2.set_zone_color_temp("background", 4000))
-    zone_frames = _sent(d2)[1:]
+    zone_frames = _sent(d2)
     assert [f[:15].hex() for f in zone_frames] == [
         "33051501ffffff0fa0ffd5a1001000", "33051501ffffff0fa0ffd5a1ff0f00"]
 
 
 def test_segment_writes_use_runtime_width_and_bounds() -> None:
-    d = _dev("H60A6")
+    d = _dev("H6098")   # an H60A6 sends no Kelvin to a piece selection (decision 24)
     d.set_segment_count(23)
     run(d.set_segment_rgb([0, 22], (1, 2, 3)))
     run(d.set_segment_brightness([16], 40))

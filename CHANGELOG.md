@@ -225,7 +225,7 @@ model, from which the shipped readers are generated).
   **For integrators:** SEGMENTS plus COLOR_TEMP in `capabilities` no longer means `set_segment_color_temp`
   works. Gate a per-segment colour-temperature control on `profile.segment_color_temp` as well. A per-zone
   one needs only COLOR_TEMP and the profile's zones; don't gate it on the field. The Home Assistant
-  integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 40 released SKUs
+  integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 42 released SKUs
   listed under Changed their colour temperature would raise GoveeBleNotSupported.
   - **Frozen for integrators:** the field's name, keyword-only form, default (True) and meaning stay as they
     are through 1.x. The meaning is whether `set_segment_color_temp` may send a colour temperature to a piece
@@ -321,8 +321,8 @@ model, from which the shipped readers are generated).
   profile reaches that read. `set_zone_color_temp` doesn't read the field: it sends a zone's own mask, as in
   1.6.1. `set_color_temp` and `turn_on(kelvin=)` don't change, and nor does a segment RGB pick that is a Kelvin
   tint colour, which the app sends as a masked Kelvin frame too (`Config.Yt`). So SEGMENTS and COLOR_TEMP
-  together no longer mean `set_segment_color_temp` works (the integrator note under Added). **40 of the 104 SKUs
-  admitted at 1.6.1 lose segment colour temperature** (38 by default, 2 behind `allow_modelled`):
+  together no longer mean `set_segment_color_temp` works (the integrator note under Added). **42 of the 104 SKUs
+  admitted at 1.6.1 lose segment colour temperature** (40 by default, 2 behind `allow_modelled`):
   - dreamcolorlightv1: H61A8 (19), H617C / H617E / H617F (70), H617A (73), H618A / H802A (74), H619A (75),
     H6167 / H619Z (83), H6168 (136), H61BE (175), H6176 / H61BC (176), H61BA (178), H6175 (187), H616C /
     H616D / H616E (207), H6169 (262);
@@ -331,22 +331,36 @@ model, from which the shipped readers are generated).
     (218), H7053 (219), H7063 (227);
   - h61d3: H6640 (242), H6641 (247), H1AB1 (387), H1AB2 (388), H1AB3 (389), and H61B8 / H61B9 (299, behind
     `allow_modelled`);
-  - h7056: H7056 (304).
+  - h7056: H7056 (304);
+  - h60ax: H60A6 (303), and h6047: H6047 (119), both on list-d goodsTypes, by the user's decision 24 (next
+    bullet).
 
-  The 23 that keep it are on list-d goodsTypes: H60A6, H6047, H6042, H6087, H7055, H60B1, B7080 / B7081 /
-  B7082, H6098 / H8098, H6690, H61B3 / H61B6, H1A42, H1A43 / H1A44, H1AA2, H1AA5, H1B6A, and H61F2 / H61F5 /
-  H61F6 (behind `allow_modelled`). No table SKU's zone colour temperature changes: `set_zone_color_temp`
+  The 21 that keep it are on list-d goodsTypes: H6042, H6087, H7055, H60B1, B7080 / B7081 / B7082, H6098 /
+  H8098, H6690, H61B3 / H61B6, H1A42, H1A43 / H1A44, H1AA2, H1AA5, H1B6A, and H61F2 / H61F5 / H61F6 (behind
+  `allow_modelled`). No table SKU's zone colour temperature changes: `set_zone_color_temp`
   doesn't read the field. Three profiles split on the fact: H1AB2 leaves H1AA5's, H7066
   leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. H1AA5 and H7066, second in theirs at 1.6.1, now
   come first in their own, so a `Device` built from H1AA5's or H7066's profile without `sku=` names itself
   after them, not H1AB2 or H7055 (`create_device` and `make_device` always pass the SKU). H1AB2's and H7055's
   profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 70 have no
   segment colour temperature (47 by default, 23 behind `allow_modelled`) and 42 keep it (17 by default, 25
-  behind `allow_modelled`); in all, 110 SKUs have none (85 / 25) and 65 keep it (37 / 28). Source-traced
+  behind `allow_modelled`); in all, 112 SKUs have none (87 / 25) and 63 keep it (35 / 28). Source-traced
   (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15
   segments only, so no hardware observation supports a masked Kelvin on these rows.
+- **H60A6 and H6047: no colour temperature on a piece selection, as in the app** (the user's decision 24,
+  2026-10-22). Both screens have the Part tab's Kelvin item (list d), but it widens every pick to a whole zone.
+  On the H60A6 a selection that holds a ring piece goes to the whole ring 0-11, with piece 12 as picked
+  (`ColorModeH60A6.canClickColorTem:519-541` over `F`); on the H6047 it goes to each bar it touches, 0-4 / 5-9
+  (`ColorMode10Segment.canClickColorTem:655-691` with `q0` / `r0`). Neither screen sends a Kelvin to part of
+  a zone, which 1.6.1's `set_segment_color_temp` sent as selected. Rows h60ax 303 and h6047 119 now say
+  `segment_color_temp: false`, so on both `set_segment_color_temp` raises GoveeBleNotSupported before any I/O.
+  Whole-device Kelvin (`set_color_temp`, `turn_on(kelvin=)`), zone Kelvin (`set_zone_color_temp`, over the
+  masks that widening gives: H60A6 main `00 10` / background `ff 0f`, H6047 left `1f 00` / right `e0 03`)
+  and per-segment brightness are unchanged. A refusal only, with no frame change, so no bench run. An
+  integration that gates on the field (the integrator note under Added) offers no segment colour temperature
+  on the two; their zones keep it.
 - Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB and the segment
-  brightness of H6098 / H8098 / H6690 are under Fixed, and the 40 SKUs without segment colour temperature and
+  brightness of H6098 / H8098 / H6690 are under Fixed, and the 42 SKUs without segment colour temperature and
   the device-info reads of H60B1 / H7056 / H1630 / R1630 are in this section). Each other SKU of the 104
   admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its
   rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged.
@@ -570,11 +584,11 @@ model, from which the shipped readers are generated).
   the selection as it is, except on pact (1, >= 3) (`Support.supportPartTem`) while a ring piece is selected
   and the 12 ring pieces show one Kelvin-table colour (`ColorModeH60A6.F` / `G`), when the mask covers the
   whole ring 0-11 with piece 12 as picked. Modelling it is the user's decision. The Part-tab Kelvin of the
-  H60A6 and the H6047 (h6047 119, released), unchanged since 1.6.1, is now recorded in both rows' `doc`: the
-  app widens it to the whole ring once a ring piece is selected (`ColorModeH60A6.canClickColorTem` over `F`)
-  and to each bar touched (`ColorMode10Segment.canClickColorTem` with `q0` / `r0`), where
-  `set_segment_color_temp` sends the selection as it is. The user has decided to drop it on both rows instead
-  (decision 24, 2026-10-22: `segment_color_temp` false, zone Kelvin kept); that is not applied yet.
+  H60A6 and the H6047 (h6047 119, released) is now recorded in both rows' `doc`: the app widens it to the
+  whole ring once a ring piece is selected (`ColorModeH60A6.canClickColorTem` over `F`) and to each bar
+  touched (`ColorMode10Segment.canClickColorTem` with `q0` / `r0`), where 1.6.1's `set_segment_color_temp`
+  sent the selection as it is. Both rows now say `segment_color_temp: false` (decision 24, under Changed); the
+  zones keep their Kelvin and the segments their brightness.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named
     constant `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6
@@ -657,8 +671,10 @@ model, from which the shipped readers are generated).
   goodsType has a capability spec (only fanlight 359 / 368 register one), to `SupportPartColorTemConfig.b`:
   list d, 112 at pact (2,1), H7022 / H7024 at goodsType 0 (`SupportPartColorTemConfig.java:36-55,71-91`). The
   All tab's Kelvin covers every piece (`DelegateColorV2.G0`). Each of the 108 rows with support that keeps
-  `segments` and `color_temp` after its colour scheme's drops now states it, 36 true and 72 false, with that
-  doc-ref. The resolver requires it on exactly those rows and refuses it on any other. Docs corrected where
+  `segments` and `color_temp` after its colour scheme's drops now states it, 34 true and 74 false, with that
+  doc-ref. The resolver requires it on exactly those rows and refuses it on any other. Two list-d rows say
+  false, by the user's decision 24 (Changed): h60ax 303 and h6047 119, whose strips widen every Part-tab Kelvin
+  pick to a whole zone. Docs corrected where
   they said a non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360, h7050 157), or
   called the missing refusal a library gap (h6047 277). pact_h605b 142 / 243 now say their Part tab has no
   Kelvin item, next to their note that an in-range tint-colour pick on the selected pieces still sends a

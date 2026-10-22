@@ -370,7 +370,9 @@ class DeviceProfile:
     selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
     only its Part tab's Kelvin item over the selected ones, an item ``DelegateColorV2Part.Z0`` adds only
     where ``LightColorCapabilityCenter.C2`` holds: ``SupportPartColorTemConfig.b``'s goodsTypes (a
-    devices.yaml row's ``segment_color_temp``). False: ``set_segment_color_temp`` raises
+    devices.yaml row's ``segment_color_temp``), but for the H60A6 and H6047, whose strips widen every Part-tab
+    Kelvin pick to a whole zone (``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``)
+    and so send none to part of one (the user's decision 24). False: ``set_segment_color_temp`` raises
     GoveeBleNotSupported before any I/O, and the device's colour temperature is
     :meth:`~.device.Device.set_color_temp`'s. It does not govern :meth:`~.device.Device.set_zone_color_temp`,
     whose frame masks a zone's pieces: that needs SEGMENTS, COLOR_TEMP and a zone with segments only. It
