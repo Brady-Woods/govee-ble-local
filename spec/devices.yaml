@@ -765,7 +765,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -779,12 +779,17 @@ families:
             Kelvin on the colour tab (Config.I[302][4] false, canClickColorTem null). The illumination tab (mode 13)
             writes Config.N[0] = Bytes.C(K, 11, 1) then 33 04 in one compose (View4IlluminationMode.I0). Held behind
             allow_modelled: Device.set_color_temp sends the Kelvin frame alone. Kelvin KelvinConfig version 2 =
-            [2700, 6500]; brightness version 1. Main switch 33 01; no zone switch. No 0xB2. Scenes not traced.
+            [2700, 6500]; brightness version 1. Main switch 33 01; no zone switch. No 0xB2. Scenes not traced. Device
+            info (device_info_reads none): S4's compose (VM4Light$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (VM4Light$afterConnectedSingleReadDeviceInfo$1.p) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone.
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:87-91,134-136,356-371
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:137-140
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$connectBleSuc$1.java:32-45
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:65-98,140-176
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:65-98,108-130,140-176
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light.java:107-113,513-515,565-579,808-813,955
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a4/ColorModeH60A4.java:329-357
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:159-176,253-345
@@ -899,7 +904,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -920,13 +925,19 @@ families:
             zones confirmed) and 33 04 / 33 05 wake of every zone are H60A6 FIRMWARE-SOURCED; no H1270 firmware is
             in hand, and the app's switch ack sets only the main switch (VM4LightH1270.T5) and takes the zones from
             the next ee 30 push (A5). Admit after a bench check (a zone off by 33 30, then 33 01 00 / 01 and a 33 04)
-            or a library mode with the app's main-only model.
+            or a library mode with the app's main-only model. Device info (device_info_reads none): Y4's compose
+            (VM4LightH1270$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.c)
+            adds to its controller list only the day-sync reads (VM4LightH1270.Z4 -> DaySyncVM.Companion.f: aa f1 / aa
+            f0 / ac 09, where DaySyncConfig.A holds) and queues no aa 06 / aa 07 read; its success callback
+            (VM4LightH1270$afterConnectedSingleReadDeviceInfo$1.p) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone.
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:102-107,140-142,154-159,234-236,332-337
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:130
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:149-151
             - split_h60ax/com/govee/pact_h60a0/adjust/h1270/VM4LightH1270$connectBleSuc$1.java:32-40
-            - split_h60ax/com/govee/pact_h60a0/adjust/h1270/VM4LightH1270$afterConnectedSingleReadDeviceInfo$1.java:57-97,143-183
+            - split_h60ax/com/govee/pact_h60a0/adjust/h1270/VM4LightH1270$afterConnectedSingleReadDeviceInfo$1.java:57-97,110-133,143-183
             - split_h60ax/com/govee/pact_h60a0/adjust/h1270/VM4LightH1270.java:160-166,392-405,458-485,672-680,684-686,789-801,824-826,838-841,887-889,1108-1113,1300
             - split_h60ax/com/govee/pact_h60a0/adjust/h1270/DelegateHeaderH1270.java:358-372,433-470
             - split_h60ax/com/govee/pact_h60a0/adjust/h1270/ColorModeH1270.java:320-375,428-470
@@ -938,6 +949,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-215,251-258
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncVM.java:295-324
         "356":   # H1232 on the H60A6 screen (AcNewDetailH60A6, VM4LightH60A6), two zones
           models: [H1232]
           pacts: ["1,1"]
@@ -954,7 +966,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -975,13 +987,20 @@ families:
             version 2 = [2700, 6500]; brightness version 1. No 0xB2. Scenes not traced. Held behind allow_modelled:
             the library's global_power zone model (both zones confirmed after 33 01, 33 04 / 33 05 waking every
             zone) is H60A6 FIRMWARE-SOURCED; no H1232 firmware is in hand, and the app's switch ack sets only the
-            main switch (VM4LightH60A6.K5). Admit after a bench check or a library mode with the app's model.
+            main switch (VM4LightH60A6.K5). Admit after a bench check or a library mode with the app's model. Device
+            info (device_info_reads none): the VM4LightH60A6 compose
+            (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. The H60A6 row's firmware-sourced reads (303) rest on the H60A6's own
+            image and bench unit, not on this SKU's firmware.
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:108-110,143-145,154-159,222-224,294-309
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:127
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:141-143
             - split_h60ax/com/govee/pact_h60a0/NewDetailConfig.java:84-168
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:94-124,152-191
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:46-69,94-124,152-191
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:265-277,332-338,553-561,684-697,770-783,824-826,838-841,1100-1105,1271,1373-1376
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/DelegateHeaderH60A6.java:366-379,440-480,632-643
             - split_h60ax/com/govee/pact_h60a0/adjust/h1232/ColorModeH1232.java:384-416,450-509,570-590,700-720
@@ -1059,7 +1078,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -1078,13 +1097,17 @@ families:
             behind allow_modelled: the library's global_power zone model (both zones confirmed after 33 01,
             33 04 / 33 05 waking every zone) is H60A6 FIRMWARE-SOURCED; no H1252 firmware is in hand, and the app's
             switch ack sets only the main switch (VM4LightH60A6.K5). Admit after a bench check or a library mode
-            with the app's model.
+            with the app's model. Device info (device_info_reads none): as on 356, the VM4LightH60A6 compose
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the
+            reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds
+            the versions and device id from TLV 0x07 alone.
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:114-116,143-145,154-159,230-232,315-330
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:129
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:141-143
             - split_h60ax/com/govee/pact_h60a0/NewDetailConfig.java:258-342
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:94-124,152-191
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:46-69,94-124,152-191
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:265-277,332-338,553-561,684-697,770-783,824-826,838-841,1100-1105,1271,1373-1376
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/DelegateHeaderH60A6.java:366-379,440-480,632-643
             - split_h60ax/com/govee/pact_h60a0/adjust/h1252/ColorModeH1252.java:145-185,490-505,524-584,705-720
@@ -2323,7 +2346,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group, ic_num, cmd_16]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -2345,7 +2368,12 @@ families:
             and the request names only extra TLV types (here the four above), so the base TLVs 0x01 / 0x04 / 0x05 must
             come unasked, which the app's code doesn't show (the H60A6 and H6076 benches do; absent, every poll would
             read off, brightness 100). Not listed: the TimerConfig.f time sync before the read. No account
-            lock (SecretController is sent only in PairViewModel). Scenes untraced. Not hardware-verified.
+            lock (SecretController is sent only in PairViewModel). Scenes untraced. Device info (device_info_reads
+            none): Y4's compose (VM4Light$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (VM4Light$afterConnectedSingleReadDeviceInfo$1.k) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:914-918,790-803,1160-1161,1340-1342
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:235
@@ -8095,7 +8123,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [ic_num, cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -8121,7 +8149,12 @@ families:
             segment brightness Config.z[332] = 0 -> 15 02 (Bytes.G). Config.I[332] all on. Kelvin: no KelvinConfig key
             (the bytecode agrees) -> version 0 = [2000, 9000]. Gradual: written 33 a3 (Config.G[332] = 0), shown from
             TLV 0x05 byte 0, never read as aa a3, so not modelled. Scenes untraced (ScenesConfigBean {0, 1, 2, 3}).
-            Not hardware-verified.
+            Device info (device_info_reads none): R4's compose
+            (VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.m) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/SupportV2.java:32,69-92,162-172,178-186
             - split_rgbiclight/com/govee/rgbiclight/add/SubLib4BleIot.java:21-27
@@ -8178,7 +8211,7 @@ families:
           brightness_range: [1, 100]
           by_pact: { "1,2": { kelvin_range: [2000, 9000], doc: "KelvinConfig.Config.l4: version 0 at pact type 1, code >= 2; version 2 = [2700, 6500] below" } }
           status_read: [ic_num, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -8207,7 +8240,12 @@ families:
             shown from TLV 0x05 byte 0, never read as aa a3, so not modelled. Scenes untraced (ScenesConfigBean
             {0, 1, 2, 3}). R617G is tied to 351 by the catalogue snapshot alone (spec/govee_catalog.json, the app's
             SKU -> goodsType map, which gives H617G 351 too); no 7.7.02 code names it, so it takes these
-            goodsType-keyed facts. Not hardware-verified.
+            goodsType-keyed facts. Device info (device_info_reads none): x5 (Compose4BaseInfoSingleRead.Companion.b, no
+            controller list) queues no aa 06 / aa 07 read, and its success callback B5 takes the soft and hard versions
+            from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and
+            folds the versions and device id from TLV 0x07 alone. The Wi-Fi reads K adds where
+            LightVersionService.supportv2UIV1 holds (ControllerWifiSoftVersion, ControllerWifiHardVersion,
+            ControllerWifiMacAddress) are none of the three. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/SupportV2.java:35,69-70,93-97
             - split_rgbiclight/com/govee/rgbiclight/add/SubLib.java:21-27
@@ -8215,7 +8253,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/add/Model.java:45-50
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:197
             - split_rgbiclight/com/govee/rgbiclight/Support.java:51,85-96,98-114,179-182,257-260,266-276,397-400,402-411,414-531
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:131,161-208,671-730,732-761,1054-1076,1098-1100,1134-1138,1191-1215,1233-1239,1451-1458,1476-1478,1683-1707,1852-1872
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:131,161-208,671-730,732-761,763-803,1054-1076,1098-1100,1134-1138,1191-1215,1233-1239,1451-1458,1476-1478,1683-1707,1852-1872
             - split_rgbiclight/com/govee/rgbiclight/VM4Light$connectBleSuc$1.java:34-41
             - split_rgbiclight/com/govee/rgbiclight/mode/color/ColorControllerConfig.java:538-554
             - split_rgbiclight/com/govee/rgbiclight/Support4DreamColorLightV2.java:125-127
@@ -8262,7 +8300,7 @@ families:
           brightness_range: [1, 100]
           by_pact: { "1,2": { kelvin_range: [2000, 9000], doc: "KelvinConfig.Config.p4: version 0 at pact type 1, code >= 2; version 2 = [2700, 6500] below" } }
           status_read: [ic_num, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -8280,14 +8318,18 @@ families:
             Config.z[352] = 0 -> 15 02; Config.I[352] all on; Kelvin KelvinConfig.Config.p4 by pact. Gradual (TLV 0x05
             byte 0) not modelled; scenes untraced. R618D is tied to 352 by the catalogue snapshot alone
             (spec/govee_catalog.json, which gives H618G 352 too); no 7.7.02 code names it, so it takes these
-            goodsType-keyed facts. Not hardware-verified.
+            goodsType-keyed facts. Device info (device_info_reads none): as on 351, x5
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback B5 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/SupportV2.java:32,98-101
             - split_rgbiclight/com/govee/rgbiclight/add/SubLib4BleIot.java:21-27
             - split_rgbiclight/com/govee/rgbiclight/add/Model4BleIot.java:47-56
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:198
             - split_rgbiclight/com/govee/rgbiclight/Support.java:51,85-96,179-182,257-260,525-529
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:161-208,671-730,732-761,763-764,1054-1076,1134-1138,1191-1215,1476-1478,1683-1707,1852-1872
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:161-208,671-730,732-761,763-803,1054-1076,1134-1138,1191-1215,1476-1478,1683-1707,1852-1872
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,741-750
             - split_rgbiclight/com/govee/rgbiclight/add/AddDeviceM.java:30-37
             - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:352-358,804-816
@@ -11028,7 +11070,7 @@ families:
           account_lock: false
           scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -11048,14 +11090,18 @@ families:
             at app init), which is not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so
             scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not
             listed: the TimerConfig.f sync-time controller queued before the status read (Compose4BaseInfoSingleRead),
-            as on the H60A6 row. Not hardware-verified.
+            as on the H60A6 row. Device info (device_info_reads none): T4 (Compose4BaseInfoSingleRead.Companion.b, no
+            controller list) queues no aa 06 / aa 07 read, and its success callback W4 takes the soft and hard versions
+            from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none
+            either and folds the versions and device id from TLV 0x07 alone. H60B1 sent the three reads at 1.6.1; 1.7.0
+            drops them (the user's decision, 2026-10-22). Not hardware-verified.
           doc-ref:
             - split_floorlamp/com/govee/h60b1/pact/SubLib.java:20-26
             - split_floorlamp/com/govee/h60b1/pact/H60B1Support.java:39-44,91-93,32-37,48-50
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:191
             - base-classes2/com/govee/shared/config/h60b1/H60B1SceneConfig.java:46-48
             - split_floorlamp/com/govee/h60b1/detail/H60B1ConfigDetail.java:43-100
-            - split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:114-140,149-165,522-524,857-866,971-995
+            - split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:114-140,149-165,180-198,522-524,857-866,971-995
             - split_floorlamp/com/govee/h60b1/detail/Info4Detail.java:364-395
             - split_floorlamp/com/govee/h60b1/detail/mode/H60B1ColorMode.java:392-440,465-479
             - split_floorlamp/com/govee/h60b1/diy/H60B1DiyConfig.java:111-112
@@ -11714,7 +11760,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [color_group, write_check_ic]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -11743,7 +11789,12 @@ families:
             past its byte 0 and applies the 4-byte [bri, R, G, B] records only when there are exactly 8 (H1741ViewModel.x5 /
             y5 / z5, SubMode4Color.l); the library places each TLV's (len - 1) / 4 records by its group byte with stride 3,
             inferred from the direct aa a5 group size (H1741ViewModel.r5, reached only over IoT), which agrees for in-order
-            1-based groups of 3 or one TLV of 8 at group 1 but is not traced. Scenes untraced. Not hardware-verified.
+            1-based groups of 3 or one TLV of 8 at group 1 but is not traced. Scenes untraced. Device info
+            (device_info_reads none): u5 (Compose4BaseInfoSingleRead.Companion.c) adds to its controller list only the
+            day-sync reads (d5 -> c5 -> DaySyncVM.Companion.f) and queues no aa 06 / aa 07 read; its success callback y5
+            decodes the colour and hands the info to H1741ViewModel$connectBleSuc$1.h, which takes the soft and hard
+            versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none
+            either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:140
             - split_h6079/com/govee/h6020/pact/H1741Maker.java:14-16
@@ -12309,7 +12360,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12327,8 +12378,11 @@ families:
             bu: Bytes.f for RGB, Bytes.p for a Kelvin tint in range (the h6006 frames, no segment mask); Config.I[278] =
             {F, F, F, F, T}: colour temperature on, no segment brightness, no gradual entry (Config.G). Kelvin: no
             KelvinConfig entry, version 0 = [2000, 9000] (Support.a agrees); brightness: no BrightnessConfig entry, version
-            1 = [1, 100], 33 04 (ControllerBrightness). Scenes not traced (ScenesConfigBean(2, 1, {1, 0, 5})). Not
-            hardware-verified.
+            1 = [1, 100], 33 04 (ControllerBrightness). Scenes not traced (ScenesConfigBean(2, 1, {1, 0, 5})). Device
+            info (device_info_reads none): S4 (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa
+            06 / aa 07 read, and its success callback V4 takes the soft and hard versions from the reply's TLV 0x07
+            (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and
+            device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:223-226
             - split_h6840/com/govee/h6840/present/SubLib.java:24-31
@@ -12366,7 +12420,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12374,13 +12428,17 @@ families:
             H6841 (goodsType 325: KmpGoodsType, SKUH6841ItemClick) on the same H6840DetailAC / VM4H6840 screen as 278, with
             the same connect read, keep-alive, power, colour, Kelvin and brightness facts. Pacts (1,1) / (1,2) (ConfigH6840.c
             -> Pact.b; n4 = Support.h over that list). Colour version 2 (Config.x -> Ou), Config.I[325] = QO = {F, F, F, F,
-            T}. Scenes not traced. Not hardware-verified.
+            T}. Scenes not traced. Device info (device_info_reads none): as on 278, S4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback V4 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:224
             - split_h6840/com/govee/h6840/present/SKUH6841ItemClick.java:38-40
             - split_h6840/com/govee/h6840/ConfigH6840.java:126-136,165-177
             - split_h6840/com/govee/h6840/Support.java:97-116
-            - split_h6840/com/govee/h6840/vm/VM4H6840.java:134-160,759-769
+            - split_h6840/com/govee/h6840/vm/VM4H6840.java:134-160,191-212,759-769
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1401-1405,4840-4844,11378-11381,11645-11648
         "381":   # H6842
           models: [H6842]   # SKUH6842ItemClick.getGoodsType 381; ConfigH684243.a Matter name H6842 at 381
@@ -12392,7 +12450,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12400,12 +12458,16 @@ families:
             H6842 (goodsType 381: KmpGoodsType, SKUH6842ItemClick) on the same H6840DetailAC / VM4H6840 screen as 278
             (ConfigH684243.a routes it to /h6840/detailsAc), with the same connect read, keep-alive, power, colour, Kelvin
             and brightness facts. Pact (1,1) only (ConfigH684243.b -> Pact.b; n4 = ConfigH684243.h over that list). Colour
-            version 2 (Config.x -> dx), Config.I[381] = RQ = {F, F, F, F, T}. Scenes not traced. Not hardware-verified.
+            version 2 (Config.x -> dx), Config.I[381] = RQ = {F, F, F, F, T}. Scenes not traced. Device info
+            (device_info_reads none): as on 278, S4 (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues
+            no aa 06 / aa 07 read and its success callback V4 takes the soft and hard versions from the reply's TLV 0x07
+            (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and
+            device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:225
             - split_h6840/com/govee/h6840/present/SKUH6842ItemClick.java:38-40
             - split_h6840/com/govee/h6840/ConfigH684243.java:143-169,632-653
-            - split_h6840/com/govee/h6840/vm/VM4H6840.java:134-160,759-769
+            - split_h6840/com/govee/h6840/vm/VM4H6840.java:134-160,191-212,759-769
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1974-1978,5365-5369,13789-13792,11818-11821
         "382":   # H6843
           models: [H6843]   # SKUH6843ItemClick.getGoodsType 382; ConfigH684243.a Matter name H6843 at 382
@@ -12417,7 +12479,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12425,12 +12487,16 @@ families:
             H6843 (goodsType 382: KmpGoodsType, SKUH6843ItemClick) on the same H6840DetailAC / VM4H6840 screen as 278, with
             the same connect read, keep-alive, power, colour, Kelvin and brightness facts. Pact (1,1) only (ConfigH684243.c ->
             Pact.b; n4 = ConfigH684243.h over that list). Colour version 2 (Config.x -> ex), Config.I[382] = SQ = {F, F, F,
-            F, T}. Scenes not traced. Not hardware-verified.
+            F, T}. Scenes not traced. Device info (device_info_reads none): as on 278, S4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback V4 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:226
             - split_h6840/com/govee/h6840/present/SKUH6843ItemClick.java:38-40
             - split_h6840/com/govee/h6840/ConfigH684243.java:143-160,171-178,632-653
-            - split_h6840/com/govee/h6840/vm/VM4H6840.java:134-160,759-769
+            - split_h6840/com/govee/h6840/vm/VM4H6840.java:134-160,191-212,759-769
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1979-1983,5370-5374,13946-13949,11980-11983
       wire_cipher: runtime
       wire:
@@ -12682,7 +12748,7 @@ families:
           kelvin_range: [2700, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12697,12 +12763,17 @@ families:
             false, J3 empty), live power the ee 30 switch push (DefParser bit 0). Not modelled: the off-to-on re-read
             (Compose4Off2On and direct aa a5 groups), the colour-picker realtime preview (Config.g0 = 2), gradual (read
             from TLV 0x05 and written 33 a3, where the library's gradual needs an aa a3 read the screen does not send).
-            Not listed: the TimerConfig.f time sync before the status read. Not hardware-verified.
+            Not listed: the TimerConfig.f time sync before the status read. Device info (device_info_reads none): the
+            compose (H6860DetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (H6860DetailVM$afterConnectedSingleReadDeviceInfo$1.p) takes the soft and hard versions from the
+            reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds
+            the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:54-56
             - split_h6840/com/govee/h6609/h6860/H6860Config.java:76,88-92,110-122,186-198
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:228
-            - split_h6840/com/govee/h6609/h6860/H6860DetailVM$afterConnectedSingleReadDeviceInfo$1.java:65-95,140-175
+            - split_h6840/com/govee/h6609/h6860/H6860DetailVM$afterConnectedSingleReadDeviceInfo$1.java:65-95,108-130,140-175
             - split_h6840/com/govee/h6609/h6860/H6860DetailVM.java:571-576,647-666,1047-1071
             - split_h6840/com/govee/h6609/h6860/H6860ColorMode.java:87-113,307-342
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
@@ -12733,7 +12804,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12747,13 +12818,18 @@ families:
             true]: no gradual control; the segment-brightness flag is on, but with one piece the row offers no segments
             (color_functions left out). Kelvin version 0 = [2000, 9000]; brightness version 1. Power 33 01, keep-alive aa 00
             (I3 false), live power the ee 30 switch push. Not listed: the MTU 512 request (T3), the TimerConfig.f time sync,
-            the off-to-on re-read. Not hardware-verified.
+            the off-to-on re-read. Device info (device_info_reads none): the compose
+            (H6350ViewModel$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (H6350ViewModel$afterConnectedSingleReadDeviceInfo$1.p) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:70-71
             - split_h6840/com/govee/h6609/pact/Support.java:83-85,162-164,319-330
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:207
             - split_h6840/com/govee/h6609/h6350/H6350Config.java:56,87-143
-            - split_h6840/com/govee/h6609/h6350/H6350ViewModel$afterConnectedSingleReadDeviceInfo$1.java:65-95,169
+            - split_h6840/com/govee/h6609/h6350/H6350ViewModel$afterConnectedSingleReadDeviceInfo$1.java:65-95,108-130,140-175
             - split_h6840/com/govee/h6609/h6350/H6350ViewModel.java:481-486,522-547,564-577,977-1000
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-64,140-146
@@ -12782,7 +12858,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12794,13 +12870,17 @@ families:
             -> Bytes.h, a tint colour in range as Bytes.r type 1 (Config.P = 1); Config.I[378] all on. Kelvin version 0 =
             [2000, 9000]; brightness version 1. Power 33 01; keep-alive aa 00 (I3 false, J3 empty), live power the ee 30
             switch push. Not modelled: the off-to-on re-read, the realtime preview (Config.g0 = 2), gradual (TLV 0x05 read,
-            33 a3 write, no aa a3 read). Not listed: the MTU 512 request (T3), the TimerConfig.f time sync. Not
-            hardware-verified.
+            33 a3 write, no aa a3 read). Not listed: the MTU 512 request (T3), the TimerConfig.f time sync. Device info
+            (device_info_reads none): the compose (H6850DetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (H6850DetailVM$afterConnectedSingleReadDeviceInfo$1.p) takes the soft and hard versions from the
+            reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds
+            the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:58-60
             - split_h6840/com/govee/h6609/h6850/H6850Config.java:67,79-83,97-109
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:227
-            - split_h6840/com/govee/h6609/h6850/H6850DetailVM$afterConnectedSingleReadDeviceInfo$1.java:65-95,169
+            - split_h6840/com/govee/h6609/h6850/H6850DetailVM$afterConnectedSingleReadDeviceInfo$1.java:65-95,108-130,140-175
             - split_h6840/com/govee/h6609/h6850/H6850DetailVM.java:604-609,636-661,702-720,1149-1170
             - split_h6840/com/govee/h6609/h6850/H6850ColorMode.java:86-107,358-367
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
@@ -12827,7 +12907,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12835,7 +12915,11 @@ families:
             H6351 on the H6350 screen (Model.t: isGoodsTypeH6351), pact (1,1) (Support.w); every fact is 374's:
             ac 03 02 41 a5, one piece (no colour-strip interceptor, getColorPieceSize(392) = 1), Config.x[392] = 0 -> Yt ->
             Bytes.h / Bytes.r type 1 (Config.P = 1), Config.I[392] = [false, true, true, true, true], Kelvin version 0 =
-            [2000, 9000], brightness version 1, keep-alive aa 00, ee 30 switch push. Not hardware-verified.
+            [2000, 9000], brightness version 1, keep-alive aa 00, ee 30 switch push. Device info (device_info_reads
+            none): as on 374, the H6350 compose (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no
+            aa 06 / aa 07 read and its success callback (H6350ViewModel$afterConnectedSingleReadDeviceInfo$1.p) takes
+            the soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the
+            library sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:70-71
             - split_h6840/com/govee/h6609/pact/Support.java:86-88,168-170,332-343
@@ -12843,6 +12927,7 @@ families:
             - split_h6840/com/govee/h6609/h6350/H6350Config.java:65,87-143
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1999-2003,14596-14599,6564-6568,16997-17000,5405-5409,13083-13086
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:989-993,1558-1560
+            - split_h6840/com/govee/h6609/h6350/H6350ViewModel$afterConnectedSingleReadDeviceInfo$1.java:108-130,140-175
         "398":   # H6250, the h6250 NewDetailAc screen; no support (doc)
           models: [H6250]
           pacts: ["1,1"]
@@ -12950,7 +13035,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction, ic_num]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12984,7 +13069,13 @@ families:
             (disputed 2026-10-21, h70b3.md "Disputed"): the colour-temperature read-back is inferred. If the firmware echoes
             the Bytes.p tint in the report's RGB slot, the app shows colour temperature where the library reports RGB; the
             echo is not hardware-checked, and no admitted row has this difference (tablelampv1 22 reports ff ff ff, not a
-            tint). Every frame the library sends is traced. Not hardware-verified.
+            tint). Every frame the library sends is traced. Device info (device_info_reads none): u5
+            (Compose4BaseInfoSingleRead.Companion.c) queues no aa 06 / aa 07 read: its controller list holds only the
+            room-feast SingleController read (where Support.a0 holds) and V5, which is empty on a standalone unit
+            (VM4H70B345.V5; VM4H70B345Splicing.V5 at splicing state 0); its success callback y5 takes the soft and hard
+            versions from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends
+            none either and folds the versions and device id from TLV 0x07 alone. The (1,1) path, r6
+            (AfterConnectSuccessReadDeviceInfo), does read them, but this row leaves (1,1) out. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:257-259
             - split_h70b1/com/govee/h70b3/pact/SubLib.java:20-27
@@ -12993,7 +13084,7 @@ families:
             - split_h70b1/com/govee/h70b3/Support.java:176,265-290,416-421,492-503,555-559,604-864,1099-1101
             - split_h70b1/com/govee/h70b3/adjust/H70B3B4B5DeviceDetailActivity.java:67,118-132
             - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345Splicing.java:486-489,536-560,735-759
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,859-867,881-920,927-946,1213-1238,1275-1288,1343-1345,1364-1367,1620-1644,1677-1685
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,859-867,881-920,927-946,1185-1187,1213-1238,1275-1288,1343-1345,1364-1367,1620-1644,1677-1685
             - split_h70b1/com/govee/h70b3/adjust/vm/AfterConnectSuccessReadDeviceInfo.java:70-159
             - split_h70b1/com/govee/h70b3/adjust/vm/SingleController.java:17-21,41-48
             - split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:149-157,272-308,666-710,861-867
@@ -13026,7 +13117,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction, ic_num]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13036,12 +13127,15 @@ families:
             -> bu: Bytes.f / Bytes.p, Config.I[230][4] = true), Kelvin version 0 = [2000, 9000] and brightness version 1;
             the aa 00 heartbeat and the ee 30 push. Not listed, as on 229: the time sync, the firmware-gated aa 60 01 feast
             read and the splicing reads. Support modelled, as on 229: the colour-temperature read-back is inferred
-            (h70b3.md "Disputed"). Not hardware-verified.
+            (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and
+            its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:258
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:85-96
             - split_h70b1/com/govee/h70b3/Support.java:292-317,416-421,504-511,1103-1106
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1085-1089,4540-4544,9821-9824,16628-16631
         "231":   # H70B5, 3 units
           models: [H70B5]
@@ -13054,7 +13148,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction, ic_num]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13063,12 +13157,15 @@ families:
             the same u5 status read ac 03 03 41 39 40 on (1,2) and (2,1), the same writes (Config.x[231] = 2 -> bu,
             Config.I[231][4] = true), Kelvin [2000, 9000], brightness percent; the aa 00 heartbeat and the ee 30 push. Not
             listed, as on 229. Support modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md
-            "Disputed"). Not hardware-verified.
+            "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its
+            success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:259
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:98-109
             - split_h70b1/com/govee/h70b3/Support.java:319-338,416-421,512-519,1108-1111
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1090-1094,4545-4549,9976-9979,16790-16793
         "255":   # H6810, no TLV 0x40 (device count forced to 1)
           models: [H6810]
@@ -13081,7 +13178,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13092,12 +13189,15 @@ families:
             writes (Config.x[255] = 2 -> bu: Bytes.f / Bytes.p, Config.I[255][4] = true), Kelvin version 0 = [2000, 9000],
             brightness version 1; the aa 00 heartbeat and the ee 30 push. Not listed: the time sync and the splicing reads
             (the feast read is 229 / 230 / 231 only). Support modelled, as on 229: the colour-temperature read-back is
-            inferred (h70b3.md "Disputed"). Not hardware-verified.
+            inferred (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07
+            read and its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(),
+            d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id
+            from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:218
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:39-50
             - split_h70b1/com/govee/h70b3/Support.java:217-239,416-421,453-458,520-527,704-717,768-777,1089-1091
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:741-756,783-839,881-900,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:741-756,783-839,881-900,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1291-1295,4520-4524,9050-9053,16143-16146
         "256":   # H6811, as 255
           models: [H6811]
@@ -13110,7 +13210,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13118,12 +13218,15 @@ families:
             H6811 (KmpGoodsType 256), the 255 facts: Support.F registers (1,1) (2,1) (2,2) (2,3) (AddDeviceM.c); the status
             read ac 03 02 41 39 on every pact but (1,1), device count 1; Config.x[256] = 2 -> bu, Config.I[256][4] = true,
             Kelvin [2000, 9000], brightness percent; the aa 00 heartbeat and the ee 30 push. Not listed, as on 255. Support
-            modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md "Disputed"). Not hardware-verified.
+            modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md "Disputed"). Device info
+            (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its success callback y5 takes the
+            soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the
+            library sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:219
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:52-63
             - split_h70b1/com/govee/h70b3/Support.java:241-263,416-421,453-458,528-535,1094-1096
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,881-900,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,881-900,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1296-1300,4525-4529,9209-9212,16298-16301
       wire_cipher: runtime
       wire:
@@ -13179,7 +13282,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13205,7 +13308,10 @@ families:
             queued before the status read, the MTU request (T3), the once-per-screen Matter info reads on pro type 0xAB
             after it (e5 -> R(2) -> K -> x2 -> MatterManager.r: ab 01 02 / 04 / 05, when the soft, hard and Wi-Fi
             versions are known), scenes (untraced), DIY / cell graffiti, music, game mode, the power-off memory write
-            (33 41 02 <v>). Not hardware-verified.
+            (33 41 02 <v>). Device info (device_info_reads none): c5 (Compose4BaseInfoSingleRead.Companion.b, no
+            controller list) queues no aa 06 / aa 07 read, and its success callback e5 takes the soft and hard versions
+            from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none
+            either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:217
             - split_h70b1/com/govee/h70b3/pact/SubLib.java:20-27
@@ -13286,7 +13392,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, check_direction]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13305,7 +13411,12 @@ families:
             before the status read, MTU 512, scenes (untraced), DIY / graffiti, music, feast, splicing, display.
             Known gap: VM4H70B6.n5 reads TLV 0x39 byte 0 unguarded (:645-653), so an empty 0x39 fails the app's whole
             status read, while the library (no form for it) still applies the burst's power and brightness.
-            Not hardware-verified.
+            Device info (device_info_reads none): i5 (Compose4BaseInfoSingleRead.Companion.c) queues no aa 06 / aa 07
+            read: its controller list holds the room-feast SingleController read (where Support.i and M5 hold), the
+            WIFIUpgradesController Wi-Fi OTA read and E5, which is empty on a unit that is not spliced (VM4H70B6.E5;
+            VM4SplicingH70B6.E5 adds the splicing reads); its success callback o5 takes the soft and hard versions from
+            the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either
+            and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b6/Support.java:21-26,57-75,99-104
             - split_h70b1/com/govee/h70b6/present/SubLib.java:24-33
@@ -13314,7 +13425,7 @@ families:
             - split_h70b1/com/govee/h70b6/Config4H70B6Manager.java:112-139
             - split_h70b1/com/govee/h70b6/H70b6ApplicationImp.java:36-37
             - base-classes9/com/govee/base2home/pact/Pact.java:48-58
-            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:125,467-535,619-696,904-939,1034-1036,1222-1229,1470-1494
+            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:125,467-535,619-696,786-788,904-939,1034-1036,1222-1229,1470-1494
             - split_h70b1/com/govee/h70b6/adjust/VM4SplicingH70B6.java:78,469-490,494-543
             - split_h70b1/com/govee/h70b6/pact/BleProtocol.java:17-19,26
             - split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:149-158,272-308,666-710
@@ -13344,7 +13455,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, check_direction, cmd_7d, cmd_7e]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13357,12 +13468,15 @@ families:
             temperature unit, both read raw (not modelled). The screen also reads aa 60 01 (feast, Support.i holds for
             341) before aa 25 01, not modelled. Known gap, as 329's 0x39: n5 reads byte 0 of TLV 0x39, 0x7D and 0x7E
             unguarded, so an empty one fails the app's whole status read, while the library (no form for them) still
-            applies the burst's power and brightness. Not hardware-verified.
+            applies the burst's power and brightness. Device info (device_info_reads none): as on 329, i5 queues no aa
+            06 / aa 07 read and its success callback o5 takes the soft and hard versions from the reply's TLV 0x07 (g1
+            and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and
+            device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b8/Config4H70B8Manager.java:82-101
             - split_h70b1/com/govee/h70b8/H70b8ApplicationImp.java:36-37
             - split_h70b1/com/govee/h70b6/Support.java:21-26,57-75,92-97
-            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-506,631-669,1222-1229
+            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:467-535,631-669,674-696,1222-1229
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1784-1788,4820-4824,11025-11028,15367-15370
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:858-862,1171-1174
       wire_cipher: runtime
@@ -13903,7 +14017,7 @@ families:
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
           status_read: [cmd_41, ic_num, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13921,7 +14035,12 @@ families:
             a3, but its state comes from the status TLV 0x05, and a status row's gradual read is a library gap. MODELLED: the
             pieces are the live IC count with no app cap (num_segments 56, as h61d3 299); the library places the 0xA5 groups
             over num_segments, where the app clips them to the IC count. A wheel drag streams a5 02 83 R G B real-time frames
-            (Config.g0[394] = 2); touch-up sends the normal 15 01 write, which the library matches. Not hardware-verified.
+            (Config.g0[394] = 2); touch-up sends the normal 15 01 write, which the library matches. Device info
+            (device_info_reads none): the compose (H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the
+            reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds
+            the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:88-89,132-135,222-229,299-303,326,347,378-384
             - split_h705a/com/govee/h705a/pact/Model.java:225-228
@@ -16006,7 +16125,7 @@ families:
           account_lock: false
           scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -16027,13 +16146,18 @@ families:
             scene whose param starts 0x50 goes through the family's new-DIY parsers (H7056DiyConfig registers 304 at app
             init), which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so
             scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not in the
-            row: the 33 a3 gradual write (Config.G[304] = 0), which the screen never reads back. Not hardware-verified.
+            row: the 33 a3 gradual write (Config.G[304] = 0), which the screen never reads back. Device info
+            (device_info_reads none): T4 (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 /
+            aa 07 read, and its success callback W4 takes the soft and hard versions from the reply's TLV 0x07 (g1 and
+            k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and
+            device id from TLV 0x07 alone. H7056 sent the three reads at 1.6.1; 1.7.0 drops them (the user's decision,
+            2026-10-22). Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:237
             - base-classes2/com/govee/shared/config/h7056/H7056SceneConfig.java:54-56
             - split_outdoorlight/com/govee/h7056/pact/H7056Support.java:42-47,56-58,94-96
             - split_outdoorlight/com/govee/h7056/detail/H7056ConfigDetail.java:51-120
-            - split_outdoorlight/com/govee/h7056/detail/H7056ViewModel.java:146-171,539-541,859-869,973-992
+            - split_outdoorlight/com/govee/h7056/detail/H7056ViewModel.java:117-143,146-171,187-205,539-541,859-869,973-992
             - split_outdoorlight/com/govee/h7056/detail/Info4Detail.java:362-393
             - split_outdoorlight/com/govee/h7056/diy/H7056DiyConfig.java:128
             - split_outdoorlight/com/govee/h7056/H7056ApplicationImp.java:46
@@ -16103,7 +16227,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -16125,7 +16249,12 @@ families:
             lead, tint), the h60a6 15 01 frames over a 4-piece mask (ColorPieceConfig.j: set Z -> 4); segment
             brightness Config.z[293] = 0 -> 15 02 (Bytes.G); Config.I[293] = {gradual off, -, -, segment brightness on,
             colour temperature on}. Kelvin version 2 = [2700, 6500] (KelvinConfig.Config.i[293]; Support.f agrees).
-            Scenes untraced (ScenesConfigBean op set {0, 1, 2, 3, 5, 6}). Not hardware-verified.
+            Scenes untraced (ScenesConfigBean op set {0, 1, 2, 3, 5, 6}). Device info (device_info_reads none): the
+            compose (VM4Light$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (VM4Light$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:252
             - split_outdoorlight/com/govee/h7086/pact/SubLib.java:23-30
@@ -16943,7 +17072,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -16969,12 +17098,16 @@ families:
             (localSkuComponentConfigs.json H7057) also has the illumination tab 13, whose View4IlluminationMode.I0
             sends Bytes.C (Config.N[0]) and 33 04 as one write; the row follows the colour tab. Kelvin version 2 =
             [2700, 6500]; brightness: the header's BrightnessConfig.b -> 33 04, version 1 = percent. Scenes, music
-            and DIY are not traced (scene_dialect untraced). Not hardware-verified.
+            and DIY are not traced (scene_dialect untraced). Device info (device_info_reads none): V4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback Y4 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:238-239
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-78
             - split_h7050/com/govee/h7050/pact/Support.java:157-159,329-346,375-383,454-460
-            - split_h7050/com/govee/h7050/newdetail/h7057/H7057VM4Light.java:116-171,304-330,358-388,560-566,606-618,641-643,704-706,875-884,989-1014
+            - split_h7050/com/govee/h7050/newdetail/h7057/H7057VM4Light.java:116-171,181-199,304-330,358-388,560-566,606-618,641-643,704-706,875-884,989-1014
             - split_h7050/com/govee/h7050/newdetail/h7057/NewDetailConfig4H7057.java:37-95
             - split_h7050/com/govee/h7050/newdetail/h7057/H7057ColorMode.java:394-441
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17011,7 +17144,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17027,13 +17160,16 @@ families:
             over all 6 pieces. 275 is not in SupportPartColorTemConfig.d, so the Part tab has no Kelvin item and
             there is no per-piece CCT. The bundled mode list (H7058) also has the illumination tab 13 (Bytes.C plus
             33 04), which the row does not follow. Any ee 30 switch change re-reads (Compose4Off2On, then aa a5; not
-            modelled). Kelvin version 2 = [2700, 6500]; brightness version 1 = percent. Scenes not traced. Not
-            hardware-verified.
+            modelled). Kelvin version 2 = [2700, 6500]; brightness version 1 = percent. Scenes not traced. Device info
+            (device_info_reads none): as on 274, V4 (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues
+            no aa 06 / aa 07 read and its success callback Y4 takes the soft and hard versions from the reply's TLV 0x07
+            (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:239
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-78
             - split_h7050/com/govee/h7050/pact/Support.java:160-162,329-346,375-383,458-460
-            - split_h7050/com/govee/h7050/newdetail/h7057/H7057VM4Light.java:116-171,304-330,358-388,560-566,606-618,641-643,704-706,875-884,989-1014
+            - split_h7050/com/govee/h7050/newdetail/h7057/H7057VM4Light.java:116-171,181-199,304-330,358-388,560-566,606-618,641-643,704-706,875-884,989-1014
             - split_h7050/com/govee/h7050/newdetail/h7057/NewDetailConfig4H7057.java:37-95
             - split_h7050/com/govee/h7050/newdetail/h7057/H7057ColorMode.java:394-441
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17062,7 +17198,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17085,12 +17221,16 @@ families:
             H7093ColorMode.canClickColorTem); the bundled mode list (localSkuComponentConfigs.json H7093) has no
             illumination tab 13.
             Kelvin version 2 = [2700, 6500]; brightness: the header's BrightnessConfig.b -> 33 04, version 1 =
-            percent. Scenes not traced. Not hardware-verified.
+            percent. Scenes not traced. Device info (device_info_reads none): Y4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback b5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:254
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-82
             - split_h7050/com/govee/h7050/pact/Support.java:163-165,282-326,329-346,375-383,490-492
-            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1099-1123
+            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,309-327,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1099-1123
             - split_h7050/com/govee/h7050/newdetail/h7093/NewDetailConfig4H7093.java:53-66
             - split_h7050/com/govee/h7050/newdetail/h7093/H7093ColorMode.java:400-424
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17125,7 +17265,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17139,13 +17279,16 @@ families:
             Bytes.r (ColorViewModel.U) from the All tab's Kelvin strip over all pieces and, as 290 is in
             SupportPartColorTemConfig.d, from the Part tab's Kelvin item over the selected pieces; the bundled mode
             list (H7094) has no illumination tab. Any ee 30 switch change re-reads (Compose4Off2On, then aa a5; not
-            modelled). Kelvin version 2 = [2700, 6500]; brightness version 1 = percent. Scenes not traced. Not
-            hardware-verified.
+            modelled). Kelvin version 2 = [2700, 6500]; brightness version 1 = percent. Scenes not traced. Device info
+            (device_info_reads none): as on 289, Y4 (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues
+            no aa 06 / aa 07 read and its success callback b5 takes the soft and hard versions from the reply's TLV 0x07
+            (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:255
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-82
             - split_h7050/com/govee/h7050/pact/Support.java:166-168,329-346,375-383,494-496
-            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1099-1123
+            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,309-327,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1099-1123
             - split_h7050/com/govee/h7050/newdetail/h7093/NewDetailConfig4H7093.java:53-66
             - split_h7050/com/govee/h7050/newdetail/h7093/H7093ColorMode.java:400-424
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17174,7 +17317,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17190,12 +17333,16 @@ families:
             all 4 pieces. 305 is not in SupportPartColorTemConfig.d, so the Part tab has no Kelvin item and there is
             no per-piece CCT; the bundled mode list (H8066) has no illumination tab. Any ee 30 switch change re-reads
             (Compose4Off2On, then aa a5; not modelled). Kelvin version 2 = [2700, 6500]; brightness version 1 =
-            percent. Scenes not traced. Not hardware-verified.
+            percent. Scenes not traced. Device info (device_info_reads none): as on 289, Y4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback b5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:287
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-82
             - split_h7050/com/govee/h7050/pact/Support.java:166-174,329-346,375-383,498-500,668-679
-            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1099-1123
+            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,309-327,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1099-1123
             - split_h7050/com/govee/h7050/newdetail/h7093/NewDetailConfig4H7093.java:53-66
             - split_h7050/com/govee/h7050/newdetail/h7093/H7093ColorMode.java:400-424
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17224,7 +17371,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17243,12 +17390,16 @@ families:
             KelvinConfig.m; Support.getColorTemRange's [2700, 6500] is not on this path). Brightness
             version 1 = percent. Not in the row: the colour page's gradual switch (Config.G[393] = 0 -> 33 a3), whose
             state the screen takes from TLV 0x05 and never reads with aa a3 over BLE (the aa a3 read is the IoT
-            path's, p1 -> e5). Scenes not traced. Not hardware-verified.
+            path's, p1 -> e5). Scenes not traced. Device info (device_info_reads none): as on 289, Y4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback b5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:288
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-82
             - split_h7050/com/govee/h7050/pact/Support.java:175-177,282-326,329-346,355-367,375-383,502-504
-            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,348-361,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1016-1048,1099-1123
+            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,309-327,348-361,432-458,486-515,645-650,691-706,726-728,789-791,965-978,1016-1048,1099-1123
             - split_h7050/com/govee/h7050/newdetail/h7093/NewDetailConfig4H7093.java:80-91
             - split_h7050/com/govee/h7050/newdetail/h7093/H8067ColorMode.java:410-439
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17279,7 +17430,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.08", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.J3: versionSoft (Info4BleIotDevice.a0) compared as a string with 1.00.08; the All tab's Kelvin strip range (KelvinConfig.m) and Config.Yt's Kelvin test both read it" }
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17298,12 +17449,17 @@ families:
             per-piece CCT; the bundled mode list (H3200) has no illumination tab 13. Kelvin: version 2 = [2700,
             6500], version 5 = [1000, 10000] from versionSoft 1.00.08 (KelvinConfig.Config.J3), the strip's range and
             Yt's Kelvin test alike. Any ee 30 switch change re-reads (Compose4Off2On, then aa a5; not modelled).
-            Brightness version 1 = percent. Scenes not traced. Not hardware-verified.
+            Brightness version 1 = percent. Scenes not traced. Device info (device_info_reads none): as on 289, Y4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read and its success
+            callback b5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), the soft one the by_firmware Kelvin gate tests (KelvinConfig reads
+            Info4BleIotDevice.a0, which g1 sets); so the library sends none either and folds the versions and device id
+            from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:157
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-82
             - split_h7050/com/govee/h7050/pact/Support.java:195-197,329-346,375-383,410-412,581-592
-            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,432-458,486-515,645-650,691-706,789-791,965-978,1099-1123
+            - split_h7050/com/govee/h7050/newdetail/h7093/H7093VM4Light.java:244-307,309-327,432-458,486-515,645-650,691-706,789-791,965-978,1099-1123
             - split_h7050/com/govee/h7050/newdetail/h7093/NewDetailConfig4H7093.java:68-78
             - split_h7050/com/govee/h7050/newdetail/h3200/H3200ColorMode.java:324-326
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17334,7 +17490,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17353,12 +17509,16 @@ families:
             ColorViewModel.U): one Bytes.r over all 3 pieces. 315 is not in SupportPartColorTemConfig.d, so the Part
             tab has no Kelvin item (H7087ColorMode.canClickColorTem is never reached) and there is no per-piece CCT;
             the bundled mode list (H7087) has no illumination tab. Kelvin version 2 = [2700, 6500]; brightness
-            version 1 = percent. Scenes not traced. Not hardware-verified.
+            version 1 = percent. Scenes not traced. Device info (device_info_reads none): T4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback W4 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:253
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-86
             - split_h7050/com/govee/h7050/pact/Support.java:169-171,329-346,375-383,486-488,629-640
-            - split_h7050/com/govee/h7050/newdetail/h7087/H7087VM4Light.java:102-160,290-320,339-380,509-512,555-570,595-597,658-660,819-826,924-948
+            - split_h7050/com/govee/h7050/newdetail/h7087/H7087VM4Light.java:102-160,167-185,290-320,339-380,509-512,555-570,595-597,658-660,819-826,924-948
             - split_h7050/com/govee/h7050/newdetail/h7087/NewDetailConfig4H7087.java:52-63
             - split_h7050/com/govee/h7050/newdetail/h7087/H7087ColorMode.java:383-407
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17391,7 +17551,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.09", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.h4: versionSoft (Info4BleIotDevice.a0) compared as a string with 1.00.09; the All tab's Kelvin strip range (KelvinConfig.m) and Config.Yt's Kelvin test both read it" }
           status_read: [check_direction, cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17418,7 +17578,13 @@ families:
             (ColorModeControllerConfig.k / e -> w -> l) goes as 15 04 group frames (Bytes.m) and 15 03 brightness
             (Bytes.F), not the row's frames; single-colour, Kelvin and segment picks are the Yt / Bytes.G frames
             above. Brightness version 1 = percent. Not modelled: the calibration write (39 <type>,
-            VM4LightH3501.r5). Scenes not traced. Not hardware-verified.
+            VM4LightH3501.r5). Scenes not traced. Device info (device_info_reads none): the compose
+            (VM4LightH3501$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (VM4LightH3501$afterConnectedSingleReadDeviceInfo$1.m) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), the soft one the by_firmware Kelvin gate tests
+            (KelvinConfig reads Info4BleIotDevice.a0, which k2 sets through g1); so the library sends none either and
+            folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:161
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-90
@@ -17460,7 +17626,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.09", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.i4: versionSoft (Info4BleIotDevice.a0) compared as a string with 1.00.09; the All tab's Kelvin strip range (KelvinConfig.m) and Config.Yt's Kelvin test both read it" }
           status_read: [check_direction, cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17479,13 +17645,18 @@ families:
             version 5 = [1000, 10000] from versionSoft 1.00.09 (KelvinConfig.Config.i4), the strip's range and Yt's
             test alike. Config.A[345] = 1 and Config.B[345] true: a multi-colour strip or effect apply goes as 15 04
             group frames and 15 03 brightness (ColorModeControllerConfig.w -> l), as on 339. Brightness version 1 =
-            percent. Not modelled: the calibration write. Scenes not traced. Not hardware-verified.
+            percent. Not modelled: the calibration write. Scenes not traced. Device info (device_info_reads none): as on
+            339, the compose (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read
+            and its success callback (VM4LightH3501$afterConnectedSingleReadDeviceInfo$1.m) takes the soft and hard
+            versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), the soft one the
+            by_firmware Kelvin gate tests (KelvinConfig reads Info4BleIotDevice.a0, which k2 sets through g1); so the
+            library sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:160
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-90
             - split_h7050/com/govee/h7050/pact/Support.java:187-189,329-346,375-383,414-416,506-508,594-614
             - split_h7050/com/govee/h7050/newdetail/h3501/VM4LightH3501.java:94,128-134,243-275,524-527,610-623,637-648,703-705,838-845,978-1003
-            - split_h7050/com/govee/h7050/newdetail/h3501/VM4LightH3501$afterConnectedSingleReadDeviceInfo$1.java:95-148,158-196
+            - split_h7050/com/govee/h7050/newdetail/h3501/VM4LightH3501$afterConnectedSingleReadDeviceInfo$1.java:57-81,95-148,158-196
             - split_h7050/com/govee/h7050/newdetail/h3501/NewDetailConfig4H3501.java:41-66
             - split_h7050/com/govee/h7050/newdetail/h3501/ColorModeH3500.java:457-459
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17515,7 +17686,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           status_read: [cmd_41, ic_num, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17542,7 +17713,12 @@ families:
             version 5 = [1000, 10000]; brightness version 1 = percent.
             Held behind allow_modelled (support: modelled): the piece count is the device's IC count, which the
             library does not take from TLV 0x40, so the row takes 4 for H3510 and 8 for H3511 (wire by_model, the
-            catalogue snapshot's ic). Scenes not traced. Not hardware-verified.
+            catalogue snapshot's ic). Scenes not traced. Device info (device_info_reads none): the compose
+            (VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.m) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:162
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-94
@@ -17550,7 +17726,7 @@ families:
             - split_h7050/com/govee/h7050/pact/SubMaker.java:72
             - split_h7050/com/govee/h7050/pact/bleiot/H3510H3511Maker.java:12-30
             - split_h7050/com/govee/h7050/newdetail/h351011/VM4LightH351011.java:83,106-112,200-225,463-466,520-548,598-600,733-740,863-888
-            - split_h7050/com/govee/h7050/newdetail/h351011/VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.java:94-148,159-196
+            - split_h7050/com/govee/h7050/newdetail/h351011/VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.java:58-80,94-148,159-197
             - split_h7050/com/govee/h7050/newdetail/h351011/H351011DetailConfig.java:105-116
             - split_h7050/com/govee/h7050/newdetail/h351011/ColorModeH351011.java:310-316
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
@@ -17629,7 +17805,7 @@ families:
           account_lock: false
           scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17662,14 +17838,20 @@ families:
             catalogue snapshot (spec/govee_catalog.json) also gives R1630 goodsType 364, and no row lists it, so the
             library routes it to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of
             the app finds no string literal naming R1630, and its mode components in the bundled
-            localSkuComponentConfigs.json are H1630's.
+            localSkuComponentConfigs.json are H1630's. Device info (device_info_reads none): the compose
+            (VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.c)
+            adds to its controller list only the day-sync reads (VM4LightH1630.U4 -> T4 -> DaySyncVM.Companion.f) and
+            queues no aa 06 / aa 07 read; its success callback (VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.l)
+            takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so
+            the library sends none either and folds the versions and device id from TLV 0x07 alone. H1630 (and R1630)
+            sent the three reads at 1.6.1; 1.7.0 drops them (the user's decision, 2026-10-22).
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:55,94-95,201-203,282-326,406-407,705-710,325,328-353
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:137
             - base-classes2/com/govee/shared/config/h1630/H1630SceneConfig.java:54-56
             - split_h7050/com/govee/h7050/newdetail/h1630/H1630DetailConfig.java:103-170
-            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.java:96-123,151-180
-            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630.java:375-392,553-555,1149-1168
+            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.java:47-70,96-123,145-186
+            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630.java:158-175,375-392,553-555,1149-1168
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:363-373,422-454,527-529
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:177-193
             - split_h7050/com/govee/h7050/newdetail/h1630/diy/H1630DiyConfig.java:36
@@ -17686,6 +17868,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes10/com/govee/base2light/ble/ScenesOp.java:541-578,596-602
+            - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncVM.java:295-324
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_41: power_memory, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
@@ -17850,7 +18033,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -17870,7 +18053,12 @@ families:
             record's segmentCount, DefInfo) when that is above 0, else 15, so a per-segment mask's width is account data the
             source can't settle (Config.I[296] has segment brightness and CCT on; color_functions goes with segments). TLV 0xA5
             records are placed over the account IC (Info4BleIotDevice.q). Brightness: BrightnessConfig.b -> 33 04, version 1 =
-            percent; Kelvin: KelvinConfig version 2 = [2700, 6500]. Scenes untraced. Not hardware-verified.
+            percent; Kelvin: KelvinConfig version 2 = [2700, 6500]. Scenes untraced. Device info (device_info_reads
+            none): g5's compose (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the
+            reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds
+            the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:80,90,134-136,477-479,697-704
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
@@ -18656,7 +18844,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -18685,7 +18873,12 @@ families:
             names a builder the screen never calls. The bundled mode list (base.apk localSkuComponentConfigs.json) gives
             H7076 no illumination tab (13), so the colour page is the one Kelvin path. Not modelled: the aa 01
             keep-alive reply as live power (the library re-reads the status read's TLV 0x01 every poll instead,
-            timing.heartbeat.deviations). Not hardware-verified.
+            timing.heartbeat.deviations). Device info (device_info_reads none): the compose
+            (H7076DetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (H7076DetailVM$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:249
             - split_h7075/com/govee/h7075/pact/Support.java:228-239,243-251,349-351,377-390,502-513,517-539,575-581,607-609
@@ -18693,7 +18886,7 @@ families:
             - split_h7075/com/govee/h7075/add/AddDeviceM.java:32-50
             - split_h7075/com/govee/h7075/H7075Application.java:45,50,58
             - split_h7075/com/govee/h7075/h7076/H7076DetailVM.java:104-110,151-185,327-343,407-410,471-473,619-626,736-760
-            - split_h7075/com/govee/h7075/h7076/H7076DetailVM$afterConnectedSingleReadDeviceInfo$1.java:76-136,157-193
+            - split_h7075/com/govee/h7075/h7076/H7076DetailVM$afterConnectedSingleReadDeviceInfo$1.java:43-65,76-136,157-193
             - split_h7075/com/govee/h7075/h7072/H7072Info4Detail.java:60
             - split_h7075/com/govee/h7075/h7076/Info4Detail.java:205-270
             - split_h7075/com/govee/h7075/h7076/H7076DetailConfig.java:51-122
@@ -18865,7 +19058,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, color_group]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: [light_effect_stop]
           heartbeat: power
@@ -18901,8 +19094,13 @@ families:
             write (as H60A6). Scenes
             untraced (ScenesConfigBean(2, 1, Support.supportSceneOp(383) = {0, 1, 2, 3, 6}); H3700DiyConfig registers 383's
             new-DIY parsers at app init); no bundled catalog. Not modelled: the aa 01 keep-alive reply as live power
-            (the library re-reads the status read's TLV 0x01 every poll instead, timing.heartbeat.deviations). Not
-            hardware-verified.
+            (the library re-reads the status read's TLV 0x01 every poll instead, timing.heartbeat.deviations). Device
+            info (device_info_reads none): the compose's controller list
+            (H3700DetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend) holds only Controller4StopLightEffect, so
+            it queues no aa 06 / aa 07 read, and its success callback
+            (H3700DetailVM$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:122,180-184,228-238,243-250,318-319,459-474,517-522,524-538,575-581
             - split_h7075/com/govee/h7075/multi/AddResultActivity.java:55
@@ -19463,7 +19661,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, cmd_0c]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19471,11 +19669,14 @@ families:
             H7071 on the H7070 screen: ac 03 02 41 0c (supportEffectChange false for 334); every other core fact as 283:
             TLV 0x01 power, 0x04 brightness, 0x05 the mode (an empty one fails the read), 0x41 the power-off memory, 33
             01, 33 04 percent, aa 00 keep-alive, ee 30 bit 0 of frame[3] (the screen's re-read after it is not sent).
-            Scenes untraced. Not hardware-verified.
+            Scenes untraced. Device info (device_info_reads none): T4 (Compose4BaseInfoSingleRead.Companion.b, no
+            controller list) queues no aa 06 / aa 07 read, and its success callback U4 takes the soft and hard versions
+            from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and
+            folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:103-108,268-270,304-312
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,133-156,181-215
         "333":   # H7073, the AcNewDetailH7070 screen (0xAC status read)
           models: [H7073]
           pacts: ["1,1"]
@@ -19485,7 +19686,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, cmd_0c, write_check_ic]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19495,12 +19696,16 @@ families:
             not Support.addSupportPact. Known gap: X4 reads TLV 0x42 byte 0 and passes TLV 0x0c to
             OperateModeInfoH7070.E, which reads 15 bytes plus 3 per colour its byte 14 counts, all unguarded, so an
             empty 0x42 or a short 0x0c fails the app's whole status read, while the library (no form for either) still
-            applies the burst's power and brightness. Scenes untraced. Not hardware-verified.
+            applies the burst's power and brightness. Scenes untraced. Device info (device_info_reads none): T4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback U4 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/add/AddDeviceM.java:50-58,70-72
             - split_h6092/com/govee/h6092/pact/Support.java:272-274,304-312,500-515
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,133-156,181-215
             - split_h6092/com/govee/h6092/newDetail/h7070/OperateModeInfoH7070.java:35-71
         "401":   # H3860, the AcNewDetailH3860 screen (0xAC status read)
           models: [H3860]
@@ -19511,7 +19716,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, cmd_0c, cmd_45]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19522,11 +19727,15 @@ families:
             Default header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent. Keep-alive aa 00 (I3 false);
             live power ee 30 bit 0 of frame[3]. Known gap: U4 reads TLV 0x45 byte 0 unguarded (:158-160), so an empty
             0x45 fails the app's whole status read, while the library (no form for it) still applies the burst's power
-            and brightness. Scenes untraced. Not hardware-verified.
+            and brightness. Scenes untraced. Device info (device_info_reads none): T4
+            (Compose4BaseInfoSingleRead.Companion.b, no controller list) queues no aa 06 / aa 07 read, and its success
+            callback V4 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:118-120,236-238,381-396
             - split_h6092/com/govee/h6092/pact/Model.java:76-77
-            - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:101-129,131-164,206-211,277,498-503,827-850
+            - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:101-129,131-164,165-189,206-211,277,498-503,827-850
             - split_h6092/com/govee/h6092/newDetail/h3860/Info4DetailH3860.java:286-290
         "331":   # H609D, the H609dDetailActivity screen; no support: the displayed power is derived (doc)
           models: [H609D]

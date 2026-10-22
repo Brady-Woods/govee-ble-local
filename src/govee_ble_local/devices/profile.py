@@ -385,8 +385,9 @@ class DeviceProfile:
     """Whether :meth:`~.device.Device.update` makes the ``aa 06`` / ``aa 07 03`` / ``aa 07 02`` device-info
     reads (``_readback.read_device_info``), and later the re-read of a version a firmware-gated fact still
     waits for. True, the default, as in 1.6.1. False on a ``readback="status"`` row whose screen sends none of
-    them (a devices.yaml status row's ``device_info_reads: none``): the versions and device id then come from
-    the status reply's TLV 0x07 alone, on every poll, as on the screen (``Compose4BaseInfoSingleRead.w``)."""
+    them (a devices.yaml status row's ``device_info_reads: none``: every status row but the H60A6's and the
+    H6076's, whose reads are firmware-sourced): the versions and device id then come from the status reply's
+    TLV 0x07 alone, on every poll, as on the screen (``Compose4BaseInfoSingleRead.w``)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

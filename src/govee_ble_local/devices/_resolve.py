@@ -116,7 +116,7 @@ the row lacks fails the build: nothing defaults silently.
   aa 07 03 / aa 07 02 device-info reads it makes on every other row (``DeviceProfile.device_info_reads``). At
   ``none`` it doesn't, and takes the versions and device id from the status reply's TLV 0x07 alone, as the
   screen does (``Compose4BaseInfoSingleRead.w``); at ``firmware`` (a FIRMWARE-SOURCED extension the row
-  cites) and ``unverified`` (no evidence yet) it does.
+  cites: H60A6, H6076) it does. There is no third value: without that evidence a status row sends none.
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
@@ -448,7 +448,7 @@ _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_co
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
 # clientRow device_info_reads, a status row's (module doc): the device-info reads are sent but at "none".
-_DEVICE_INFO_READS: Final = ("none", "firmware", "unverified")
+_DEVICE_INFO_READS: Final = ("none", "firmware")
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
 # capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
 _UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
