@@ -1642,10 +1642,15 @@ enums:
     1:
       id: ic_pair
       doc: |
-        the IC pair reader: it throws below 3 bytes or on a count of 0x1000+
+        the IC pair reader: it throws below 3 bytes or on a count of 0x1000+,
+        in either IC field; a TLV 0x40 or, on a polled row, the aa 40 read
+        reply (no count is stored where it throws)
       doc-ref:
         - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,141-161
         - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126
+        - split_h705a/com/govee/h705a/newDetail/VM4Light.java:576-583
+        - split_h705a/com/govee/h705a/h706789/VM4Light.java:120-125
+        - split_h705a/com/govee/h705a/adjust/h608a/ControllerStrategyConfig.java:283-287
     2:
       id: one_count
       doc: one 16-bit IC count from bytes 0-1; it throws below 2 bytes

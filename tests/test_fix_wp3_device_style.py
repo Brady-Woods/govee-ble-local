@@ -321,14 +321,17 @@ _FLOOR = dict(color_readback_ic_range=(0, 4095), color_readback_ic_per_piece=4,
               color_readback_ic_rounding="floor")
 _TABLE = dict(color_readback_ic_range=None, color_readback_ic_table=((36, 18),),
               color_readback_ic_otherwise=14)
-_PAIR = dict(color_readback_ic_range=None, color_readback_ic_pair_cap=15, color_readback_ic_otherwise=30)
+_PAIR = dict(color_readback_ic_range=None, color_readback_ic_pair_cap=15, color_readback_ic_otherwise=30,
+             color_readback_ic_pair_reader=True)
+_SKIP_ZERO = dict(color_readback_ic_range=(1, 4095), color_readback_ic_per_piece=5,
+                  color_readback_ic_skip_zero=True)
 
 
 @pytest.mark.parametrize(("rule", "ic", "pieces"), [
     (_FLOOR, (0x00, 0x33), 12),                        # h705a 125 / 240: 51 / 4 = 12 (ceil: 13, 4 groups)
     (_TABLE, (0x00, 0x24), 18),                        # h6609 173: IC 36 -> 18
     (_TABLE, (0x00, 0x28), 14),                        # any other IC -> 14
-    (_TABLE, (0x10, 0x00), 0),                         # 0x1000: no count, no walk
+    (_SKIP_ZERO, (0x00, 0x00), 0),                     # h705a 184: VM4H608A.S4 skips IC 0, no walk
     (_PAIR, (0x00, 0x0A, 0x00, 0x00, 0x0C, 0x00), 22),  # H1A45: min(10, 15) + min(12, 15)
     (_PAIR, (0x00, 0x14, 0x00, 0x00, 0x14, 0x00), 30),  # each strip capped at 15
     (_PAIR, (0x00, 0x14, 0x00), 30),                    # one strip: 30

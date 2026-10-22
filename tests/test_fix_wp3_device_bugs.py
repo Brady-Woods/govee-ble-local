@@ -755,7 +755,9 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
     for rule in (dict(color_readback_ic_table=((36, 18),)), dict(color_readback_ic_otherwise=14),
                  dict(color_readback_ic_table=((36, 18), (36, 9)), color_readback_ic_otherwise=14),
                  dict(color_readback_ic_table=((36, 18),), color_readback_ic_pair_cap=15,
-                      color_readback_ic_otherwise=14)):
+                      color_readback_ic_otherwise=14),
+                 dict(color_readback_ic_table=(36, 18), color_readback_ic_otherwise=14),   # flat: no entries
+                 dict(color_readback_ic_pair_cap=15, color_readback_ic_otherwise=30)):   # no pair reader
         with pytest.raises(ValueError, match="color_readback_ic_table"):
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
     with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
@@ -892,7 +894,6 @@ def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
 
 @pytest.mark.parametrize(("ic", "count"), [
     (None, None),                   # no aa 40 reply
-    ((0x10, 0x00, 0x00), None),     # IC 0x1000: the app's reader stores no count
     ((0x00, 0x00, 0x00), None),     # IC 0: no pieces
     ((0x00, 0xC8, 0x00), 112),      # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
 ])

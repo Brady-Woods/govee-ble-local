@@ -460,6 +460,18 @@ class DeviceProfile:
     color_readback_ic_otherwise: int | None = field(default=None, kw_only=True)
     """The pieces at an IC count :attr:`color_readback_ic_table` doesn't list, and on a reply without the
     second strip :attr:`color_readback_ic_pair_cap` needs: 1 or more, and set with either of them."""
+    color_readback_ic_pair_reader: bool = field(default=False, kw_only=True)
+    """The screen reads the aa 40 reply with the IC-pair reader (``ControllerIcNum.e``; a devices.yaml row's
+    wire ``f_40: ic_pair``), which throws where either IC field is 0x1000 or more or the reply is under 3
+    bytes (:attr:`parse.IcCount.ic_pair` None, the spec's ``app_pair_fails``): no count there, whichever rule
+    gives the pieces (the h705a screens, H1A45). :attr:`color_readback_ic_pair_cap` needs it. False (the
+    default): the reader of bytes 0..1 alone (h61d3 ``ReadIcController``)."""
+    color_readback_ic_skip_zero: bool = field(default=False, kw_only=True)
+    """An IC count of 0 is no count, as a failed read: the screen's IC check skips it and keeps the count it
+    has (h705a ``VM4H608A.S4``, goodsType 184), so :attr:`~.device.Device.segment_count` keeps its count and
+    the walk is skipped (a devices.yaml ``ic_pieces`` ``skip_zero``). Not with
+    :attr:`color_readback_ic_pair_cap`, whose rule says what a first IC of 0 gives. False (the default): 0 is
+    a count."""
     color_writes_live_ic: bool = field(default=False, kw_only=True)
     """With :attr:`color_readback_live_ic`: the live pieces size the writes too, as the screen's strip takes
     them from the IC each aa 40 read stores (``ColorPieceConfig.c``; h61d3 ``ColorMode.V``, h705a
@@ -574,10 +586,16 @@ class DeviceProfile:
 
     def _check_ic_rules(self, where: str) -> None:
         """The IC rules' fields: :attr:`color_readback_ic_table` ``(IC, pieces)`` entries of ints, each IC
-        0 or more and once, the pieces 1 or more; :attr:`color_readback_ic_pair_cap` None or 1 or more; not
-        both; and :attr:`color_readback_ic_otherwise` 1 or more where either is set, else None (a list is kept
-        as a tuple)."""
-        table = tuple(tuple(entry) for entry in self.color_readback_ic_table)
+        0 or more and once, the pieces 1 or more; :attr:`color_readback_ic_pair_cap` None or 1 or more, with
+        :attr:`color_readback_ic_pair_reader` and without :attr:`color_readback_ic_skip_zero`; not both; and
+        :attr:`color_readback_ic_otherwise` 1 or more where either is set, else None (a list is kept as a
+        tuple)."""
+        raw = self.color_readback_ic_table
+        try:
+            table = tuple(tuple(entry) for entry in raw)
+        except TypeError:   # a flat pair or None: not (IC, pieces) entries
+            raise GoveeBleInvalidValue(
+                f"{where}: color_readback_ic_table={raw!r} ((IC, pieces) entries)") from None
         object.__setattr__(self, "color_readback_ic_table", table)
         cap, otherwise = self.color_readback_ic_pair_cap, self.color_readback_ic_otherwise
 
@@ -586,11 +604,15 @@ class DeviceProfile:
 
         if not (all(len(e) == 2 and count(e[0], 0) and count(e[1], 1) for e in table)
                 and len({e[0] for e in table}) == len(table)
-                and (cap is None or count(cap, 1)) and not (table and cap is not None)
+                and (cap is None or (count(cap, 1) and self.color_readback_ic_pair_reader
+                                     and not self.color_readback_ic_skip_zero))
+                and not (table and cap is not None)
                 and (count(otherwise, 1) if table or cap is not None else otherwise is None)):
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_ic_table={table!r}, color_readback_ic_pair_cap={cap!r}, "
-                f"color_readback_ic_otherwise={otherwise!r}")
+                f"color_readback_ic_otherwise={otherwise!r}, color_readback_ic_pair_reader="
+                f"{self.color_readback_ic_pair_reader!r}, color_readback_ic_skip_zero="
+                f"{self.color_readback_ic_skip_zero!r}")
 
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of

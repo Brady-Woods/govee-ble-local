@@ -133,7 +133,10 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     the account's stored count (``VM4H608A$connectBleSuc$1.l`` -> ``VM4H608A.a5``), and folds this
     session's aa 40 count only afterwards (``VM4H608A.S4``, which also uploads it); the library sizes the
     walk from this poll's aa 40. The two agree unless the IC changed while no app was connected, which the
-    app corrects on that same connect; the stored count is cloud data a local library doesn't have.
+    app corrects on that same connect; the stored count is cloud data a local library doesn't have. An IC of
+    0, which ``S4`` skips, is no count (``color_readback_ic_skip_zero``): the library skips that poll's walk
+    where the app walks its stored count. The row stays ``modelled`` for this first walk until the user
+    decides on it (pieces-persisted-ic-first-walk).
 
     Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
@@ -221,7 +224,12 @@ def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
     The one-count rules take bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the spec's
     ``ic_count_checked``). A count of 0x1000 or more has none: ``ReadIcController.Companion.a`` then takes
     its byte-swap branch, which indexes past the 2-byte array it was given, so the app's read callback never
-    stores it (``VM4Light.D5`` does not run). The reply's third byte is never used.
+    stores it (``VM4Light.D5`` does not run). The reply's third byte is never used. Where the screen reads
+    the reply with the IC-pair reader (``color_readback_ic_pair_reader``: the h705a screens'
+    ``ControllerIcNum.b`` and H1A45's ``ControllerIcNum.e``), that reader also throws on a second IC field
+    of 0x1000 or more (:attr:`parse.IcCount.ic_pair` None, the spec's ``app_pair_fails``), so there is no
+    count there either, whatever the rule. Under ``color_readback_ic_skip_zero`` an IC of 0 is none too:
+    h705a ``VM4H608A.S4`` (:516-538) skips it and keeps the count it stored (goodsType 184).
 
     - The clamp and divisor, as the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12
       names): ``ReadIcController.Companion.d`` clamps the count to ``H61D3Support.q(247)`` = 41..70
@@ -232,22 +240,22 @@ def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
     - The table (``color_readback_ic_table``): h6609 ``Support.getColorPieceSize(173, IC)`` (:146-149), 18
       pieces at IC 36, else 14 (``color_readback_ic_otherwise``).
     - The pair (``color_readback_ic_pair_cap``): the counts ``ControllerIcNum.e`` returns
-      (:attr:`parse.IcCount.ic_pair`; it throws on an IC field of 0x1000 or more, and then there are none).
-      ``VM4Light.j5`` (:551-575) keeps the first and the second's IC, ``VM4Light.h5`` (:1182-1199) stores the
-      two only where the first is not 0, and ``H61D3Support.e`` (:1142-1153) gives ``min(IC 1, 15) + min(IC
-      2, 15)`` for two whose second is above 0, else 30 (goodsType 375)."""
+      (:attr:`parse.IcCount.ic_pair`). ``VM4Light.j5`` (:551-575) keeps the first and the second's IC,
+      ``VM4Light.h5`` (:1182-1199) stores the two only where the first is not 0, and ``H61D3Support.e``
+      (:1142-1153) gives ``min(IC 1, 15) + min(IC 2, 15)`` for two whose second is above 0, else 30
+      (goodsType 375)."""
     profile = dev.profile
+    if profile.color_readback_ic_pair_reader and ic.ic_pair is None:
+        return None   # ControllerIcNum.e throws: no count is stored
     otherwise = profile.color_readback_ic_otherwise or 0   # set with either rule (DeviceProfile)
     cap = profile.color_readback_ic_pair_cap
-    if cap is not None:
-        pair = ic.ic_pair
-        if pair is None:
-            return None
+    if cap is not None:   # with color_readback_ic_pair_reader (DeviceProfile), so a pair is here
+        pair = ic.ic_pair or ()
         if len(pair) == 2 and pair[0] != 0 and pair[1] > 0:
             return max(0, min(pair[0], cap) + min(pair[1], cap))
         return otherwise
     count = ic.ic_count_checked
-    if count is None:
+    if count is None or (count == 0 and profile.color_readback_ic_skip_zero):
         return None
     if profile.color_readback_ic_table:
         return dict(profile.color_readback_ic_table).get(count, otherwise)

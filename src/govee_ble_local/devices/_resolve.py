@@ -115,8 +115,11 @@ the row lacks fails the build: nothing defaults silently.
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: an object form's rule over the IC
   count sizes the read-back's pieces (``DeviceProfile.color_readback_live_ic``: the count clamped and divided,
-  rounding up, or down under ``rounding: floor``, H6641 and the h705a rows; an IC table, H6609; or two strips'
-  counts capped and summed, H1A45: ``_readback.live_ic_pieces``), and the writes (``color_writes_live_ic``:
+  rounding up, or down under ``rounding: floor``, H6641 and the h705a rows, an IC of 0 no count under
+  ``skip_zero``, h705a 184; an IC table, H6609; or two strips' counts capped and summed, H1A45:
+  ``_readback.live_ic_pieces``; on a row whose wire ``f_40`` is ``ic_pair`` the screen reads the reply with
+  the IC-pair reader, ``DeviceProfile.color_readback_ic_pair_reader``, no count where it throws, which the
+  pair rule needs), and the writes (``color_writes_live_ic``:
   each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
@@ -215,6 +218,7 @@ class IcPieces(TypedDict):
     max_ic: int
     ic_per_piece: int
     rounding: NotRequired[str]
+    skip_zero: NotRequired[bool]
 
 
 class IcEntry(TypedDict):
@@ -1056,6 +1060,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     # table, H1A45's pair).
     ic_rule = {} if ic is None or isinstance(ic, str) else _ic_rule(ic, fail)
     live_ic = bool(ic_rule)
+    if live_ic and forms.get("f_40") == "ic_pair":   # ControllerIcNum.e reads the reply: none where it throws
+        ic_rule["color_readback_ic_pair_reader"] = True
+    elif "color_readback_ic_pair_cap" in ic_rule:
+        fail("ic_pieces pair_max without wire f_40 ic_pair (the pair is the IC-pair reader's)")
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
@@ -1218,8 +1226,8 @@ IC_ROUNDINGS: Final = ("ceil", "floor")
 
 def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
     """An object form of ``ic_pieces`` as the DeviceProfile fields that hold its rule over the live IC count:
-    the clamp, divisor and (where it is not ``ceil``) rounding; or the ``(IC, pieces)`` table; or the pair
-    cap; the last two with the pieces ``otherwise``."""
+    the clamp, divisor, (where it is not ``ceil``) rounding and (where set) ``skip_zero``; or the ``(IC,
+    pieces)`` table; or the pair cap; the last two with the pieces ``otherwise``."""
     rule: Mapping[str, Any] = ic
     if "table" in rule:
         table = tuple((entry["ic"], entry["pieces"]) for entry in rule["table"])
@@ -1232,14 +1240,17 @@ def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
             fail(f"ic_pieces {dict(rule)} (pair_max and otherwise >= 1)")
         return {"color_readback_ic_pair_cap": rule["pair_max"],
                 "color_readback_ic_otherwise": rule["otherwise"]}
-    rounding = rule.get("rounding", "ceil")
-    if not (0 <= rule["min_ic"] <= rule["max_ic"] and rule["ic_per_piece"] >= 1 and rounding in IC_ROUNDINGS):
+    rounding, skip_zero = rule.get("rounding", "ceil"), rule.get("skip_zero", False)
+    if not (0 <= rule["min_ic"] <= rule["max_ic"] and rule["ic_per_piece"] >= 1 and rounding in IC_ROUNDINGS
+            and isinstance(skip_zero, bool)):
         fail(f"ic_pieces {dict(rule)} (min_ic <= max_ic, ic_per_piece >= 1, rounding one of "
-             f"{list(IC_ROUNDINGS)})")
+             f"{list(IC_ROUNDINGS)}, skip_zero a boolean)")
     out: dict[str, Any] = {"color_readback_ic_range": (rule["min_ic"], rule["max_ic"]),
                            "color_readback_ic_per_piece": rule["ic_per_piece"]}
     if rounding != "ceil":
         out["color_readback_ic_rounding"] = rounding
+    if skip_zero:   # VM4H608A.S4: an IC of 0 stores no count
+        out["color_readback_ic_skip_zero"] = True
     return out
 
 
