@@ -108,6 +108,18 @@ def request_command(frame: bytes) -> int:
     return int(command)
 
 
+def write_command(frame: bytes) -> int:
+    """The command of a built ``33`` write, read by the frame reader (``write_command.command``): the
+    command its ack carries, which the app matches the ack on besides the proType
+    (``AbsControllerNoEvent4Single.isSameController:176-179``). ValueError for a frame that isn't a ``33``
+    write with a command (a 2-byte frame is proType and checksum, with no body)."""
+    pro_type, command = _head_command(frame, _spec.TX)
+    if pro_type != _C.ProType.write or command is None:
+        got = "no proType" if pro_type is None else f"proType 0x{int(pro_type):02X}"
+        raise ValueError(f"not a 33 write with a command ({got}): {shown_hex(frame)}")
+    return int(command)
+
+
 def find_reply(frames: list[bytes], command_type: int) -> bytes | None:
     """First ``0xAA`` frame in ``frames`` whose command is ``command_type`` (the frame reader's
     ``pro_type`` and ``read_reply.command``), else None. A reply whose body doesn't parse is still

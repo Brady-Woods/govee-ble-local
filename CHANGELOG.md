@@ -102,6 +102,11 @@ model, from which the shipped readers are generated).
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+- The transport reads a write's command through the frame reader (`wire.parse.write_command`, the write
+  counterpart of `request_command`), for the ack it waits for: `GoveeConnection.send` with `expect_ack`,
+  `send_many` and `send_once` check each frame with it before any I/O, and the ack-verified write takes its
+  command from it. A `33` frame of 2 bytes (the proType and the checksum: no command) now raises
+  `GoveeBleInvalidValue` before any I/O instead of being sent. No frame the library builds changes.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families

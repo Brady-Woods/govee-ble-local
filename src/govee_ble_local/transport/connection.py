@@ -122,7 +122,7 @@ from ..wire.build import (
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
-from ..wire.parse import bgc_encrypt_version, parse_write_ack
+from ..wire.parse import bgc_encrypt_version, parse_write_ack, write_command
 from ..wire.reassemble import BurstAssembler
 from ..wire.redact import carries_secret, mask_secret, shown_hex
 from . import handshake
@@ -1037,14 +1037,17 @@ class GoveeConnection:
                 f"got {len(frame)}"
             )
 
-    def _check_write_frame(self, frame: bytes) -> None:
-        """Validate a frame for an ack-verified send: 2+ bytes AND a write (proType 0x33)."""
+    def _check_write_frame(self, frame: bytes) -> int:
+        """Validate a frame for an ack-verified send, 2+ bytes AND a write (proType 0x33) with a command, and
+        return the command, both read by the frame reader (:func:`..wire.parse.write_command`)."""
         self._check_frame(frame)
-        if frame[0] != PRO_WRITE:
+        try:
+            return write_command(frame)
+        except ValueError as err:
             raise GoveeBleInvalidValue(
                 f"{self.address}: only a write frame (proType 0x{PRO_WRITE:02X}) has an ack to "
-                f"wait for; got proType 0x{frame[0]:02X} (use query() for reads)"
-            )
+                f"wait for; {err} (use query() for reads)"
+            ) from None
 
     async def send_many(self, frames: list[bytes]) -> None:
         """Send several write frames back to back under ONE lock acquisition and
@@ -1119,8 +1122,7 @@ class GoveeConnection:
         status), so a refused write is not reported as done; a good reply ends the wait at once, and no reply,
         or a link lost while it waits, is a success, as on the card. Every frame must be a write (proType
         0x33), else GoveeBleInvalidValue before any I/O."""
-        self._check_write_frame(frame_plaintext)
-        command_type = frame_plaintext[1]
+        command_type = self._check_write_frame(frame_plaintext)
 
         async def op() -> None:
             loop = asyncio.get_running_loop()
@@ -1168,7 +1170,7 @@ class GoveeConnection:
             )
 
     async def _send_write_verified(self, frame_plaintext: bytes) -> bytes:
-        command_type = frame_plaintext[1]
+        command_type = write_command(frame_plaintext)   # checked before the operation (_check_write_frame)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("%s: TX %s", self.address, describe_frame(frame_plaintext, "tx")[0])
         for attempt in range(WRITE_ATTEMPTS):
