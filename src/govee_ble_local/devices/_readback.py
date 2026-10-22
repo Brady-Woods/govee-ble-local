@@ -115,7 +115,8 @@ async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segme
 
 
 async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
-                                  live_pieces: int | None = None) -> list[Segment] | None:
+                                  live_pieces: int | None = None, *,
+                                  stop_at_miss: bool = False) -> list[Segment] | None:
     """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
     requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
     controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
@@ -142,6 +143,11 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     0, which ``S4`` skips, is no count (``color_readback_ic_skip_zero``): the library skips that poll's walk
     where the app walks its stored count. The row stays ``modelled`` for this first walk until the user
     decides on it (pieces-persisted-ic-first-walk).
+
+    A group that gets no usable reply is skipped and the walk goes on; with ``stop_at_miss`` it ends there,
+    keeping the groups read before it, as a compose ends at a step that fails
+    (``AbsComposeControllerWithOpResult.onOvertime``) after each earlier step's callback has applied its group
+    (the keep-alive re-read, ``Compose4Off2On``).
 
     Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
@@ -176,6 +182,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
         expected = max(0, min(group_size, total - (g - 1) * group_size))
         parsed = parse.parse_direct_color_group(reply, expected) if reply else None
         if parsed is None:
+            if stop_at_miss:
+                break
             continue
         if parsed[0] != g:
             _LOGGER.debug("%s (%s): aa a5 reply carries group %d for the group %d read; "

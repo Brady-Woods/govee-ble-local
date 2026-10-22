@@ -213,11 +213,15 @@ the row lacks fails the build: nothing defaults silently.
   ``push_30``-only row may send any. A status row that says ``heartbeat_power`` (an opt-in, served only with
   ``heartbeat_aa01``, heartbeat ``power`` and no zones: the reply is the one switch) follows the screen: the
   status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
-  ``DeviceProfile.heartbeat_power``). Every status row on the aa 01 keep-alive has that screen, but only h61d3
-  263 opts in: the others were admitted reading the status on every poll. The library folds no other
-  keep-alive reply and no ee 30 push into state: the poll's own power read stands in for them, aa 01 on a
-  polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on either), the aa 36 bar read
-  for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``.
+  ``DeviceProfile.heartbeat_power``): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020
+  296, h7076 313, h3700 383 (the user's decision 17) and h61d3 263. Such a row's ``heartbeat_reread`` (only
+  with ``heartbeat_power``, and with the wire group's ``num_per_group``, the re-read's group size: it becomes
+  ``DeviceProfile.color_readback_per_batch``) is the screen's re-read on a power change (``J3`` ->
+  ``Compose4Off2On``: aa 05, then the screen's aa a5 groups over its ``pieces``,
+  ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. The library folds no
+  other keep-alive reply and no ee 30 push into state: the poll's own power read stands in for them, aa 01 on
+  a polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on either), the aa 36 bar
+  read for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``.
 - The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
@@ -315,6 +319,11 @@ class IcPair(TypedDict):
     otherwise: int
 
 
+class HeartbeatReread(TypedDict):
+    """``clientRow.heartbeat_reread``: the pieces the screen's keep-alive re-read walks."""
+    pieces: int
+
+
 class LightNumPieces(TypedDict):
     """``clientRow.light_num_pieces``: the aa 0f string count times the pieces per unit."""
     per_unit: int
@@ -360,6 +369,7 @@ class Row(TypedDict, total=False):
     heartbeat: str
     heartbeat_timing: str
     heartbeat_power: bool
+    heartbeat_reread: HeartbeatReread
     mode_color_parse: str
     mode_color_parse_status: str
     relay_power: str
@@ -1390,6 +1400,20 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if beat_power and not (readback == "status" and "heartbeat_aa01" in lives and not row.get("zones")):
         fail("heartbeat_power is served only on an unzoned status row whose power_live has heartbeat_aa01 "
              "(the keep-alive reply is the one switch)")
+    # The screen's re-read on a keep-alive power change (J3 -> Compose4Off2On: aa 05, then its aa a5
+    # groups): the pieces it walks, in groups of the wire group's num_per_group
+    # (DeviceProfile.heartbeat_reread_pieces).
+    reread = row.get("heartbeat_reread")
+    reread_pieces = 0
+    if reread is not None:
+        walked = reread.get("pieces") if isinstance(reread, dict) else None
+        if not beat_power:
+            fail("heartbeat_reread without heartbeat_power (the re-read follows a keep-alive reply's change)")
+        if not (_is_int(walked) and walked >= 1):
+            fail(f"heartbeat_reread pieces {walked!r} (1 or more: the pieces the screen's aa a5 groups walk)")
+        if not (_is_int(per_group) and per_group >= 1):
+            fail("heartbeat_reread needs the wire group num_per_group (the size of its aa a5 groups)")
+        reread_pieces = int(walked)
     _check_mode(w, readback, fail)
     # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
     nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]
@@ -1425,7 +1449,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "gradual": "gradual" in caps,
         "gradual_read_only": "gradual" in reads and "gradual" not in caps,
         "color_readback": color_readback,
-        "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
+        "color_readback_per_batch": (int(per_group) if color_readback == "mechanism_a_direct" or reread_pieces
+                                     else 3),
         "color_readback_live_ic": live_ic,
         # the live pieces size the writes too (ColorPieceConfig.c), unless the rule sizes the walk alone
         "color_writes_live_ic": live_ic and not ic_rule.get("color_readback_ic_walk_only", False),
@@ -1484,6 +1509,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["kelvin_from_pieces"] = True
     if beat_power:
         out["heartbeat_power"] = True
+    if reread_pieces:
+        out["heartbeat_reread_pieces"] = reread_pieces
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         if status_by_pact:

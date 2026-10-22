@@ -261,6 +261,12 @@ class Device:
         self._follows_beat = (profile.heartbeat_power and profile.readback == "status"
                               and profile.heartbeat == _POWER_BEAT and not profile.zones)
         self._status_link = 0
+        # _power_read_drops when the last keep-alive went out (_on_beat_sent): a reply stamps power_read_at
+        # only if no drop came after its beat. _reread: the running re-read a keep-alive power change started
+        # (DeviceProfile.heartbeat_reread_pieces); _reread_again: another change came while it ran.
+        self._beat_drops = 0
+        self._reread: asyncio.Task[None] | None = None
+        self._reread_again = False
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
@@ -287,6 +293,7 @@ class Device:
             heartbeat=None if profile.heartbeat is None else build.heartbeat(profile.heartbeat),
             heartbeat_timing=profile.heartbeat_timing,
             heartbeat_reply=self._on_beat_reply if self._follows_beat else None,
+            heartbeat_sent=self._on_beat_sent if self._follows_beat else None,
         )
 
     def _learn_pact(self, adv: GoveeAdvertisement | None) -> bool:
@@ -509,10 +516,11 @@ class Device:
         without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 34``
         device-detail read that replaces it on the H6057 (its light flag,
         :attr:`.DeviceProfile.detail_power_read`), the ``aa 36`` bar read of a bar-switch device (in a poll,
-        or before a bar write), and a plug's ``aa 01`` relay read.
-        A read that returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as
-        stale, an advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of
-        the read before it.
+        or before a bar write), a plug's ``aa 01`` relay read, and on a :attr:`.DeviceProfile.heartbeat_power`
+        profile each ``aa 01`` keep-alive reply folded into ``is_on`` (a read issued when its beat went out,
+        so a drop after the beat leaves it unstamped: :meth:`_on_beat_reply`). A read that returned no on/off
+        (an unanswered poll, a brightness or mode reply), a read discarded as stale, an advertisement and an
+        acked write stamp nothing: a poll that read nothing leaves the stamp of the read before it.
 
         Dropped when the device may hold another on/off than ``is_on`` without a read saying so:
 
@@ -865,7 +873,11 @@ class Device:
 
     async def stop(self) -> None:
         """Disconnect and refuse further I/O (the owner is being torn down). To drop the link and keep the
-        Device usable, use :meth:`release`."""
+        Device usable, use :meth:`release`. A keep-alive re-read still running is cancelled first."""
+        task = self._reread
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait({task})   # its end, not its CancelledError: a cancel of this call still raises
         await self._conn.close()
 
     def _mark_authoritative(self) -> None:
@@ -888,22 +900,86 @@ class Device:
                 self._power_unsure = False
             self._mark_authoritative()
 
+    def _on_beat_sent(self) -> None:
+        """The ``aa 01`` keep-alive went out (``GoveeConnection``'s ``heartbeat_sent``): its reply is a read
+        issued now, so it may stamp :attr:`power_read_at` only if no drop comes after this
+        (:meth:`_stamp_power_read`)."""
+        self._beat_drops = self._power_read_drops
+
     def _on_beat_reply(self, reply: bytes) -> None:
         """A frame notified while no other frame has gone out since the aa 01 keep-alive, on a
         :attr:`.DeviceProfile.heartbeat_power` profile (``GoveeConnection``'s ``heartbeat_reply``). Read
         through the spec, the beat's reply gives the power, on at a byte of 1, as the screen takes it from
         each reply (``ShareVM.N3`` -> ``J3``); any other frame is not an aa 01 reply and is left alone. It is
-        a power read (:meth:`_finish_read`), so the advertised on/off waits; the callbacks fire when it
-        changes ``is_on`` (``J3`` acts only on a change) or ends the optimistic state. The screen's re-read on
-        a change (``Compose4Off2On``: timers, sleep and wake, the aa 05 mode, then the screen's colour groups)
-        is not modelled, so the mode and colour stay the link's status read's."""
+        a power read (:meth:`_finish_read`), so the advertised on/off waits, and it stamps
+        :attr:`power_read_at` with the drop count taken when the beat went out (:meth:`_on_beat_sent`), so a
+        drop that came after the beat (an advertisement, a write that changed ``is_on``) leaves it unstamped;
+        it changes ``is_on`` as a read, so it drops nothing. The callbacks fire when it changes ``is_on``
+        (``J3`` acts only on a change) or ends the optimistic state. Where it changes ``is_on`` on a profile
+        with :attr:`.DeviceProfile.heartbeat_reread_pieces`, the screen's re-read follows
+        (``Compose4Off2On``, :meth:`_reread_after_change`); elsewhere the screen sets the switch alone, and
+        the mode and colour stay the link's status read's."""
         on = parse.parse_light_power(reply, wire_profile(self.profile), heartbeat=True)
         if on is None:
             return
-        changed = on != self._state.is_on or self._state.optimistic
+        switched = on != self._state.is_on
+        changed = switched or self._state.optimistic
         self._state.is_on = on
+        self._stamp_power_read(self._beat_drops)
         self._finish_read(True, True, self._power_unsure_seq)
         if changed:
+            self._notify()
+        if switched and self.profile.heartbeat_reread_pieces:
+            self._start_reread()
+
+    def _start_reread(self) -> None:
+        """Start the keep-alive power change's re-read on the link that is up, or, while one runs, have it
+        run once more when it ends, as the app queues another compose (``doCommController``)."""
+        task = self._reread
+        if task is not None and not task.done():
+            self._reread_again = True
+            return
+        self._reread = asyncio.get_running_loop().create_task(
+            self._reread_after_change(self._conn.link_number))
+
+    async def _reread_after_change(self, link: int) -> None:
+        """The screen's re-read on a keep-alive power change (``J3`` -> ``Compose4Off2On``;
+        :attr:`.DeviceProfile.heartbeat_reread_pieces`), on link ``link`` alone: a link that has gone ends it
+        with no connect. Run in a task of its own; a failure is logged at DEBUG and changes nothing, as the
+        compose's failure changes nothing but the screen's loading dialog (``result2Fail``)."""
+        while True:
+            self._reread_again = False
+            try:
+                with self._conn.hold_heartbeat():   # the app sends no beat while a compose is in flight
+                    await self._reread_once(link)
+            except GoveeBleError as err:
+                _LOGGER.debug("%s (%s): the keep-alive re-read failed: %s", self.address, self._sku, err)
+            if not self._reread_again:
+                return
+
+    async def _reread_once(self, link: int) -> None:
+        """One re-read: ``aa 05`` (:meth:`_read_mode`), then, if it was answered, the screen's ``aa a5``
+        groups over the profile's pieces (:func:`._readback.walk_mechanism_a_direct`, ending at the first
+        unanswered group as the compose ends), applied as the poll's walk is where they are the device's
+        segments (SEGMENTS over exactly these pieces) and read and dropped elsewhere. The callbacks fire when
+        either applied."""
+        def read(frame: bytes) -> Awaitable[bytes | None]:
+            return self._read_reply(frame, on_link=link)
+
+        mode = await self._read_mode(on_link=link)
+        if mode == "none":
+            return   # unanswered: the compose ends at a step that fails (onOvertime), before its colour reads
+        pieces = self.profile.heartbeat_reread_pieces
+        apply: Callable[[list[Segment]], None] = self._apply_segments
+        if Capability.SEGMENTS not in self.profile.capabilities or pieces != self.segment_count:
+            def drop(_segments: list[Segment]) -> None:
+                _LOGGER.debug("%s (%s): the %d-piece keep-alive re-read's colours are not the device's "
+                              "segments; not applied", self.address, self._sku, pieces)
+            apply = drop
+        walked = await self._read_fresh(
+            "segment colour",
+            lambda: _readback.walk_mechanism_a_direct(self, read, pieces, stop_at_miss=True), apply)
+        if "applied" in (mode, walked):
             self._notify()
 
     def _status_on_link(self) -> bool:
@@ -2011,7 +2087,9 @@ class Device:
         read is made once per link, as the screen reads it once per connect: a poll on a link it already
         brought state back on makes no status read (so nothing is read back after a write there), the power
         there following each keep-alive reply, which reaches the callbacks; the mode and colour stay the
-        link's status read's and the writes'. A poll on a fresh link returns its status read's power.
+        link's status read's and the writes', but where a reply changes the power on a profile with
+        :attr:`.DeviceProfile.heartbeat_reread_pieces`, which re-reads them at once as the screen does. A poll
+        on a fresh link returns its status read's power.
 
         On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
         nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness
@@ -2471,9 +2549,11 @@ class Device:
         self._finish_read(applied, power_read, since)
         return applied
 
-    async def _read_mode(self, budget: ConnectBudget | None = None) -> _ReadResult:
+    async def _read_mode(self, budget: ConnectBudget | None = None, *,
+                         on_link: int | None = None) -> _ReadResult:
         """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`), and keep whether it showed the
-        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) for the poll's walk."""
+        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) for the poll's walk. ``on_link``:
+        on that link only (:meth:`_read_reply`)."""
         prof = wire_profile(self.profile)
         self._polled_color_mode = None
 
@@ -2482,7 +2562,7 @@ class Device:
             self._polled_color_mode = parse.mode_color(m) is not None
 
         return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
-                                        apply, budget)
+                                        apply, budget, on_link=on_link)
 
     async def _read_section_count(self, budget: ConnectBudget | None = None) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
@@ -2642,23 +2722,26 @@ class Device:
     async def _read_command(
         self, what: str, frame: bytes,
         parser: Callable[[bytes], _T | None], apply: Callable[[_T], None],
-        budget: ConnectBudget | None = None,
+        budget: ConnectBudget | None = None, *, on_link: int | None = None,
     ) -> _ReadResult:
         """:meth:`_read_fresh` of one ``aa`` read: the reply to ``frame``, decoded by ``parser`` (None: not
-        a usable reply)."""
+        a usable reply). ``on_link``: on that link only (:meth:`_read_reply`)."""
         async def read() -> _T | None:
-            reply = await self._read_reply(frame, budget)
+            reply = await self._read_reply(frame, budget, on_link=on_link)
             return None if reply is None else parser(reply)
 
         return await self._read_fresh(what, read, apply)
 
-    async def _read_reply(self, frame: bytes, budget: ConnectBudget | None = None) -> bytes | None:
+    async def _read_reply(self, frame: bytes, budget: ConnectBudget | None = None, *,
+                          on_link: int | None = None) -> bytes | None:
         """Send one ``aa`` read and return its reply - the ``aa`` frame with the request's own command
         (:func:`.parse.request_command`) - or None after ``INFO_READ_TIMEOUT``. A single-reply read:
-        ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait
-        short to the burst idle gap. ``budget``: the calling poll's connect limits (:meth:`update`), or
-        None for the transport's. GoveeBleNotSupported on a ``session="per_command"`` profile, before any I/O:
-        the app's device-list card reads nothing over GATT."""
+        ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait short
+        to the burst idle gap. ``budget``: the calling poll's connect limits (:meth:`update`), or None for the
+        transport's. ``on_link`` (a :attr:`.GoveeConnection.link_number`): sent on that link only, else None
+        with nothing sent and no connect (``GoveeConnection.query``). GoveeBleNotSupported on a
+        ``session="per_command"`` profile, before any I/O: the app's device-list card reads nothing over GATT.
+        """
         if self.profile.session == "per_command":
             raise GoveeBleNotSupported(f"{self._sku}: the device-list card's session reads nothing over GATT")
         command_type = parse.request_command(frame)
@@ -2666,7 +2749,7 @@ class Device:
             await self._send_pending_unlock(budget)   # a secret set on the live session goes first
             frames = await self._conn.query(
                 frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT,
-                idle_gap=None, **_budget_kw(budget))
+                idle_gap=None, on_link=on_link, **_budget_kw(budget))
         return parse.find_reply(frames, command_type)
 
     async def read_secret(self) -> bytes | None:

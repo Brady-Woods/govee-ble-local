@@ -196,7 +196,9 @@ def test_the_profile_fields_default_to_no_heartbeat_and_are_checked() -> None:
                        ({"heartbeat": "power"}, "heartbeat='power'"), ({"heartbeat": 0x03}, "heartbeat=3"),
                        ({"heartbeat": 0x05}, "heartbeat=5"), ({"heartbeat": 0x04}, "heartbeat=4"),
                        ({"heartbeat_timing": "later"}, "heartbeat_timing='later'"),   # without one too
-                       ({"heartbeat": 0x01, "heartbeat_timing": "later"}, "heartbeat_timing='later'")):
+                       ({"heartbeat": 0x01, "heartbeat_timing": "later"}, "heartbeat_timing='later'"),
+                       ({"heartbeat_reread_pieces": -1}, "heartbeat_reread_pieces=-1"),
+                       ({"heartbeat_reread_pieces": True}, "heartbeat_reread_pieces=True")):
         with pytest.raises(GoveeBleInvalidValue, match=match):
             dataclasses.replace(hand, **bad)
 

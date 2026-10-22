@@ -132,7 +132,7 @@ model, from which the shipped readers are generated).
 - **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
   (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
   (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
-  (below). Not hardware-verified (none is on the bench).
+  (below), and which the library follows (`heartbeat_power`, below). Not hardware-verified (none is on the bench).
 - **H70D1 / H80D1**† (h70dx 267), **H70D2** (268) and **H70D3** (269), admitted by default (`app_traced`). Their
   screen's connect read is the bare 0xAC status read `ac 03 00`, which requests no TLV type
   (`VM4H70DX.e5`), and it parses each TLV the reply carries, the 0xA5 colour groups included
@@ -598,29 +598,47 @@ model, from which the shipped readers are generated).
   `state` keeps one. The request is unchanged (`ac 03 04 41 a5 40 16`), and no other row reads the form, so no
   other SKU's decoded state changes. Source-modelled: no H703A / H703B is on the bench, and what the firmware
   puts in byte 0 is unread.
-- **`DeviceProfile.heartbeat_power`** (keyword-only, default False), set by the new devices.yaml row fact
-  `heartbeat_power: true` (Spec, below) on **H703A / H703B** (h61d3 263) alone, which stay behind
-  `allow_modelled`. The H703A screen reads the 0xAC status once per connect (`afterConnectedSingleReadDeviceInfo`,
-  from `d0`) and then sets its switch from byte 2 == 1 of every aa 01 keep-alive reply (`BleComm.G` ->
-  `ShareVM.N3` -> `VM4Light.J3` -> `D5`, ConnectHeartbeat type 1). On such a profile `Device.update` makes the
-  status read once per link (a poll on a link it brought state back on reads nothing more, so nothing is read
-  back after a write there), and each keep-alive reply that arrives with no other frame sent since its beat
-  sets `state.is_on` as a power read and reaches the state callbacks (`GoveeConnection(heartbeat_reply=...)`
-  hands over every frame notified then, and `Device` reads the aa 01 reply out through the spec); a reply that
-  may predate a write or a read is dropped, where the app takes every aa 01 notification. The
-  field is ignored on a zoned profile (the reply is the one switch). One gap keeps the row `modelled`: the
-  screen's re-read on a switch change (`Compose4Off2On`: timers, sleep and wake, the aa 05 mode, then one
-  `aa a5 01` group) is not modelled, so on a link that stays up the mode and colour are the link's status read's
-  and the library's own writes. A note that holds on every status row and sets no row's level (Spec, the h61d3
-  263 note): the request names only four extra types, and whether the firmware returns TLVs 0x01 / 0x04 / 0x05
-  unasked is not in the app; absent, the read gives off and brightness 100, in the app as in the library, and
-  the keep-alive corrects the power only on a link that outlives a beat, through the state callbacks, never in
-  the state a poll on a fresh link returns (Home Assistant's polls, with the idle disconnect, would read off
-  each time). No other profile sets the field, so no admitted SKU's reads, frames or decoded
-  state change. The other status rows on the aa 01 keep-alive have screens that read the status once per connect
-  too (straightfloorlamp 69, h6069 284 and rgbiclight 351 / 352, whose `J3` also re-reads on a change; h7086 293,
-  h7020 296, h7076 313 and h3700 383, whose `J3` sets the switch alone), but they were admitted reading it on
-  every poll, and changing that waits on a decision. Source-modelled: no H703A / H703B is on the bench.
+- **`DeviceProfile.heartbeat_power`** (keyword-only, default False) and **`DeviceProfile.heartbeat_reread_pieces`**
+  (keyword-only, default 0), set by the new devices.yaml row facts `heartbeat_power: true` and `heartbeat_reread: {
+  pieces }` (Spec, below). A status-read screen on the aa 01 keep-alive reads the 0xAC status once per connect
+  (`afterConnectedSingleReadDeviceInfo`, from `d0`) and then sets its switch from byte 2 == 1 of every keep-alive
+  reply (`BleComm.G` -> `ShareVM.N3` -> `J3`, ConnectHeartbeat type 1); on a change, four of the screens also
+  re-read the mode and colour (`J3` -> `Compose4Off2On`). The user's decision 17 ("Match the app") turns it on for
+  every such row, and the library now does the same:
+  - **The status read once per link.** `Device.update` makes it on the first poll of a link and reads nothing more
+    on that link (so nothing is read back after a write there); a poll on a fresh link returns its status read's
+    state.
+  - **The keep-alive reply as a power read.** Each reply that arrives with no other frame sent since its beat sets
+    `state.is_on` and reaches the state callbacks (`GoveeConnection(heartbeat_reply=...)` hands over every frame
+    notified then, and `Device` reads the aa 01 reply out through the spec); a reply that may predate a write or a
+    read is dropped, where the app takes every aa 01 notification. It follows #41's rules for
+    `Device.power_read_at`: the reply stamps it, with the drop count taken when its beat went out (the new
+    `GoveeConnection(heartbeat_sent=...)`, called once each beat is written), so a drop after the beat leaves it
+    unstamped, and as a read it drops nothing; any other change to `is_on` still drops it.
+  - **The power-change re-read** where the screen makes one (`heartbeat_reread_pieces` above 0): at once, on the
+    link the reply came on and never another (the new `GoveeConnection.query(on_link=...)` sends nothing and
+    connects not when that link has gone), with the beat held as a compose in flight holds the app's (`AbsBle.I`):
+    the aa 05 mode read, folded as a poll's, then, once it is answered, the screen's aa a5 colour groups over that
+    many pieces in groups of the row's `num_per_group` (`Controller4ColorInfoByGroup.generateReadController`, added
+    by `Compose4Off2On.w`), ending at the first that goes unanswered as the compose ends
+    (`AbsComposeControllerWithOpResult.onOvertime`; `_readback.walk_mechanism_a_direct(stop_at_miss=True)`). The
+    colours are applied as segments where the profile has SEGMENTS over exactly those pieces, and read and not
+    applied elsewhere. The compose's timer, sleep and wake reads are left out, as every connect read here leaves the
+    setting reads out. A change that comes while a re-read runs makes it run once more; `Device.stop` cancels a
+    re-read still running.
+  - **Rows** (Changed, below): straightfloorlamp 69 (H6076 / H8076 / R16D0: aa 05 then groups 1-2 over 7 pieces,
+    applied), h6069 284 (H6069 / H8069: aa 05 then groups 1-35 over the 140 pixels, read and not applied: a
+    one-piece colour tab), rgbiclight 351 / 352 (H617G / R617G, H618G / R618D: aa 05 then groups 1-4 over 15 pieces,
+    applied), h61d3 263 (H703A / H703B, behind `allow_modelled`: aa 05 then group 1 over its one piece, not
+    applied); and with no re-read, as their `J3` sets the switch alone, h7086 293 (H7086), h7020 296 (H7025 /
+    H8025), h7076 313 (H7076) and h3700 383 (H3700). The fields are ignored on a zoned profile (the reply is the one
+    switch).
+  - A note that holds on every status row and sets no row's level (Spec, the h61d3 263 note): whether the firmware
+    returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app; absent, the read gives off and brightness 100, in the
+    app as in the library, and the keep-alive corrects the power only on a link that outlives a beat, through the
+    state callbacks, never in the state a poll on a fresh link returns (Home Assistant's polls, with the idle
+    disconnect, would read off each time). Source-traced (Govee Home 7.7.02), not live-verified: the H6076 bench run
+    (2026-10-21) was read-only and saw neither the reply's switch nor the re-read.
 - **A status row's pieces from its own IC read.** The 0xAC status screens that size their pieces by the IC take
   it from the status read's TLV 0x40 (H3401, H3510 / H3511, H7026 / H8026, H7027, H6671 / H6672: the screen's
   lambda stores each TLV 0x40's count, `Info4BleIotDevice.G0`, and reads it back at each 0xA5 TLV) or from aa 40
@@ -898,6 +916,18 @@ model, from which the shipped readers are generated).
 - `wire.build` drops the h6061 group-frame constants `H6061_GROUP_SIZE`, `H6061_MASK_BYTES` and
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
+- **The status rows on the aa 01 keep-alive follow it, as their screens do** (the user's decision 17, "Match the
+  app"; `heartbeat_power`, Added). **H6076 / H8076 / R16D0** (straightfloorlamp 69), **H6069 / H8069** (h6069 284),
+  **H617G / R617G** (rgbiclight 351), **H618G / R618D** (352), **H7086** (h7086 293), **H7025 / H8025** (h7020 296),
+  **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default in 1.7.0, read the status on every poll
+  until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out: the power
+  there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On 69, 284,
+  351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then the `aa
+  a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, read and not applied). H703A / H703B
+  (h61d3 263, behind `allow_modelled`) gain the re-read too (`aa 05`, `aa a5 01`, not applied). The other frames,
+  the first poll's reads and the decoded state of a fresh link's poll are unchanged; their profiles also carry
+  `color_readback_per_batch` 4 on the re-reading rows (it was 3, unused on a status row). Source-traced (Govee Home
+  7.7.02), not live-verified.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind (but on a `heartbeat_power` row, Added): the
   poll's own power read stands in for it, aa 01 on a polled row and the status read's TLV 0x01 on a status row.
@@ -1539,17 +1569,25 @@ model, from which the shipped readers are generated).
   devices.schema.json's wire `f_a5` gains the member, and the h61d3 263 wire gains `f_a5: single_record`; the
   resolver serves it only where the row's `status_read` requests `color_group` over one piece, never for a
   direct read. The reference's self-test reads both lengths and checks that two pieces apply none.
-- **`heartbeat_power`, a status row's opt-in to the aa 01 keep-alive power**: devices.schema.json's clientRow
-  takes the boolean (and gen_devices keeps it), which the resolver serves only on an unzoned status row whose
-  `power_live` has `heartbeat_aa01`, and which becomes `DeviceProfile.heartbeat_power` (Added). Every status row
-  on the aa 01 keep-alive has that screen behaviour, but only **h61d3 263** says it; it stays `modelled`, its
-  doc naming the gap (Added). `timing.heartbeat.deviations` says which screens' `J3` re-read on a change
-  (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h61d3 263: `Compose4Off2On`) and which set the switch
-  alone (h7086 293, h7020 296, h7076 313, h3700 383), with their citations, and that the rows admitted before
-  1.9.0 read the status on every poll. `govee_state` `power_state.is_on_heartbeat` now cites the newdetail
-  light's rule, on at 1 (`BleComm.G`, `ShareVM.N3`), which `parse.parse_light_power(heartbeat=True)` reads. The
-  h61d3 `status_read` note's "absent TLVs leave brightness 0" is corrected to 100, the fresh
-  `DeviceBaseInfoFromDevice`'s (`DeviceBaseInfoFromDevice.java:70-80`).
+- **`heartbeat_power` and `heartbeat_reread`, a status row's aa 01 keep-alive power and its power-change re-read**:
+  devices.schema.json's clientRow takes the boolean and the `{ pieces }` object (and gen_devices keeps both). The
+  resolver serves `heartbeat_power` only on an unzoned status row whose `power_live` has `heartbeat_aa01`, and
+  `heartbeat_reread` only with it and with the wire group's `num_per_group` (its aa a5 group size, which becomes
+  `DeviceProfile.color_readback_per_batch` there). Every status row on the aa 01 keep-alive says `heartbeat_power`
+  (the user's decision 17): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313,
+  h3700 383 and h61d3 263, each `J3` re-traced (`I3` true, then `ShareVM.N3` -> `J3`). The four whose `J3` re-reads
+  say `heartbeat_reread`, with the pieces the screen's walk takes: 7 on 69 (straightfloorlamp `VM4Light.p5` -> `t5`,
+  `Support.getBulbStringMaxNum(69)` / `getOneGroupColorSize(69)` = 4), 140 on 284 (`CubeVM4Light.h5` -> `l5`,
+  `Support.getBulbStringMaxNum(284)`), 15 on 351 / 352 (rgbiclight `VM4Light.G5` -> `O5` -> `N5`: `Support.b` / `d`
+  / `D`) and 1 on 263 (h61d3 `VM4Light.D5` -> `G5` -> `w5`, `H61D3Support.e` / `t`; its wire gains `group: { rule:
+  fixed, num_per_group: 4 }`). `timing.heartbeat.deviations` says what the library sends and where it differs (the
+  re-read at once on the reply's link, the beat held, the setting reads left out, a miss ending it, the colours
+  applied only where they are the row's segments). govee_ble_frame `mode_query` and `group_query` cite the re-read
+  (`Compose4Off2On`, the four walks) among their senders. Each row's `doc` says how the library follows its
+  keep-alive, in place of the "re-reads the status every poll instead" note. `govee_state`
+  `power_state.is_on_heartbeat` cites the newdetail light's rule, on at 1 (`BleComm.G`, `ShareVM.N3`), which
+  `parse.parse_light_power(heartbeat=True)` reads. The h61d3 `status_read` note's "absent TLVs leave brightness 0"
+  is corrected to 100, the fresh `DeviceBaseInfoFromDevice`'s (`DeviceBaseInfoFromDevice.java:70-80`).
 - **TLV 0x40's two one-count readers, the whole-group placement and a status row's IC sources.** govee_common
   `form_40::one_count_u16` reads bytes 0-1 unsigned (`SegmentSettingController.Companion.b`; govee_state
   `ic_count.ic_count_u16`), beside `one_count`, signed (`BleUtil.getSignedShort`), each with no byte-order

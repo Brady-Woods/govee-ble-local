@@ -60,7 +60,7 @@ Reliability rules this module enforces (each one learned from live failures):
   without it. Its reply stays in the receive queue for the next operation to drain; with
   ``heartbeat_reply`` every frame notified while no other frame has gone out since the beat (one sent
   after it may have changed what the reply reports) is also handed to that callback, which reads the
-  reply out.
+  reply out; ``heartbeat_sent`` is called once each beat has gone out, ahead of its reply.
   With ``heartbeat=None`` nothing is armed, whatever ``heartbeat_timing`` says.
 """
 from __future__ import annotations
@@ -276,6 +276,7 @@ class GoveeConnection:
         heartbeat: bytes | None = None,
         heartbeat_timing: HeartbeatTiming = "fixed_rate",
         heartbeat_reply: Callable[[bytes], None] | None = None,
+        heartbeat_sent: Callable[[], None] | None = None,
     ) -> None:
         self._ble_device = ble_device
         # Where a session starts: the device's advertised encrypt flag (the app's per-MAC flag,
@@ -355,6 +356,10 @@ class GoveeConnection:
         # power write, a read) may have changed what the reply reports, so that reply goes only to the queue.
         # The callback runs in the notify callback and must not raise. None: the reply only stays queued.
         self._heartbeat_reply = heartbeat_reply
+        # Called once each beat's write has gone out, with _beat_tx (so every reply heartbeat_reply gets comes
+        # after it): a caller notes what its own state was when the read the reply answers was issued (Device:
+        # power_read_at's drop count). It runs in the beat's task and must not raise. None: nothing is called.
+        self._heartbeat_sent = heartbeat_sent
         self._beat_tx: int | None = None
         # Callers holding or waiting for the lock (_locked), and open holds (hold_heartbeat): a tick that
         # finds either is dropped.
@@ -1356,6 +1361,7 @@ class GoveeConnection:
         connect_budget: ConnectBudget | None = None,
         burst_command: int = BurstAssembler.command,
         burst_sub: int = BurstAssembler.sub,
+        on_link: int | None = None,
     ) -> list[bytes]:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
@@ -1378,9 +1384,14 @@ class GoveeConnection:
         status read's by default, the special-info read's for ``ac a1``.
 
         ``connect_budget`` holds this operation's connect, not its reads, to its limits
-        (:class:`ConnectBudget`)."""
+        (:class:`ConnectBudget`). ``on_link`` (a :attr:`link_number`) makes the read only on that link: when
+        another link, or none, is up once the operation holds the lock, nothing is sent, no connect is made
+        and the result is empty (a read that belongs to that link, such as the re-read a keep-alive reply
+        starts)."""
 
         async def op() -> list[bytes]:
+            if on_link is not None and (on_link != self.link_number or not self.is_connected):
+                return []   # that link is gone: no connect for a read that belongs to it
             await self._ensure_connected_locked(connect_budget)
             self._drain()
             await self._send_frame(frame_plaintext)
@@ -1551,6 +1562,8 @@ class GoveeConnection:
                 async with asyncio.timeout(HEARTBEAT_WRITE_TIMEOUT):
                     await self._send_frame(frame)
                 self._beat_tx = self._tx_count   # its replies, until another frame goes out (heartbeat_reply)
+                if self._heartbeat_sent is not None:
+                    self._heartbeat_sent()   # with _beat_tx: every reply heartbeat_reply gets comes after it
             except (GoveeBleError, *_TRANSPORT_ERRORS, TimeoutError) as err:
                 _LOGGER.debug("%s: heartbeat not sent: %s", self.address, _err_text(err))
             except Exception as err:   # a background beat never raises

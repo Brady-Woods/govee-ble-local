@@ -105,7 +105,9 @@ advertisement, build a capability-driven `Device`, then drive it.
   and drops `idle_disconnect` seconds after the last one (8 s by default), or 30 s after a command
   (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the reconnect). While it is up the `Device` sends
   the keep-alive read the SKU's control screen sends every 2 s (`DeviceProfile.heartbeat`), which never
-  keeps the link longer; to send none, build the `Device` from `dataclasses.replace(profile,
+  keeps the link longer; on a status row whose screen takes its power from the reply
+  (`DeviceProfile.heartbeat_power`) the reply sets `state.is_on`, and where the screen re-reads on a change
+  the `Device` does too (`DeviceProfile.heartbeat_reread_pieces`); to send none, build the `Device` from `dataclasses.replace(profile,
   heartbeat=None)` (`create_device`'s docstring has the recipe). `release()` drops it now and
   ends that window, for a caller that knows no follow-up is coming (a voice command, an automation, a
   burst across many devices): it waits for each link operation already running or queued (FIFO) and

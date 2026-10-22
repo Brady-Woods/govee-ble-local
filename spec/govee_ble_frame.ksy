@@ -985,11 +985,15 @@ types:
         type: govee_common::echo
         doc: an untyped selector and the zero fill
   mode_query:
-    doc: AA 05 [selector], the mode read.
+    doc: >-
+      AA 05 [selector], the mode read. Also the newdetail screens' re-read on a keep-alive power change
+      (ShareVM.N3 -> J3 -> Compose4Off2On, after its timer, sleep and wake reads), whose reply the screen's
+      callback decodes and answers with its colour-group reads (Compose4Off2On.w).
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/AbsModeController.java:34-37
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:45-58,107-109
       - split_h60ax/com/govee/pact_h60a0/ble/controller/compose/ModeController.java:26-44
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-81,99-107
     seq:
       - id: selector
         type: u1
@@ -1090,10 +1094,16 @@ types:
         type: u1
         doc: the delay kind the reply echoes
   group_query:
-    doc: AA A5 / AA A2 [group] colour-group read, group 1-based.
+    doc: >-
+      AA A5 / AA A2 [group] colour-group read, group 1-based. A status-read screen sends AA A5 only in its
+      keep-alive power change's re-read, after the AA 05 of Compose4Off2On (straightfloorlamp VM4Light.t5,
+      CubeVM4Light.l5, rgbiclight VM4Light.N5, h61d3 VM4Light.w5).
     doc-ref:
-      - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:111-136,197-211
-      - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:937-958
+      - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-41,111-136,197-211
+      - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:275-287,882-970
+      - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light.java:428-440,481-521
+      - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:333-345,386-422
+      - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:315-327,636-669
     seq:
       - id: group
         type: u1

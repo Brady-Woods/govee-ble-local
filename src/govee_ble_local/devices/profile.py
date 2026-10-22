@@ -561,15 +561,34 @@ class DeviceProfile:
     reply (``ShareVM.N3`` -> ``J3``, on at byte 2 == 1; ``BleComm.G`` hands it the aa 01 replies of a type-1
     heartbeat). With it, :meth:`~.device.Device.update` makes the status read once per link, and a poll on a
     link it brought state back on reads nothing more, while each keep-alive reply that arrives with no other
-    frame sent since its beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped) and
-    reaches the state callbacks. So the state a poll returns on a fresh link is its status read's, whose TLV
-    0x01 stands in for the reply, and a poll on a warm link reads nothing back. The screen's re-read on a
-    change (``Compose4Off2On``: the aa 05 mode, then its colour groups) is not modelled: on a link that stays
-    up, the mode and colour are the status read's and the library's own writes. Set by a devices.yaml status
-    row's ``heartbeat_power: true`` (h61d3 263 alone, behind ``allow_modelled``). False (the default: every
-    other profile, among them the other status rows on the aa 01 keep-alive, whose screens do the same, and
-    the ones on the aa 00 keep-alive, H60A6's, whose reply carries no switch): the status read on every poll,
-    the reply left unread."""
+    frame sent since its beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped) as
+    a power read: it stamps :attr:`~.device.Device.power_read_at`, unless the stamp was dropped after the beat
+    went out (the read the reply answers was issued then), and reaches the state callbacks. So the state a
+    poll returns on a fresh link is its status read's, whose TLV 0x01 stands in for the reply, and a poll on a
+    warm link reads nothing back. Where a reply changes ``state.is_on``, the screen's re-read follows on a
+    profile with :attr:`heartbeat_reread_pieces`; elsewhere the mode and colour on a link that stays up are
+    the status read's and the library's own writes, as the screen's (it sets the switch alone). Set by a
+    devices.yaml status row's ``heartbeat_power: true``: straightfloorlamp 69, h6069 284, rgbiclight 351 /
+    352, h7086 293, h7020 296, h7076 313 and h3700 383 (the user's decision 17), and h61d3 263 (behind
+    ``allow_modelled``). False (the default: every other profile, among them the status rows on the aa 00
+    keep-alive, H60A6's, whose reply carries no switch): the status read each poll, the reply left unread."""
+    heartbeat_reread_pieces: int = field(default=0, kw_only=True)
+    """With :attr:`heartbeat_power`: the re-read the screen makes when a keep-alive reply changes the switch
+    (``J3`` -> ``Compose4Off2On``), over this many pieces; 0 (the default): none, the screen sets the switch
+    alone (h7086 293, h7020 296, h7076 313, h3700 383: ``J3`` with no compose). On such a change the
+    :class:`~.device.Device` re-reads at once, on the link the reply came on and never another (no connect:
+    ``GoveeConnection.query``'s ``on_link``), holding the heartbeat as a compose in flight holds the app's
+    (``AbsBle.I``): the ``aa 05`` mode read, folded as a poll's, then, once it is answered, the screen's ``aa
+    a5`` colour groups 1 .. ceil(pieces / :attr:`color_readback_per_batch`), four-byte records
+    (``Controller4ColorInfoByGroup.generateReadController``; ``Compose4Off2On.w`` adds them), ending at the
+    first that goes unanswered as the compose does (``AbsComposeControllerWithOpResult.onOvertime``). Those
+    are the device's segment colours where the profile has SEGMENTS over exactly these pieces
+    (straightfloorlamp 69: 7, rgbiclight 351 / 352: 15), and are read and not applied elsewhere (h6069 284's
+    140 pixels, h61d3 263's one piece: their state's colour is the mode report's). The compose's timer, sleep
+    and wake reads are left out, as the library's connect reads leave the setting reads out. A change that
+    comes while a re-read runs makes it run once more, as the app queues another compose. A devices.yaml
+    status row's ``heartbeat_reread: { pieces }``: 7 on straightfloorlamp 69, 140 on h6069 284, 15 on
+    rgbiclight 351 / 352 and 1 on h61d3 263."""
     ic_reads_around_status: tuple[bool, bool] = field(default=(False, False), kw_only=True)
     """``readback="status"`` with :attr:`color_readback_live_ic`: the poll's ``aa 40`` reads ``(before,
     after)`` the 0xAC status read, which give the live IC in place of a TLV 0x40 (a devices.yaml status row's
@@ -753,6 +772,10 @@ class DeviceProfile:
                 f"{where}: ic_reads_around_status={around!r}, color_readback_ic_raw="
                 f"{self.color_readback_ic_raw!r} (two flags; either needs readback='status' with "
                 "color_readback_live_ic)")
+        reread = self.heartbeat_reread_pieces
+        if isinstance(reread, bool) or not isinstance(reread, int) or reread < 0:
+            raise GoveeBleInvalidValue(
+                f"{where}: heartbeat_reread_pieces={reread!r} (0, no re-read, or more)")
         per_unit = self.light_num_per_unit
         if isinstance(per_unit, bool) or not isinstance(per_unit, int) or per_unit < 0:
             raise GoveeBleInvalidValue(

@@ -578,11 +578,14 @@ async def test_a_beat_reply_arriving_inside_the_next_read(monkeypatch: pytest.Mo
                                                           fast: None) -> None:
     # The beat's reply comes after the next operation's drain: a same-command read takes it (the same
     # read, answered a few ms earlier), and the late real reply is drained by the operation after. Neither
-    # reaches heartbeat_reply: a frame went out after the beat. The next beat's reply does.
+    # reaches heartbeat_reply: a frame went out after the beat. The next beat's reply does. heartbeat_sent
+    # runs once per beat, as it goes out; a read on_link a link that isn't up sends nothing and connects not.
     fake = FakeGovee()
     fake.read_replies[0x01] = frame(0xAA, 0x01, 0x01)
     handed: list[bytes] = []
-    c = _make(monkeypatch, fake, heartbeat_reply=handed.append)
+    sent: list[int] = []
+    c = _make(monkeypatch, fake, heartbeat_reply=handed.append,
+              heartbeat_sent=lambda: sent.append(len(fake.received)))
     with virtual_time():
         await c.connect()
         await asyncio.sleep(2.0 + 1e-4)          # the beat is written; its reply lands 5 ms later
@@ -594,6 +597,14 @@ async def test_a_beat_reply_arriving_inside_the_next_read(monkeypatch: pytest.Mo
         assert handed == []
         await asyncio.sleep(2.1)
         assert handed == [frame(0xAA, 0x01, 0x01)]   # the next beat's reply, nothing sent since the beat
+        assert len(sent) == 2 and all(fake.received[n - 1] == BEAT for n in sent)   # right after each beat
+        link, writes = c.link_number, len(fake.received)
+        for gone in (link + 1, link):   # another link, then this one after the disconnect
+            if gone == link:
+                await c.disconnect()
+            assert await c.query(build.power_query(), opcode=0xAA, terminal=0x01, idle_gap=None, timeout=2.0,
+                                 on_link=gone) == []
+        assert len(fake.received) == writes and not c.is_connected and len(fake.clients) == 1
     await c.close()
 
 

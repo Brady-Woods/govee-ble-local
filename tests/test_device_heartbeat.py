@@ -89,12 +89,20 @@ async def test_a_poll_sends_no_beat_between_its_reads(monkeypatch: pytest.Monkey
     await dev.stop()
 
 
-@pytest.mark.parametrize(("sku", "follows"), [("H703A", True), ("H60A6", False)])
+@pytest.mark.parametrize(("sku", "follows", "reread"), [
+    ("H703A", True, ["aa05", "aaa501"]),                                       # h61d3 263: one piece
+    ("H617G", True, ["aa05", "aaa501", "aaa502", "aaa503", "aaa504"]),         # rgbiclight 351: 15 pieces
+    ("H7025", True, []),                                                       # h7020 296: the switch alone
+    ("H60A6", False, []),
+])
 async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follows_the_reply(
-        monkeypatch: pytest.MonkeyPatch, sku: str, follows: bool) -> None:
-    # h61d3 263 (heartbeat_power): VM4Light.d0 reads the 0xAC status once per connect, then ShareVM.N3 -> J3
-    # takes the power from each aa 01 keep-alive reply (DeviceProfile.heartbeat_power). H60A6's aa 00 reply
-    # carries no switch (BleComm.G): it reads the status on every poll, as before. A new link reads it again.
+        monkeypatch: pytest.MonkeyPatch, sku: str, follows: bool, reread: list[str]) -> None:
+    # heartbeat_power (the user's decision 17): the screen reads the 0xAC status once per connect, then
+    # ShareVM.N3 -> J3 takes the power from each aa 01 keep-alive reply, a read that stamps power_read_at with
+    # the drop count of its beat; where J3 re-reads on a change (Compose4Off2On: aa 05, then the screen's aa
+    # a5 groups; DeviceProfile.heartbeat_reread_pieces) the library re-reads at once on that link, and where
+    # it sets the switch alone (h7020 NewDetailVM.J3) it reads nothing. H60A6's aa 00 reply carries no switch
+    # (BleComm.G): it reads the status on every poll, as before. A new link reads it again.
     fake = FakeGovee()
     fake.status_burst = status_burst(bytes([0x01, 0x01, 0x01]))   # on
     fake.read_replies[0x01] = frame(0xAA, 0x01, 0x00)              # the keep-alive reply: off
@@ -103,10 +111,19 @@ async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follow
     with virtual_time():
         await dev.update()
         assert dev.state.is_on is True
-        await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL + 0.1)    # a beat and its reply
+        with _span(fake) as beat:
+            await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL + 0.5)    # a beat, its reply and any re-read
+        assert [f[:3].hex() if f[1] == 0xA5 else f[:2].hex() for f in beat
+                if f[:2] in (b"\xaa\x05", b"\xaa\xa5")] == reread
+        # stamped with is_on now off: the reply's stamp where it follows (the status read's gave on)
+        assert dev.power_read_at is not None and dev.state.is_on is not follows
         with _span(fake) as polled:
             await dev.update()
         assert dev.state.is_on is not follows
+        if follows:   # a drop after the beat (an advert, a write): the next reply to it stamps nothing
+            dev._drop_power_read()
+            dev._on_beat_reply(frame(0xAA, 0x01, 0x00))
+            assert dev.power_read_at is None and dev.state.is_on is False
         await dev.release()
         with _span(fake) as fresh:
             await dev.update()

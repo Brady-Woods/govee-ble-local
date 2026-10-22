@@ -472,6 +472,12 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "where power_live [] and the relay take power from the reply to power"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat_power=True),
      "heartbeat_power is served only on an unzoned status row"),
+    # the keep-alive re-read (J3 -> Compose4Off2On): with heartbeat_power, its pieces and the wire group size
+    ("h7020", "296", lambda f: _row(f, "296").update(heartbeat_power=False, heartbeat_reread={"pieces": 15}),
+     "heartbeat_reread without heartbeat_power"),
+    ("rgbiclight", "351", lambda f: _row(f, "351").update(heartbeat_reread={"pieces": 0}),
+     "heartbeat_reread pieces 0 (1 or more"),
+    ("h6069", "284", lambda f: _wire(f).pop("group"), "heartbeat_reread needs the wire group num_per_group"),
     # the power write (h6057's light switch, 33 30, with its aa 34 light-flag read-back)
     ("h6057", "104", lambda f: _row(f, "104").update(power_write="main"),
      "power_write 'main' (one of ['light_switch'], or absent)"),
