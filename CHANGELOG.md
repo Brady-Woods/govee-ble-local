@@ -31,7 +31,7 @@ model, from which the shipped readers are generated).
   only from the illumination tab (`View4IlluminationMode` -> `configKelvinController`) and same-model group
   control, and none of these SKUs' bundled mode lists has the illumination tab. H6113 / H6181 and the other
   goodsType-0 rows on colour version 4 stay held for their other gaps (routing below the gate, the
-  `rgb_flag_tint` read-back, the GATT service, firmware gates).
+  `rgb_flag_tint` read-back, the GATT service, firmware gates, chip-gated brightness).
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
   by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
@@ -112,6 +112,13 @@ model, from which the shipped readers are generated).
   `KelvinConfig.i` on every pick whatever the screen offers, and without the range the library would send a
   tint pick as plain RGB. Every row already has one, so no profile changes. devices.schema.json lists the six
   colour schemes as `color_scheme`'s enum.
+- **devices.yaml, the held colour-version-4 rows** (bulblightv3 0 for H6001 below its pact gate, h6159 0, h6160
+  0, h6104, h6113 0, h6114 0, h6127 0, h613839 0, h6181 0, h6182 0, chassislightv1 11): their docs no longer say that no library
+  scheme builds the `Config.fu` 0x02 frames, which are now `legacy_02`'s. Each names the gaps that still hold it:
+  routing below the gate, the `rgb_flag_tint` (h6104: `rgb_flagnz_tint_02`) read-back that `parse.mode_color`
+  does not fold, the ffe0 / ffe1 GATT service, the soft-version route, chip-gated brightness, or firmware-gated
+  colour. Docs only: no row, value or profile changes. h6101's 0x02 frame stays a gap: it echoes the reported
+  tint (`SubModeColor.getWriteBytes`), which `legacy_02` doesn't.
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
   was traced as the app runs it: the device-list model, the detail screen, its view model, then the builders,
   with `Class.method` and line citations in each row's `doc` and `doc-ref`. Core control decided a row's
