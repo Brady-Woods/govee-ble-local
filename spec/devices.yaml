@@ -2207,7 +2207,7 @@ families:
     submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x05", diy: "0x0a" }
     opcodes:
       - { name: color_temp_type, cmd: "0x26", payload: "[1|2] display type (H601EF)" }
-      - { name: color_temp_write, cmd: "0x05", payload: "[0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB]", note: "BOTH-SLOT form (the colour page): bulblightv3/pact/Model.t -> bulblightstringv1/bulblight VM4Light; ColorViewModel takes the unified ColorModeControllerConfig.c first (colour-instruction version Config.x[64] = 2) -> Config.J[2] = Config.bu -> Bytes.p(tint, K), VM4Light.configColorController (also J[2]) being only the fallback; the tint (Constant.getTemColorByKelvin) fills both colour slots, NOT ff ff ff (that is the H6188 form, Config.GM -> Bytes.A, which this screen's illumination tab sends: KelvinConfig.b -> ColorModeControllerConfig.h -> Config.N[2] = GM, then 33 04; bulblightv3.md). H6008 (gt 64); H6006 sits in the same goodsType-64 version gates (bulblight/Support.d, BulbLightApplication, SettingAc). Read-back: aa 05 0d [r g b kelvin s16be tint rgb], kelvin > 0 => CCT, and 0x15 / 0x0b / 0x02 are read the same way (mode_color_parse rgb_kelvin_tint: bulblight AcNewDetail -> VM4Light -> ModeParseStrategyConfig.a -> OpInfo4Detail.x, Govee Home 7.7.02; the H6006/H6008 firmware sends the tint bytes as 0, static firmware analysis). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu: Bytes.p (the colour, KelvinConfig.c of it) when KelvinConfig.i holds for the colour, else Bytes.f (the colour). Library: build.rgb_as_kelvin / color_rgb_frames." }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB]", note: "BOTH-SLOT form (the colour page): bulblightv3/pact/Model.t -> bulblightstringv1/bulblight VM4Light; ColorViewModel takes the unified ColorModeControllerConfig.c first (colour-instruction version Config.x[64] = 2) -> Config.J[2] = Config.bu -> Bytes.p(tint, K), VM4Light.configColorController (also J[2]) being only the fallback; the tint (Constant.getTemColorByKelvin) fills both colour slots, NOT ff ff ff (that is the illumination-tab form, scheme h6188, Config.GM -> Bytes.A, which this screen's illumination tab sends: KelvinConfig.b -> ColorModeControllerConfig.h -> Config.N[2] = GM, then 33 04; bulblightv3.md). H6008 (gt 64); H6006 sits in the same goodsType-64 version gates (bulblight/Support.d, BulbLightApplication, SettingAc). Read-back: aa 05 0d [r g b kelvin s16be tint rgb], kelvin > 0 => CCT, and 0x15 / 0x0b / 0x02 are read the same way (mode_color_parse rgb_kelvin_tint: bulblight AcNewDetail -> VM4Light -> ModeParseStrategyConfig.a -> OpInfo4Detail.x, Govee Home 7.7.02; the H6006/H6008 firmware sends the tint bytes as 0, static firmware analysis). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu: Bytes.p (the colour, KelvinConfig.c of it) when KelvinConfig.i holds for the colour, else Bytes.f (the colour). Library: build.rgb_as_kelvin / color_rgb_frames." }
     specs: { scene_versions: [0], brightness_range: [1, 100], brightness_scaling: "legacy non-H6005: 1-100 -> 20-254; H6005/H6001-new: raw percent" }   # scene_versions = Support4BulbLightV3.g's else-branch; goodsType 64's Kelvin range and versionArray are its by_goods_type row's
     encryption: none
     notify:
@@ -3879,7 +3879,7 @@ families:
     # SKU-string matched (goodsType 0 => no advert pact parse); colour 0x0d + Kelvin + tint; raw 20-254 brightness.
     client_profile:   # SKU-routed (goodsType 0, no BK rewrite); rgblight/VM4Light.java:580-602
       has_brightness: false
-      color_scheme: h6188
+      color_scheme: h6006   # the colour tab's both-slot 0x0d frames (Config.J[2] = bu); the white-slot scheme h6188 is the illumination tab's (H8015), which H6188 has none of (row doc)
       mode_color_parse: rgb_kelvin_tint
       power_read: aa01
       power_live: [heartbeat_aa01]
@@ -3890,6 +3890,7 @@ families:
           pacts: any
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, scenes]
+          color_functions: [color_temperature]
           zones: []
           account_lock: false
           scene_dialect: none
@@ -3897,17 +3898,34 @@ families:
           connect_writes: []
           heartbeat: power
           doc: >-
-            SkuBleProcessor.onItemClick takes a goodsType-0 record of this SKU and tests no pact. Colour 0x0d: RGB Bytes.f,
-            CCT Config.GM -> Bytes.A (white slot); an RGB pick equal to a Kelvin tint in range goes in the h6006 form
-            (Config.bu). One colour piece (ColorPieceConfig.n), no segments. Read-back: ControllerStrategyConfig.H0 polls
-            aa 04 / aa 01 / aa 05. Scenes: the fixed Scenes4H6188 list, activated 33 05 04 <code> (DelegateSceneV1.P),
-            nothing uploaded. No account lock (ConnectDialog has no 0xB1 / 0xB2 step). Kelvin (version 0), brightness
-            (BrightnessConfig version 0, raw [20, 254]) and scene_versions are the family specs. Not hardware-verified (no
-            H6188 on the bench).
+            SkuBleProcessor.onItemClick takes a goodsType-0 record of this SKU and tests no pact. Colour 0x0d on the
+            colour tab (DelegateColorV2; no Config.w entry, Config.x[0] = Hu = 2 for H6188 -> Config.J[2] = bu, through
+            ColorViewModel.p0 / U -> ColorModeControllerConfig.c): RGB Bytes.f, and the Kelvin palette and an RGB pick
+            equal to a Kelvin tint in range Bytes.p, 0d <tint> <K> <tint>, the h6006 both-slot form. Config.I[0] for
+            H6188 (EO) has colour temperature on and segment brightness off. The screen offers no illumination tab (the
+            bundled mode list, base.apk assets/localSkuComponentConfigs.json H6188, is [9, 10, 8, 20, 11, 15], no 13).
+            The white-slot Config.N[2] = Config.GM -> Bytes.A (0d ff ff ff <K> <tint>) reaches H6188 only from
+            same-model / group control (SameModelCmdOp4RgbLight.configKelvinController), group apply (GroupApplyVM.v0)
+            and automations (ColorTemActionParser.E), which are not matched (rule 5). Until 1.7.0 the library sent that
+            form (H6188_CCT.md, library-audit/devlist-traces; the user's decision 3). One colour piece
+            (ColorPieceConfig.n), no segments. Read-back: ControllerStrategyConfig.H0 polls aa 04 / aa 01 / aa 05.
+            Scenes: the fixed Scenes4H6188 list, activated 33 05 04 <code> (DelegateSceneV1.P), nothing uploaded. No
+            account lock (ConnectDialog has no 0xB1 / 0xB2 step). Kelvin (version 0), brightness (BrightnessConfig
+            version 0, raw [20, 254]) and scene_versions are the family specs. Not hardware-verified (no H6188 on the
+            bench).
           doc-ref:
             - split_rgblight/com/govee/rgblight/add/SkuBleProcessor.java:44-60
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:254,356
             - split_rgblight/com/govee/rgblight/VM4Light.java:648-650
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-252,779-807,816-836,1295-1300
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-899,1388-1430
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,1366-1370,4780-4784,5537-5541,9641-9644,10285-10297,13459-13467
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:54-73,291-299,431-450
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1310-1315,1467-1598
+            - split_rgblight/com/govee/rgblight/SameModelCmdOp4RgbLight.java:116-118
+            - base-classes13/com/govee/eco/basegroup/viewmodel/GroupApplyVM.java:2302,2339
+            - base-classes13/com/govee/eco/executeAction/parser/ColorTemActionParser.java:150,184
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6188]
@@ -3917,7 +3935,7 @@ families:
     protocol: { single_packet: true, mode_command: "0x05" }   # no multi-packet write on the BLE path (scenes are activate-only; DIY not modelled)
     submodes: { color: "0x0d", scene: "0x04", music: "0x03", diy: "0x0a" }
     opcodes:
-      - { name: color_write, cmd: "0x05", payload: "RGB: [0x0d, R, G, B, 0...] (Bytes.f); CCT: [0x0d, ff, ff, ff, kelvin u2be, tintR, tintG, tintB] (Config.GM -> Bytes.A(kelvin, ColorTemperatureType RGB_WHITE)); tint = first colour of Constant's colour->Kelvin table whose Kelvin equals the request exactly (getTemColorByKelvin), else zeros", note: "RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu: Bytes.p (the colour, KelvinConfig.c of it) when KelvinConfig.i holds for the colour, else Bytes.f (the colour). Library: build.rgb_as_kelvin / color_rgb_frames. (h6188 slider CCT stays the white-slot Bytes.A form)." }
+      - { name: color_write, cmd: "0x05", payload: "RGB: [0x0d, R, G, B, 0...] (Bytes.f); CCT: [0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB] (Config.bu -> Bytes.p, the colour tab's Kelvin palette); tint = first colour of Constant's colour->Kelvin table whose Kelvin equals the request exactly (getTemColorByKelvin), else zeros", note: "RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu: Bytes.p (the colour, KelvinConfig.c of it) when KelvinConfig.i holds for the colour, else Bytes.f (the colour). Library: build.rgb_as_kelvin / color_rgb_frames. The white-slot CCT [0x0d, ff, ff, ff, kelvin u2be, tint] (Config.N[2] = GM -> Bytes.A) is the group-control and automation frame (SameModelCmdOp4RgbLight.configKelvinController), not the control screen's." }
       - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 0D [R, G, B, kelvin s16be at bytes 3-4 (signed, big-endian), tintR, tintG, tintB]; parsed by ModeParseStrategyConfig.a.a() (the H6188 default — VM4Light.v5 else branch; rgblight/mode/ModeParseStrategyConfig.java:35-46): signed kelvin != 0 => the stored colour = the tint bytes 5-7, else the RGB bytes 0-2; OpInfo4Detail.x (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:771-779) then, for kelvin > 0, sets the Kelvin and fills the pieces with Constant.getTemColorByKelvin(k)[2] (0 when k is not an exact table step in 1000..10000), not the wire tint; kelvin < 0 => the tint bytes as a plain RGB colour, no Kelvin (mode_color_decode.rgb_kelvin_tint); sub-modes 0x15/0x0b/0x02 take the same layout (OpInfo4Detail.x :766)" }
       - { name: scene_activate, cmd: "0x05", payload: "[0x04, code u1] — fixed list Scenes4H6188.g {4 Movie, 5 Dating, 13 Reading, 23 Bright, 24 Aurora, 9 Candlelight, 16 Energetic, 7 Romantic, 17 Gradient}; read-back AA 05 04 [code lo, code hi] (SubMode4Scene default parse)" }
       - { name: brightness, cmd: "0x04", readable: true, payload: "[raw 20..254]; percent p -> 20 + (p-1)*2.37 in single-precision float, truncated to an integer (NumberUtil.calculateProgress), raw -> ceil((raw-20)/2.37)+1 in float (calculatePercent)" }
@@ -3925,7 +3943,7 @@ families:
     encryption: none   # no 0xB1 / 0xB2 account-lock; plaintext by default
     notify: []
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
-    sources: ["pact_rgblight: rgblight/h6188/H6188Config.java:92-94", "rgblight/h6188/H6188BleProtocol.java", "rgblight/Support.java:76,132-135", "rgblight/add/SkuBleProcessor.java:49-57", "rgblight/add/ConnectDialog.java:50-61", "rgblight/ControllerStrategyConfig.java:961-1043,1396 (H0 read set)", "rgblight/VM4Light.java:893-939 (configColorController), 1024-1047 (configKelvinController), 575-602 (v5 parse strategy)", "rgblight/mode/ModeParseStrategyConfig.java:34-46 (strategy a)", "rgblight/mode/scene/Scenes4H6188.java:11-15", "rgblight/mode/scene/DelegateSceneV1.java:555", "base2light/pact/newdetail/config/fuc/color/Config.java:13459 (bu), 9972 (GM), 277-292 (H)", "base2light/pact/newdetail/config/fuc/color/Bytes.java:54-73 (A), 291-299 (f), 431-450 (p)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-416,1287-1312 (P1)", "base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-258,356 (F2=0)", "base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:697", "base2home/util/NumberUtil.java:28-49", "base2home/Constant.java:303 (colour->Kelvin table k2), 987-1005 (getTemColorByKelvin)"]
+    sources: ["pact_rgblight: rgblight/h6188/H6188Config.java:92-94", "rgblight/h6188/H6188BleProtocol.java", "rgblight/Support.java:76,132-135", "rgblight/add/SkuBleProcessor.java:49-57", "rgblight/add/ConnectDialog.java:50-61", "rgblight/ControllerStrategyConfig.java:961-1043,1396 (H0 read set)", "rgblight/VM4Light.java:893-939 (configColorController), 575-602 (v5 parse strategy)", "base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-252,779-807,816-836,1295-1300 (colour tab Kelvin palette)", "base2light/pact/newdetail/content/color/ColorViewModel.java:848-899 (U)", "base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256 (c)", "base2light/pact/newdetail/config/fuc/color/Config.java:1366-1370,10285-10297 (x[0] = Hu = 2 for H6188), 5537-5541 (J[2] = bu)", "base.apk assets/localSkuComponentConfigs.json H6188 [9, 10, 8, 20, 11, 15] (no illumination tab 13)", "rgblight/mode/ModeParseStrategyConfig.java:34-46 (strategy a)", "rgblight/mode/scene/Scenes4H6188.java:11-15", "rgblight/mode/scene/DelegateSceneV1.java:555", "base2light/pact/newdetail/config/fuc/color/Config.java:13459 (bu), 9972 (GM, group control only), 277-292 (H)", "base2light/pact/newdetail/config/fuc/color/Bytes.java:54-73 (A), 291-299 (f), 431-450 (p)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-416,1287-1312 (P1)", "base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-258,356 (F2=0)", "base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:697", "base2home/util/NumberUtil.java:28-49", "base2home/Constant.java:303 (colour->Kelvin table k2), 987-1005 (getTemColorByKelvin)"]
 
   # One cubelight screen for six SKUs; H6069 (284) is the separate entry h6069.
   - id: h6061

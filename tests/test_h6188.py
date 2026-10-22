@@ -1,5 +1,6 @@
-"""H6188 (rgblight legacy RGB strip): the "h6188" colour scheme, the Kelvin->tint table, the
-raw 20..254 brightness range, the rgblight 0x0d read-back rule, and the fixed scene list.
+"""H6188 (rgblight legacy RGB strip): its colour tab's 0x0d frames (scheme "h6006"; the white-slot
+"h6188" scheme, which H8015 keeps, is checked at the builder), the Kelvin->tint table, the raw 20..254
+brightness range, the rgblight 0x0d read-back rule, and the fixed scene list.
 
 All expectations are derived from the decompiled Govee Home 7.7.02 app (see the H6188 entry in
 spec/devices.yaml for citations); none are hardware-verified."""
@@ -71,7 +72,7 @@ def test_profile() -> None:
     assert p is not None
     assert p.capabilities == {Capability.POWER, Capability.BRIGHTNESS, Capability.RGB,
                               Capability.COLOR_TEMP, Capability.SCENES}
-    assert p.color_scheme == "h6188" and p.segments == 0 and p.zones == ()
+    assert p.color_scheme == "h6006" and p.segments == 0 and p.zones == ()   # the colour tab (Config.bu)
     assert (p.min_kelvin, p.max_kelvin) == (2000, 9000)         # KelvinConfig version 0
     assert p.brightness_range == (20, 254)                       # BrightnessConfig version 0
     assert p.encryption is Encryption.NONE and not p.requires_secret
@@ -223,7 +224,7 @@ def test_turn_on_batches_raw_brightness_and_cct() -> None:
     f = _sent(d)
     assert f[0][:3].hex() == "330101"
     assert f[1][:3].hex() == "3304fe"
-    assert f[2][:11].hex() == "33050dffffff1964fff9fb"
+    assert f[2][:11].hex() == "33050dfff9fb1964fff9fb"
     assert d.state.color_temp_kelvin == 6500 and d.state.brightness == 100
 
 
@@ -232,7 +233,7 @@ def test_set_color_temp_range_clamped() -> None:
     asyncio.run(d.set_color_temp(1500))
     assert _sent(d)[0][6:8].hex() == "07d0" and d.state.color_temp_kelvin == 2000
     asyncio.run(d.set_color_temp(9000))
-    assert _sent(d)[1][3:11].hex() == "ffffff2328d9e1ff"
+    assert _sent(d)[1][3:11].hex() == "d9e1ff2328d9e1ff"
 
 
 def test_segments_not_supported() -> None:

@@ -65,13 +65,24 @@ model, from which the shipped readers are generated).
     reply.
 
 ### Changed
-- Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
-  `allow_modelled`) resolves to the same profile at every pact its rows list and at none, with and without
-  `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
+- Nothing else for existing SKUs (H6188's colour temperature is under Fixed). Each other SKU of the 104
+  admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its
+  rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
   that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+
+### Fixed
+- **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
+  (`Config.bu -> Bytes.p`, scheme `h6006`) instead of the white-slot `33 05 0d ff ff ff <K> <tint>`
+  (`Config.GM -> Bytes.A`), which the app sends this SKU only from group control and automations. Its control
+  screen has no illumination tab (the bundled mode list has no tab 13), so the colour tab's Kelvin palette is
+  its only colour-temperature control. Only bytes 3-5 and the checksum of the `set_color_temp` /
+  `turn_on(kelvin=)` frame change; RGB, the RGB pick of a tint colour, and the decoded state are as before.
+  `DeviceProfile.color_scheme` for H6188 is now `"h6006"`. The `"h6188"` scheme keeps its name and frame for
+  H8015 (behind `allow_modelled`), whose illumination tab sends it. Source-traced (Govee Home 7.7.02), not
+  live-verified: there is no H6188 on the bench.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families

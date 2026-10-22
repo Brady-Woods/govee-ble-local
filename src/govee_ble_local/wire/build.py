@@ -180,8 +180,11 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # H6161 and H6163 by their firmware. No built-in profile uses it: the H61A8 (goodsType 19) sends the h60a6
 # forms, as do 123 and the other dreamcolorlightv1 goodsTypes from 19 up (devices.yaml dreamcolorlightv1
 # client_profile); it stays for custom profiles.
-# "h6188" = 0x0d rgblight strip: same RGB frame as h6006, but the CCT is the white-slot form
-# `0d ff ff ff <K> <tint>` (Config.GM -> Bytes.A); this one is NOT the h6006 form.
+# "h6188" = 0x0d with the white-slot CCT: same RGB frame as h6006, but the CCT is
+# `0d ff ff ff <K> <tint>` (Config.N[2] = Config.GM -> Bytes.A), NOT the h6006 form. It is the
+# illumination tab's Kelvin write (H8015, via KelvinConfig.b) and the rgblight group / automation
+# frame; it is no longer H6188's, whose colour tab sends the h6006 form (devices.yaml h6188 row). The
+# name is kept: it is the public ColorScheme literal.
 # "h6061" = Glide Hexa panels, 0x15 family with its own whole-device writes: RGB is ceil(n/4)
 # group frames `15 04 <group> RGB x<=4` (Bytes.m), CCT is `15 01 <tint> <K> <24-bit mask>`
 # (Bytes.u). See the "Glide Hexa" section below.
@@ -581,8 +584,9 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
                pieces: int | None = None) -> bytes:
     """Whole-device colour temperature, always with the app's Kelvin->RGB tint
-    (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>``, ``h6188`` =
-    ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
+    (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>`` (the colour tab's
+    ``Config.bu -> Bytes.p``), ``h6188`` = ``0d ff ff ff <K> <tint>`` (the illumination tab's
+    ``Config.GM -> Bytes.A``), ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
     segment_color_temp with the all-segments mask), ``h6061`` = ``15 01 <tint> <K> <mask>`` over
     ``segments`` panels of a device of ``pieces`` (as in :func:`color_rgb_frames`; ``segments`` None is
     the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h61a8`` has no colour temperature:
@@ -597,11 +601,12 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
             return segment_color_temp(all_segments_mask(n), kelvin, scheme, n)
         case "h6006":
             # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
-            # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
+            # sits in BOTH colour slots (H6008/H6006/H6052/H6188; also H6004 via the same builder).
             tint = tint_for_kelvin(kelvin)
             return _cct0d_frame(tint, kelvin, tint)
         case "h6188":
-            # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b].
+            # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b] (the
+            # illumination tab via KelvinConfig.b, H8015; group control and automations elsewhere).
             return _cct0d_frame((0xFF, 0xFF, 0xFF), kelvin, tint_for_kelvin(kelvin))
         case "h6061":
             return _h6061_color_temp(kelvin, segments, pieces=pieces)
