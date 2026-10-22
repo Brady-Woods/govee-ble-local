@@ -1685,7 +1685,8 @@ class Device:
             pass
         else:
             _unhandled(self.profile.readback, "readback")
-        if self.profile.ic_num_read_only and not self.profile.color_readback_live_ic:
+        if (self.profile.ic_num_read_only and not self.profile.color_readback_live_ic
+                and not self.profile.color_readback_ic_sections):
             # The screen's connect read; it sizes nothing.
             await self._read_reply(build.ic_count_query(), budget)
         # Segment / single-colour read-back layered on top (spec Change 7).
@@ -1893,8 +1894,8 @@ class Device:
         return applied
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
-        """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
-        came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
+        """The polled read-back (aa 01 or aa 34 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live
+        field came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
         capability, as the app's connect read does (``ControllerStrategyConfig.k1`` reads aa 04 on H7017
         only, and H7004's screen has no brightness), and aa 05 with :data:`_MODE_REPORT_CAPS`."""
         def apply_power(on: bool) -> None:
@@ -1915,8 +1916,9 @@ class Device:
         # A light is on only for a byte of 1, as the app's control screens read it, or for any non-zero byte
         # where its screen reads it so (DeviceProfile.light_nonzero; parse_light_power).
         prof = wire_profile(self.profile)
+        detail = self.profile.detail_power_read
         since = self._power_unsure_seq   # when the read that gives the on/off is issued (_finish_read)
-        power_read = await self._read_command(
+        power_read = not detail and await self._read_command(
             "power", build.power_query(), lambda r: parse.parse_light_power(r, prof), apply_power,
             budget) == "applied"
         applied = power_read   # see _read_status / _finish_read
@@ -1924,6 +1926,13 @@ class Device:
                 "brightness", build.brightness_query(), parse.parse_brightness, apply_brightness,
                 budget) == "applied":
             applied = True
+        if detail:
+            # H6057: no aa 01; the aa 34 device-detail read after aa 04, as the screen's connect list sends
+            # them (Compose4InfoBleIotH6057), on while the header main switch shows on (parse_detail_power).
+            since = self._power_unsure_seq
+            if await self._read_command("power", build.device_detail_query(), parse.parse_detail_power,
+                                        apply_power, budget) == "applied":
+                applied = power_read = True
         if self.profile.bar_switch:
             bars_since = self._power_unsure_seq
             if await self._read_bar_switch(budget) == "applied":

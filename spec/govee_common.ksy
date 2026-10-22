@@ -648,10 +648,13 @@ enums:
         - split_h6062/com/govee/striplight/ble/ComposeHeartController.java:9-11
         - H6047 handler @0x010069f0
     0x34:
-      id: swap_light
-      doc: swap the two bars' logical positions (H6047)
+      id: cmd_34
+      doc: |
+        overloaded (form_34): 33 34 swaps the two bars' logical positions
+        (H6047, an empty write); aa 34 is the H6057 device-detail read
       doc-ref:
         - H6047 handler @0x01005080
+        - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:62-70
     0x35:
       id: without_interrupt
       -orig-id: SINGLE_WITHOUT_INTERRUPT
@@ -1620,6 +1623,16 @@ enums:
       doc: H6057 worry-free-at-night, 7 bytes
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/WorryFreeAtNightBean.java:90-92
+  form_34:
+    0:
+      id: unknown
+      doc: not known; body raw (the H6047 33 34 swap write has no body to read)
+    1:
+      id: device_detail
+      doc: the H6057 aa 34 device-detail reply (Controller4ExtBytes read of 0x34)
+      doc-ref:
+        - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:34-70
+        - base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytes.java:49-64
   form_40:
     0:
       id: unknown

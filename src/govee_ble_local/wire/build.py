@@ -919,6 +919,12 @@ def power_query() -> bytes:
     return _request(_C.Command.power)
 
 
+def device_detail_query() -> bytes:
+    """aa 34: the H6057 device-detail read (reply: parse_detail_power), no selector, as the screen's
+    connect list sends it (``Controllers.f``: a Controller4ExtBytes read of 0x34)."""
+    return _request(_C.Command.cmd_34)
+
+
 def heartbeat(command: int) -> bytes:
     """``aa <command>`` with the zero fill: the keep-alive read a control screen sends while the link is up
     (spec devices.yaml timing.heartbeat; the row's ``heartbeat``), the spec's read_request with no selector,

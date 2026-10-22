@@ -58,6 +58,10 @@ types:
         type: u1
         enum: govee_common::form_30
         doc: 33 30, aa 30, TLV 0x30 (zone power vs light direction)
+      - id: f_34
+        type: u1
+        enum: govee_common::form_34
+        doc: aa 34 (the H6057 device detail; H6047's 33 34 is a bar swap)
       - id: f_36
         type: u1
         enum: govee_common::form_36

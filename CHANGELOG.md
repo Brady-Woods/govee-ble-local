@@ -10,12 +10,12 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
-  illumination-tab pair that promotes H60A4 / H80A4, below): 101 admitted by default (`app_traced`) and 57
-  behind `allow_modelled` (`modelled`). The entries below admit 49 more by default (16 through the resolver
-  changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK
-  pact gate; and the 10 SKUs of the `legacy_02` colour scheme) and 11 more behind `allow_modelled` (H7072,
-  H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 248 admitted by default and 74 behind
-  `allow_modelled` in all. None is
+  illumination-tab pair that promotes H60A4 / H80A4 and the aa 40 section sum that promotes H61A9, below): 102
+  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 50
+  more by default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through
+  the status-read command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; and H7061)
+  and 11 more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1),
+  for 250 admitted by default and 73 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -26,7 +26,8 @@ model, from which the shipped readers are generated).
   - h6114: **H6114** (39); h613839: **H6138 / H6139** (39), each on an advertised pact only (below);
     carlightv1: **H6118 / H6194** (6); tvlightv1: **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
   - h60ax: **H60A4 / H80A4** (302, by the illumination-tab pair, below); h6047: **H6039** (277); h61d3:
-    **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 / H70A3** (193);
+    **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 / H70A3** (193),
+    **H61A9** (204, by the aa 40 section sum, below);
   - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
     **H618G**, **R618D**† (352);
   - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
@@ -50,8 +51,8 @@ model, from which the shipped readers are generated).
   every unit; each row's `doc` names the difference):
   - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
-  - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1:
-    **H6148** (16); hollowlamp: **H6058** (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
+  - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
+    (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
@@ -215,6 +216,39 @@ model, from which the shipped readers are generated).
   is [2200, 6500] below hardware 1.04.03 (`KelvinConfig.Config.Y2`, a numeric compare), the library's the
   [2700, 6500] valid on every revision, so on that hardware an RGB pick of one of the ten 2200-2600 K tint
   colours goes out as RGB where the app sends a colour-temperature frame. Not hardware-verified.
+- **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized as
+  the app sizes it, and H61A9 is admitted by default (`app_traced`; listed above), no longer behind
+  `allow_modelled`.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
+  keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d`
+  -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws (an
+  IC field of 0x1000 or more) the app walks nothing, and now neither does the library. New
+  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`). The
+  aa 40 read keeps its place in the poll. The frames are the ones sent before for a section sum of 0 or 13-15 on
+  141 (groups of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static).
+  Rgbiclight 141's promotion on the H61C3 bench reading (the user's decision 1, Spec below) stands; this makes
+  its connect walk exact on every unit. Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no non-zero
+  sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
+- **H7061 (h7050 98), a two-head flood light, admitted by default (`app_traced`).** Its aa 05 0x15 report is two
+  `[bri s8][r g b]` head records (`bri_rgb_pair_15`), which the library decoded but did not fold. It now folds
+  them as the colour page holds them (`H70606162Info4Detail.I`; `H7061ColorMode.updateColor` /
+  `updateBrightness`): head 1 / head 2 to segments 0 / 1 with their brightness (clamped to 0..100), the
+  whole-device colour only while both heads show the same one, and a shared in-range Kelvin tint as that colour
+  temperature (`ColorViewModel.initColor4Device` -> `KelvinConfig.f`, as an RGB tint pick is folded on the write
+  side). No Kelvin is read from the report itself (its default parse's `s16be(r1, g1)` is head 1's red and green).
+  New `parse.HeadPair` in `parse.ModeColor`. Every frame is the h60a6 one the row already resolved to. Source-modelled,
+  not live-verified: no H7061 on the bench, and what the heads report after a CCT write is unread.
+- **The aa 34 device-detail power read (H6057's screen); no row is served by it yet.** H6057's screen never reads
+  aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`). New
+  `power_read: aa34_detail` (`DeviceProfile.detail_power_read`, keyword-only, default False): the poll reads aa 04,
+  then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`), and takes the
+  state of the header's main switch, the one `33 01` drives: on while the light is open (byte 0 bit 7) or white
+  noise plays (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). New `build.device_detail_query` and
+  `parse.parse_detail_power`; the frame describer (`wire.describe`) reads the aa 34 reply as `wire.parse` does.
+  H6057 (h6057 104) stays held, with no `support`, until the user picks the switch that backs an HA light's power.
+  With white noise playing and the light off, the main switch reads on while the screen shows the light closed
+  (`switchCur` is the light flag alone), and `set_power(True)` still sends `33 01 01`, which the main switch never
+  sends then (`switchTrigger`). The light switch (`33 30`) matches the screen in every state, but the library has
+  no per-row power write for it. Source-modelled: no H6057 on the bench and no firmware dump.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -268,6 +302,10 @@ model, from which the shipped readers are generated).
   has `COLOR_TEMP`). Every SKU of 1.6.1 has `whole_device_kelvin=False`.
 - No SKU of 1.6.1 takes the illumination pair: each keeps `kelvin_with_brightness=False` and its one-frame
   colour-temperature write, H8015 included (above).
+- The read-back work changes no other SKU: each of the 322 the table admitted before it (248 by default, 74
+  behind `allow_modelled`) but H61A9 and H61C2 / H61C3 / H61C5 (Added) resolves to the same profile, field by
+  field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`
+  (`color_readback_ic_sections` and `detail_power_read` False). H7061 is a new route.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
@@ -306,14 +344,15 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 196 with `support` (66), of them 156
-    `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 109 without (118). The trace gave 153
-    of them support. The other 43 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 197 with `support` (66), of them 158
+    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 108 without (118). The trace gave 153
+    of them support. The other 44 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
     rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105,
-    h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), and h60ax 235 and h61d3 239 / 246 (the
-    colour-temperature work, which also promoted h60ax 302 to `app_traced`), all `app_traced` but h7072 294,
+    h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the
+    colour-temperature work, which also promoted h60ax 302 to `app_traced`) and h7050 98 (H7061's two heads;
+    the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`), all `app_traced` but h7072 294,
     h6119 44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -321,7 +360,8 @@ model, from which the shipped readers are generated).
     brightness, RGB, colour temperature [2000, 9000], 15 segments and `15 02` segment brightness. Its one
     device-reported fact, the aa 40 section sum that sizes the app's connect aa a5 walk (`VM4Light.N5`), was
     read as 0 on the bench H61C3 (`BENCH_20261021_h6076_h61c3.md`), so the app walks the row's 15 pieces; the
-    user accepted that reading for H61C2 / H61C5, which were not on the bench. Left out: gradual (the app reads
+    user accepted that reading for H61C2 / H61C5, which were not on the bench (the library now sizes the walk
+    from the live sum, as the app does: the section-sum entry under Added). Left out: gradual (the app reads
     no aa a3 here), the `33 09` time sync and scenes (no catalog). The library sends the app's connect reads in
     its own fixed poll order: aa 05 before aa 40, and the device-info reads last rather than first. The row's
     `doc` records this. Control is not hardware-verified.
@@ -461,6 +501,16 @@ model, from which the shipped readers are generated).
 - h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No
   `.ksy` change: govee_state already reads an aa 05 reply with the profile's `mode` decode, and its empty-value
   rule only for a status TLV.
+- **The aa 40 section sum.** `govee_state` `ic_count` gains `segment_2_signed` and `section_sum` (bytes 2 and 5
+  as Java bytes, absent where the sectioned IC-pair reader `ControllerIcNum.d` throws, `app_pair_fails`), and
+  devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it.
+- **Command 0x34 is `cmd_34` (was `swap_light`), overloaded by the new `form_34`:** H6047's `33 34` bar swap (an
+  empty write) and H6057's `aa 34` device detail (`form_34: device_detail`). `govee_profile` gains `f_34`, and
+  `govee_state` the `cmd_34_state` / `device_detail` types (`[switch flags][battery][music flags][music code]
+  [volume][brightness]`, with `light_open`, `white_noise_playing` and `main_switch_on`). Only the generated enum
+  name changes for existing readers (`Command.swap_light` -> `Command.cmd_34`; nothing in the library used it).
+  The h6092 rows' `status_read` follows the rename. devices.schema.json: `power_read` gains `aa34_detail`, the
+  wire forms `f_34`; the h6057 wire gains `f_34: device_detail`.
 
 ## [1.6.1] — 2026-10-21
 

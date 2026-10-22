@@ -321,7 +321,8 @@ class DeviceProfile:
     raises GoveeBleNotSupported) and reads none (``state.brightness`` stays None): the byte's meaning waits
     for the pact."""
     ic_num_read_only: bool = field(default=False, kw_only=True)
-    """Ignored with :attr:`color_readback_live_ic`. Without it: the screen reads the ``aa 40`` IC count at
+    """Ignored with :attr:`color_readback_live_ic` or :attr:`color_readback_ic_sections`. Without them: the
+    screen reads the ``aa 40`` IC count at
     connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
     :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
     it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
@@ -398,6 +399,22 @@ class DeviceProfile:
     colour sub-modes are :attr:`mode_color_parse`'s, and ``empty_fails`` governs only a status TLV 0x05, so
     of the reply only a music report decodes differently; a music report sets no colour or scene in
     ``state``. A status profile's TLV 0x05 takes :attr:`status_decode`'s."""
+    color_readback_ic_sections: bool = field(default=False, kw_only=True)
+    """mechanism_a_direct only, and ignored with :attr:`color_readback_live_ic`: read the ``aa 40`` IC
+    reply first and walk as many pieces as its two section bytes sum to, as Java bytes (the spec's
+    ``ic_count.section_sum``), or the static pieces (:attr:`color_readback_segments`, else the segment
+    count) when the sum is 0, in Java's ``sum / group + (sum % group != 0)`` groups, none below 1 (the
+    rgbiclight screen, ``VM4Light.N5``: goodsTypes 141 and 204). No walk when the read fails or its
+    reader would throw (an IC field of 0x1000 or more). Writes keep the static :attr:`segments`; a
+    devices.yaml row with ``ic_pieces: sections``."""
+    detail_power_read: bool = field(default=False, kw_only=True)
+    """``readback="polled"`` only: the poll reads the power from the ``aa 34`` device-detail read in place of
+    ``aa 01``, after the ``aa 04`` brightness read, as the H6057 screen's connect list orders them
+    (``Compose4InfoBleIotH6057``), and takes the state of its header main switch (``33 01``): on while the
+    light is open or white noise plays (the spec's ``device_detail.main_switch_on``). A devices.yaml row with
+    ``power_read: aa34_detail``; none is served yet (h6057 104 is held: with white noise playing and the light
+    off, this reads on while the screen shows the light closed, and ``set_power(True)`` still sends
+    ``33 01 01``, which the main switch never sends then)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

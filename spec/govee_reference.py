@@ -241,8 +241,9 @@ def _stream(buf: bytes) -> Any:
     return KaitaiStream(BytesIO(buf))
 
 
-_FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_36", "f_40", "f_41", "f_a2",
-                 "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30", "f_ee_40")
+_FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_34", "f_36", "f_40", "f_41",
+                 "f_a2", "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30",
+                 "f_ee_40")
 # govee_profile struct -> its params, each with the govee_common enum it takes (None: a plain number)
 _LEAVES: Final[dict[str, dict[str, str | None]]] = {
     "CommandForms": {f: "Form" + "".join(p.capitalize() for p in f[2:].split("_")) for f in _FORMS},
@@ -617,6 +618,24 @@ def _selftest(*, strict: bool = False) -> int:
           g4.group_index == 3 and g4.records[0].brightness == 100 and g4.records[1].b == 0)
     g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
     check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
+
+    def ic_reply(*data: int) -> Any:
+        return parse_frame(append_bcc(bytes([0xAA, 0x40, *data])), "rx").body.state.body
+
+    check("aa 40 reply: section_sum = bytes 2 + 5 as Java bytes, absent where ControllerIcNum.d throws",
+          ic_reply(0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08).section_sum == 18
+          and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
+          and ic_reply(0x10, 0x00, 0x05).section_sum is None)
+
+    def detail_reply(*data: int) -> Any:
+        prof = make_profile(f_34="device_detail")
+        return parse_frame(append_bcc(bytes([0xAA, 0x34, *data])), "rx", prof).body.state.body.body
+
+    check("aa 34 reply (H6057 device detail): main switch on = light (byte 0 bit 7) or white noise playing "
+          "(byte 2 bits 4 and 7)",
+          [detail_reply(*b).main_switch_on for b in ((0x80,), (0x7F,), (0x00, 0, 0x90), (0x00, 0, 0x80))]
+          == [True, False, True, False] and detail_reply(0x80).light_open
+          and not detail_reply(0x00, 0, 0x90).light_open)
 
     from govee_commands import (  # the catalogue imports this module
         build_op15_color_temp_bytes_r,

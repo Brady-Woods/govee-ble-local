@@ -103,6 +103,9 @@ the row lacks fails the build: nothing defaults silently.
   (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
+  reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
+  (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
+  to take a ``heartbeat_aa01`` power from). A polled row
   with the brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen
   doesn't: ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists
   ``brightness`` exactly on a polled row with the capability and ``gradual`` wherever the capability is; a
@@ -111,8 +114,9 @@ the row lacks fails the build: nothing defaults silently.
   reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
-  (H6641), or, with ``ic_pieces: fixed``, it is made on every poll and discarded
-  (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  (H6641), or, with ``ic_pieces: sections``, its two section bytes do
+  (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every poll and
+  discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -451,7 +455,8 @@ _CIPHERS: Final = frozenset({"none", "aes_v1", "secret_key_pairing"})
 # scenes.upload.dialects -> DeviceProfile.scene_dialect; "none" = activate only.
 _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h6052_type5_diy": "B_h6052",
                     "none": "A"}
-_READBACK: Final = {"aa01": "polled", "ac_status": "status"}   # power_read -> DeviceProfile.readback
+# power_read -> DeviceProfile.readback ("aa34_detail" also sets DeviceProfile.detail_power_read)
+_READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
@@ -932,7 +937,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             fail(f"color_temp_control illumination on {scheme} / {white} (the tab's Kelvin builder is the "
                  "h60a6 or h6188 frame, whose slot is ff ff ff for rgb_self_tem_color)")
 
-    readback = "plug"
+    readback, power_read = "plug", ""
     if not relay:
         power_read = need(row.get("power_read", cp.get("power_read")), "power_read")
         if power_read not in _READBACK:
@@ -976,8 +981,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if ("ic_num" in reads) != (ic is not None) or (ic is not None and color_readback != "mechanism_a_direct"):
         fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
     sized = None if ic is None or isinstance(ic, str) else ic   # the IC count sizes the pieces (H6641)
-    if isinstance(ic, str) and ic != "fixed":
-        fail(f"ic_pieces {ic!r} (fixed, or the IC sizing)")
+    if isinstance(ic, str) and ic not in ("fixed", "sections"):
+        fail(f"ic_pieces {ic!r} (fixed, sections, or the IC sizing)")
     if sized is not None and not (0 <= sized["min_ic"] <= sized["max_ic"] and sized["ic_per_piece"] >= 1):
         fail(f"ic_pieces {dict(sized)} (min_ic <= max_ic, ic_per_piece >= 1)")
     live_ic = sized is not None
@@ -987,6 +992,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
+    if power_read == "aa34_detail" and bar:
+        fail("power_read aa34_detail on a bar row (the bars' power is the aa 36 read's)")
     writes = tuple(need(row.get("connect_writes"), "connect_writes"))
     if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
         writes = tuple(model["connect_writes"])
@@ -1003,7 +1010,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         need(resync, "power_resync")
     elif resync:
         fail("power_resync on a light (the library re-syncs a plug's session only)")
-    live_served = {"heartbeat_aa01": readback in ("polled", "status"), "heartbeat_aa36": bar,
+    live_served = {"heartbeat_aa01": power_read in ("aa01", "ac_status"), "heartbeat_aa36": bar,
                    "push_30": forms.get("f_ee_30", "unknown") != "unknown"}
     lives = row.get("power_live", cp.get("power_live")) or ()
     for live in lives:
@@ -1054,6 +1061,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
+        "color_readback_ic_sections": ic == "sections",
+        "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
         "brightness_range": raw_bright,
@@ -1166,8 +1175,11 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
                 relay: bool) -> list[tuple[str, str]]:
     """``[(command form, the member the library sends or reads)]`` for one resolved row: the power frame, a
     plug's total switch, the colour scheme's frames, and the zone switch and the zone bits the status read
-    takes from TLV 0x30 (the colour read-back, aa 41 and aa 36 forms are checked where they are derived)."""
+    takes from TLV 0x30, and the aa 34 device detail a power_read aa34_detail row reads (the colour read-back,
+    aa 41 and aa 36 forms are checked where they are derived)."""
     used = [("f_01", "relays" if relay else "light")]
+    if out.get("detail_power_read"):
+        used.append(("f_34", "device_detail"))
     if relay and out.get("relay_power") == "total_switch":
         used.append(("f_02", "total_switch"))
     scheme = out.get("color_scheme")

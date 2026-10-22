@@ -297,6 +297,7 @@ _READS: list[tuple[str, Callable[[], bytes], Callable[[], bytes]]] = [
     ("ic_count_query", b.ic_count_query, C.read_ic_segment),
     # The catalogue's 0x41 read cites the on_off_memory controller; the frame is the same bytes.
     ("section_count_query", b.section_count_query, C.read_on_off_memory_or_section_count),
+    ("device_detail_query", b.device_detail_query, C.read_h6057_detail),
     ("status_query(full)", lambda: b.status_query(full=True),
      lambda: C.build_status_request([0x41, 0x30, 0xA5])),
     ("status_query()", b.status_query, lambda: C.build_status_request([0x41, 0x30])),

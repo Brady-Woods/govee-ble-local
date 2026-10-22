@@ -7199,7 +7199,7 @@ families:
         "204":   # H61A9
           models: [H61A9]
           pacts: ["1,1", "2,1"]
-          support: modelled
+          support: app_traced
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
@@ -7209,14 +7209,13 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
-          ic_pieces: fixed
+          ic_pieces: sections
           connect_writes: []
           heartbeat: power
           by_firmware:
             - { min_hard_version: "3.08.01", kelvin_range: [2700, 6500], doc: "KelvinConfig.Config.A2 (goodsType 204): versionHard.compareTo(\"3.08.01\") >= 0 -> version 2 = [2700, 6500], else 0 = [2000, 9000]; a string compare" }
           doc: >-
-            MODELLED (one inferred fact, the read-back piece count). H61A9 (goodsType 204, Support.f0; catalogue snapshot
-            204) on the rgbiclight AcNewDetail screen (Model4BleIot.t -> /rgbic/newdetail). Pacts (1,1) and (2,1) (Pact.d,
+            H61A9 (goodsType 204, Support.f0; catalogue snapshot 204) on the rgbiclight AcNewDetail screen (Model4BleIot.t -> /rgbic/newdetail). Pacts (1,1) and (2,1) (Pact.d,
             the n4 map). Both take ControllerStrategyConfig.E1 (supportV2UIV1 excludes 204; supportV2UIV3 via uiV34): aa 01,
             aa 04, aa a3 (supportGradual), aa 40 (ControllerIcNum.d, as supportIcFresh is true for isGoodsTypeH61A9), aa 41
             (supportPowerOffMemory, left out), the DSP-version device-info read (left out), aa 05 (OpInfo4Detail.x,
@@ -7227,10 +7226,10 @@ families:
             = 0 -> Yt -> Bytes.h / Bytes.r (h60a6 15 01), white slot Config.P[204] = 1, masks over ColorPieceConfig.j = 18
             pieces (204 is in its set R, the getter g = 18; > 16 so BleUtils.X, 3 bytes). Flags Config.I[204] all on;
             gradual Config.G[204] = 0 -> 33 a3; segment brightness Config.z[204] = 0 -> 15 02. Kelvin KelvinConfig.A2 (by_firmware).
-            Brightness: no BrightnessConfig entry -> percent. THE INFERENCE: N5 walks sum(the aa 40 reply's two section
-            bytes) pieces when that sum is non-zero, else getBulbStringMaxNum(204) = 18; the library cannot size the walk
-            from the section bytes (a gap), so ic_pieces fixed reads aa 40 and walks the colour page's 18, which holds
-            only where the device reports sections summing to 18. The ee 22 IC-change push (VM4Light.Z3 -> T5) posts
+            Brightness: no BrightnessConfig entry -> percent. Read-back: N5 walks the signed sum of the aa 40 reply's two
+            section bytes (ControllerIcNum.d -> ControllerStrategyConfig.R1) when it is non-zero, else
+            getBulbStringMaxNum(204) = 18, in N / 4 + (N % 4 != 0) groups (ic_pieces sections). The ee 22 IC-change
+            push (VM4Light.Z3 -> T5) posts
             getIcChanged here too, but only the unmodelled scrawl / DIY delegate observes it (DelegateCurMode.B); the
             ColorMode4H61A9 part view keeps its fixed 18. Scenes not traced. Not hardware-verified.
           doc-ref:
@@ -7419,7 +7418,7 @@ families:
           "175": { forms: { f_a5: color_group }, counts: { num_segments: 20 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61BE: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over getBulbStringMaxNum = 20 pieces (5 groups), not the family's 3-a-frame bulb_batch_v2" }
           "187": { forms: { f_a5: color_group }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6175: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over getBulbStringMaxNum = 10 pieces (3 groups, the last trimmed to 2 pieces)" }
           "193": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H70A1-3: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (supportRgbWithBrightnessOnePkg4Colors(193)) [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
-          "204": { forms: { f_a5: color_group }, counts: { num_segments: 18 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61A9: colour-page masks over ColorPieceConfig.j = 18 (set R); VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (isGoodsTypeH61A9) [brightness, R, G, B] records over sum(the aa 40 section bytes) when non-zero, else getBulbStringMaxNum(204) = 18 (the row's modelled 18)" }
+          "204": { forms: { f_a5: color_group }, counts: { num_segments: 18 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61A9: colour-page masks over ColorPieceConfig.j = 18 (set R); VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (isGoodsTypeH61A9) [brightness, R, G, B] records over sum(the aa 40 section bytes) when non-zero, else getBulbStringMaxNum(204) = 18 (ic_pieces sections)" }
           "234": { forms: { f_0b: unknown, f_a5: color_group }, counts: { num_segments: 0 }, group: { rule: fixed, num_per_group: 4 }, doc: "H612x: the 15 01 frames are Config.x[234] = 0 -> Yt (the family's kelvin_tint, not unknown); aa a5 groups of 4 (supportRgbWithBrightnessOnePkg4Colors(234)); pieces at runtime: the colour page's ColorPieceConfig.h over the record's IC (H612A / B / C / F, set by aa 40 and the ee 22 push) or IC pair (H612D / E: whole-strip masks via ColorPieceConfig.j -> b, else its 30 / 30 and 40 / 40 defaults = 20; segment writes via the part view's P(), else ColorMode4H61BE's fixed 10 + 10), N5's sum(aa 40 section bytes), else get612xSectionNum (no static count)" }
           "176": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H6176 / H61BC: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
           "178": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H61BA: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
@@ -7935,11 +7934,12 @@ families:
           connect_reads: [brightness, ic_num, color_group]
           connect_writes: []
           heartbeat: power
-          ic_pieces: fixed
+          ic_pieces: sections
           doc: >-
-            Every fact is traced; the one device-reported value the app reads, the aa 40 section sum that sizes the
-            connect aa a5 walk, is the H61C3 bench reading, which the user accepted for H61C2 / H61C5 (2026-10-21;
-            below). H61C2 / H61C3 / H61C5 (cloud goodsType 141; SupportV2.a -> SubLib4BleIot -> Model4BleIot.t ->
+            Every fact is traced, the connect walk's size included (ic_pieces sections, below). The row was promoted
+            on the H61C3 bench reading of that walk's one device-reported value, the aa 40 section sum, which the user
+            accepted for H61C2 / H61C5 (decision 1, 2026-10-21; below). H61C2 / H61C3 / H61C5 (cloud goodsType 141;
+            SupportV2.a -> SubLib4BleIot -> Model4BleIot.t ->
             /rgbic/newdetail, VM4Light). Pacts (1,1) / (2,1): SupportV2.Companion.a, AddDeviceM and the scan check
             VM4Light.n4 -> Support.C, whose Support.b() put for 141 the Java decompile drops and the bytecode (jadx -m
             fallback) has. Connect (VM4Light.o5 -> q5, ControllerStrategyConfig.E1 through Support.h(141)): device info,
@@ -7954,21 +7954,19 @@ families:
             idempotent and each was answered on the bench, as with the aa 01 / aa 04 order of the admitted H6002
             (bulblightv3 31; bulblightstringv2.md G3). Following the app's connect order is a library-wide item. Pieces:
             ColorPieceConfig.j(141) = 15 for the colour page and writes, whatever the IC (28 / 42 / 70). Read-back: N5
-            reads ceil(N / 3) groups, N = the signed sum of the aa 40 bytes 2 and 5 when non-zero (ControllerIcNum.d ->
-            R1 -> Info4BleIot.q), else 15; the off->on re-read (VM4Light.J3 -> Compose4Off2On -> G5 -> O5 with no
-            connect info) and an IC change (k5) always take 15. ic_pieces fixed is that 15-piece, 5-group walk, so it is
-            the connect walk only for N in {0, 13, 14, 15} (exact placement at 0 / 15). A signed IC field of
-            0x1000-0x7fff throws in ControllerIcNum.a and nothing in the app catches it (it unwinds through
-            AbsControllerNoEvent4Single.onResult, ComposeBleComm.K and AbsBle.W; EventBus only logs it), so the compose
-            stays on aa 40 until its overtime fails it (Compose4InfoBleIot.result2Fail -> VM4Light.s5, BLE status 1): aa
-            05 and the aa a5 walk never run. No such IC count is expected on these SKUs (VM4Light.u5: 28 / 42 / 70; the
-            bench H61C3 reports 42), so the library's walk is unaffected. Read-only bench 2026-10-21
-            (BENCH_20261021_h6076_h61c3.md, library-audit/devlist-traces), H61C3 pact (1,1), plaintext: aa 40 00 2a 00
-            00 00 00 (42 IC, N = 0), aa a5 01..05 15 pieces, 06 / 07 zero, so that unit's connect walk is the
+            reads N / 3 + (N % 3 != 0) groups in Java division (none below 1) and keeps the first N pieces, N = the
+            signed sum of the aa 40 bytes 2 and 5 when non-zero (ControllerIcNum.d -> R1 -> Info4BleIot.q), else 15:
+            ic_pieces sections, the library's walk on every unit. The off->on re-read (VM4Light.J3 -> Compose4Off2On ->
+            G5 -> O5 with no connect info) and an IC change (k5) always take 15; the library's poll is the connect walk.
+            A signed IC field of 0x1000-0x7fff throws in ControllerIcNum.a and nothing in the app catches it (it unwinds
+            through AbsControllerNoEvent4Single.onResult, ComposeBleComm.K and AbsBle.W; EventBus only logs it), so the
+            compose stays on aa 40 until its overtime fails it (Compose4InfoBleIot.result2Fail -> VM4Light.s5, BLE
+            status 1): aa 05 and the aa a5 walk never run, and the library walks nothing either. No such IC count is
+            expected on these SKUs (VM4Light.u5: 28 / 42 / 70; the bench H61C3 reports 42). Read-only bench
+            2026-10-21, H61C3 pact (1,1), plaintext: aa 40 00 2a 00 00 00 00 (42 IC, N = 0), aa a5 01..05 15 pieces, 06
+            / 07 zero (BENCH_20261021_h6076_h61c3.md, library-audit/devlist-traces), so that unit's connect walk is the
             library's. H61C2 / H61C5 were not on the bench; the user accepted the H61C3 reading for them (decision 1,
-            2026-10-21). Were a unit to report a non-zero sum, the library's walk is still the one the app sends on
-            off->on, and the writes stay at 15 pieces; a section-sum ic_pieces would make the connect walk exact.
-            Colour: no Config.w SKU entry,
+            2026-10-21). Colour: no Config.w SKU entry,
             Config.x[141] = 0 -> Config.J[0] Yt -> Bytes.h / Bytes.r with the white slot (Config.P[141] = 1): the h60a6
             15 01 frames over 15 pieces. Config.I[141] all on; segment brightness Config.z[141] = 0 -> 15 02 (Bytes.G).
             Gradual (Config.G[141] = 0 -> 33 a3) shows aa 05 byte 0 (DelegateColorV2 -> SubMode4Color.e), never an aa a3
@@ -8237,7 +8235,7 @@ families:
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
-          "141": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 3 }, doc: "H61C2 / H61C3 / H61C5: 15 pieces whatever the SKU or IC count (ColorPieceConfig.j: 141 is in no piece set, so 15; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452); aa a5 groups of Support.d = 3 [bri, R, G, B] records placed by the request (split_rgbiclight/com/govee/rgbiclight/Support.java:216-235, VM4Light.java:917-962), over ceil(N / 3) groups at connect where N = the signed aa 40 bytes 2 + 5 when non-zero, else 15 (the library walks 15); the aa 40 reply is read by ControllerIcNum.d on 17 valid bytes, [ic1 s16be][sec1][ic2 s16be][sec2], throwing only on an IC field of 0x1000+ as ic_pair does (base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,110-138); 33 05 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r type 1)" }
+          "141": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 3 }, doc: "H61C2 / H61C3 / H61C5: 15 pieces whatever the SKU or IC count (ColorPieceConfig.j: 141 is in no piece set, so 15; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452); aa a5 groups of Support.d = 3 [bri, R, G, B] records placed by the request (split_rgbiclight/com/govee/rgbiclight/Support.java:216-235, VM4Light.java:917-962), over N / 3 + (N % 3 != 0) groups at connect where N = the signed aa 40 bytes 2 + 5 when non-zero, else 15 (ic_pieces sections); the aa 40 reply is read by ControllerIcNum.d on 17 valid bytes, [ic1 s16be][sec1][ic2 s16be][sec2], throwing only on an IC field of 0x1000+ as ic_pair does (base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,110-138); 33 05 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r type 1)" }
           "332": { forms: { f_40: one_count, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6671 / H6672: TLV 0x40 bytes 0-1 signed, 0x41 value[1], 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:96-130); 14 = min(IC, 14) for an IC count of 14 or more (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:189-193); ee 30 bit 0 of byte 1 (base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87)" }
           "351": { forms: { f_40: one_count, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "the 0xAC read only on 351 / 352 (split_rgbiclight/com/govee/rgbiclight/Support.java:51, 179-182; split_rgbiclight/com/govee/rgbiclight/VM4Light.java:1476-1478); TLV 0x40 bytes 0-1 signed, 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:684-718); 15 pieces (ColorPieceConfig.j's default, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:444-449)" }
           "352": { forms: { f_40: one_count, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "as 351 (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:684-726)" }
@@ -10657,9 +10655,10 @@ families:
     client_profile:
       mode_color_parse: gradual_0d   # goodsType 104; 0x0b is the game sub-mode; split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:414-456
       by_goods_type:
-        "104":   # H6057, the H6057DetailActivity screen; held: no support (power read-back is the aa 34 detail read; light vs main switch)
+        "104":   # H6057, the H6057DetailActivity screen; held: no support (which header switch backs the power is open)
           models: [H6057]
           pacts: ["1,1"]
+          power_read: aa34_detail
           color_scheme: h6006
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -10673,15 +10672,25 @@ families:
           heartbeat: heartbeat
           doc: >-
             H6057 (Support.b; SubLib keys Support.d = {104}; Model.t -> H6057DetailActivity -> H6057DetailVM), pact (1,1)
-            only (Support.addSupportPact, H6057Config.f). HELD, no support: the light-open flag is bit 7 of byte 0 of the aa 34
-            device-detail reply (Controllers.f / d, H6057DetailVM.v5 -> H6057Info4Detail.g), live from the ee 30 01 <bit 0>
-            push (DeviceInfoNotifyParse.m); the screen never sends aa 01 and reads no 0xAC status, so the library has no
-            power_read for it. Two header switches with two states (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the
-            light flag and writes the light alone, 33 30 <!light> (h5, command_light_switch; a one-byte light_direction body,
-            not the library's 33 30 <index> <state> zone frame); btnSwitch shows light OR white-noise isPlay (aa 34 bytes 2-3,
-            ee 30 04) and writes 33 01 00 when either is on, 33 01 01 only when both are off (switchTrigger ->
-            ControllerSwitch.d; 33 01 00 also clears isPlay, D5). Which one backs an HA light's power is open: 33 30 matches
-            the read-back in every state, 33 01 01 is not the app's frame while white noise plays. Connect
+            only (Support.addSupportPact, H6057Config.f). HELD, no support: which header switch backs an HA light's power
+            is the user's decision (h6057 trace, library gap 2), and neither choice is served as the app serves it yet.
+            The screen never sends aa 01 and reads no 0xAC status: its state read is the aa 34 device-detail reply
+            (Controllers.f / e, H6057DetailVM.v5), whose byte 0 bit 7 is the light-open flag (H6057Info4Detail.g / H) and
+            byte 2 the music flags (white-noise isPlay); live updates are the ee 30 01 / 04 pushes (DeviceInfoNotifyParse.m
+            / n, not consumed). The screen's on / off is the light flag alone: switchCur is H6057Info4Detail.H, and while it
+            is off ViewConnectSuccess.J shows the close delegate (H6057DelegateClose, through H6057Config.a; a playing hint
+            while white noise plays, B) and hides the colour and brightness controls. Two header switches
+            (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the light flag and writes the light alone, 33 30 <!light> (h5,
+            command_light_switch; a one-byte light_direction body, not the library's 33 30 <index> <state> zone frame);
+            btnSwitch, the global switch, shows light OR white-noise isPlay and writes 33 01 00 when either is on, 33 01 01
+            only when both are off (switchTrigger -> ControllerSwitch.d; 33 01 00 also clears isPlay, D5). The library's
+            power is the global switch, as on every row, and power_read aa34_detail reads that switch's state (govee_state
+            device_detail main_switch_on) from aa 34 on each poll, after aa 04. That leaves two gaps with white noise
+            playing and the light off: the light reads on while the screen shows it closed (and offers no colour or
+            brightness), and set_power, which has no state gate, still sends 33 01 01, a frame the main switch never sends
+            then (a plain HA turn_on sends power). The light switch would match the screen's on / off in every state
+            (light_open, 33 30), but the library has no per-row power write for it. Open: the choice, and a bench check
+            of 33 01 01 while white noise plays. Connect
             (Compose4InfoBleIotH6057): aa 06, the time sync, aa 07, timer, wake-up and sleep reads (not listed), aa 04, aa 34,
             aa 05. No 33 b2 (no Controller4Secret on this path). Heartbeat aa 00 (I3 false; J3 empty). Brightness 33 04
             <1..100> (BrightnessConfig.b, version 1).
@@ -10705,6 +10714,8 @@ families:
             - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/MusicTypeInfo.java:117-119,150-151
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:127-143,208-210,414-456,601-607
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:183-213,505-511,567-592,713-744,930-944
+            - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateClose.java:64-82
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,111-139,141-173
             - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
             - base-classes12/com/govee/base2light/util/ParseUtils.java:55-57,72-74
             - base-classes10/com/govee/base2light/ble/comm/AbsNotify.java:17-41
@@ -10726,7 +10737,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:308-314,543-547,561
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig$Companion$checkLocalSkuComponentsConfigs$2.java:53-75
       wire:
-        forms: { f_01: light, f_09: datetime_epoch, f_30: light_direction, f_36: worry_free }
+        forms: { f_01: light, f_09: datetime_epoch, f_30: light_direction, f_34: device_detail, f_36: worry_free }
     models: [H6057]
     goods_types: [104]
     delivery: feature_split   # pact_hollowlamp (base-classes9/com/govee/base2home/pfd/Config.java:241)
@@ -16037,9 +16048,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:226-229,345-352,476-485
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
-        "98":   # H7061 two-head flood light, the H70606162DetailVM screen; no aa a5 group reads (support withheld: library gap, the bri_rgb_pair fold)
+        "98":   # H7061 two-head flood light, the H70606162DetailVM screen; no aa a5 group reads (the heads' colours come from the aa 05 report)
           models: [H7061]
           pacts: ["1,1"]
+          support: app_traced
           mode_color_parse: bri_rgb_pair_15
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
@@ -16061,10 +16073,12 @@ families:
             H70606162Info4Detail.N runs the default strategy first (gradual = bri1 == 1, Kelvin field s16(r1, g1), kept
             as the screen's illumination Kelvin q when > 0), then I overwrites only the colours (SubMode4Color.d) and the
             relative brightness (.e). The layout has no Kelvin field of its own: s16(r1, g1) is head 1's red and green
-            bytes. mode_reports_kelvin is left absent, as on other app-decoded rows: the bri_rgb_pair fold decides the
-            Kelvin read-back from the app's path (the q artefact, and/or the KelvinConfig.f tint lookup if the colour
-            page runs ColorViewModel.initColor4Device), and false waits for a bench read after a CCT write. The
-            keep-alive is aa 01 (I3 true -> ConnectHeartbeat type 1). Main switch 33 01
+            bytes. The library folds the report as the colour page holds it: head 1 / head 2 colour and relative
+            brightness to segments 0 / 1 (H7061ColorMode.updateColor / updateBrightness), the whole-device colour only
+            while both heads match, and a matching in-range Kelvin tint as that colour temperature (the one-colour
+            lookup ColorViewModel.initColor4Device -> KelvinConfig.f, and the write side's tint pick); the q artefact
+            is not modelled. mode_reports_kelvin is left absent (the fold reads no Kelvin field); what the heads report
+            after a CCT write is unread on hardware. The keep-alive is aa 01 (I3 true -> ConnectHeartbeat type 1). Main switch 33 01
             (switchTrigger -> ControllerSwitch); no zone switch, the heads are colour pieces only. Colour page:
             H7061ColorMode, two head toggles over getBulbStringMaxNum(98) = 2 pieces. Frames: Config.x[98] = 0 ->
             Config.J[0] = Yt (Bytes.h, or Bytes.r with colour-temperature type Config.P[98] = 1 for a Kelvin tint) and
@@ -16074,9 +16088,7 @@ families:
             (Support.getColorTemRange agrees). Brightness: no BrightnessConfig entry, percent [1, 100]. No account
             lock. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}); scene apply as H7060 / H7062 (legacy_scene; the
             sceneType-5 0x50 branch goes to the H7061NewDiyConfig parser, not modelled); no bundled catalog. Not
-            listed: the time-sync write. No support yet: the library decodes the two head records but folds no colour
-            or head brightness from them (parse.mode_color), so the screen's colour read-back is not served. Disputed
-            2026-10-21: mode_reports_kelvin false (removed, above); the illumination tab's Bytes.C mask, whose piece
+            listed: the time-sync write. Disputed 2026-10-21: mode_reports_kelvin false (removed, above); the illumination tab's Bytes.C mask, whose piece
             count comes from ColorPieceConfig.c -> LightColorCapabilityCenter.M1 (segmentCount, untraced for 98), so
             its 03 00 is not established (that tab stays open; the colour page's 2-head posSet is traced). Not
             hardware-verified.
@@ -18907,7 +18919,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18957,7 +18969,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18984,7 +18996,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19009,7 +19021,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19038,7 +19050,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group, cmd_41]
+          status_read: [cmd_34, color_group, cmd_41]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat

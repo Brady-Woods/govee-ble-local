@@ -46,6 +46,8 @@ seq:
         'govee_common::command::new_timer': timer_slots
         'govee_common::command::cmd_30': >-
           cmd_30_state(profile.forms.f_30, source)
+        'govee_common::command::cmd_34': >-
+          cmd_34_state(profile.forms.f_34, source)
         'govee_common::command::cmd_36': >-
           cmd_36_state(profile.forms.f_36, source)
         'govee_common::command::ic_num': ic_count
@@ -1127,6 +1129,80 @@ types:
         if: >-
           form != govee_common::form_30::light_direction
           or source == source::status_tlv
+  cmd_34_state:
+    doc: |
+      Command 0x34 under form_34: device_detail for the aa 34 reply (H6057);
+      other combinations stay in rest.
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_34
+      - id: source
+        type: u1
+        enum: source
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_34::device_detail': device_detail
+        if: >-
+          form == govee_common::form_34::device_detail
+          and source == source::read_reply
+  device_detail:
+    doc: |
+      Form device_detail of 0x34: the H6057 aa 34 reply, [switch flags][battery]
+      [music flags][music code][volume][brightness] (Controllers.e). The screen's
+      header has two switches: the light switch shows light_open, the main switch
+      (33 01) shows main_switch_on.
+    doc-ref:
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:30-58
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/DeviceInfoNotifyParse.java:61-70
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:517-545,571-588
+      - base-classes12/com/govee/base2light/util/ParseUtils.java:54-56,72-74
+    seq:
+      - id: switch_flags
+        type: u1
+        doc: |
+          bit 7 the light open; bits 6-2 energy saving, power-on without
+          interruption, worry-free, prompt tone and guide light (SwitchInfo)
+      - id: battery
+        type: u1
+      - id: music_flags
+        type: u1
+        doc: |
+          bit 6 Bluetooth audio, bit 5 game, bit 4 white noise, bit 3 group
+          control; bit 7 playing, read only in white-noise mode (MusicTypeInfo)
+      - id: music_code
+        type: u1
+      - id: volume
+        type: u1
+      - id: brightness
+        type: u1
+    instances:
+      light_open:
+        value: (switch_flags & 0x80) != 0
+        doc: |
+          the light-open flag (H6057Info4Detail.H): the light switch's state, and
+          the screen's on / off (switchCur), which shows the closed screen while
+          it is clear
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:208-210
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1226-1228
+          - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,141-173
+      white_noise_playing:
+        value: (music_flags & 0x10) != 0 and (music_flags & 0x80) != 0
+        doc: MusicTypeInfo isPlay (set only in white-noise mode)
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/MusicTypeInfo.java:117-119
+      main_switch_on:
+        value: light_open or white_noise_playing
+        doc: |
+          the header main switch's state: the light open or white noise
+          playing; it writes 33 01 01 only when both are off, else 33 01 00
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:183-213
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1231-1264
   cmd_36_state:
     doc: |
       Command 0x36 under form_36: bar_pair for the aa 36 reply (H6047),
@@ -1369,6 +1445,25 @@ types:
       segment_signed:
         value: 'segment >= 0x80 ? segment - 0x100 : segment'
         if: _io.size >= 3
+      segment_2_signed:
+        value: 'segment_2 >= 0x80 ? segment_2 - 0x100 : segment_2'
+        if: _io.size >= 6
+        doc: the second section byte, read as a Java byte
+      section_sum:
+        value: segment_signed + segment_2_signed
+        if: _io.size >= 6 and not app_pair_fails
+        doc: |
+          the two section bytes (2 and 5) summed as Java bytes, as the sectioned
+          IC-pair reader (ControllerIcNum.d) passes them on: the rgbiclight screen's
+          colour read-back walks this many pieces when it is not 0, else its static
+          count. Absent where that reader throws, so the read never completes and
+          the screen walks nothing: below 6 bytes (it reads bytes 3-5 whatever the
+          length; an aa 40 read reply carries 17) or on an IC field of 0x1000 or
+          more (app_pair_fails).
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,111-139
+          - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:329-339,981-991
+          - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:917-923,938-946
       has_second_pair:
         value: _io.size >= 6 and ic_count_2 != 0
       ic_total:
