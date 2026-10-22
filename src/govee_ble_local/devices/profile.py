@@ -275,9 +275,10 @@ class DeviceProfile:
     the order of the spec's resolution (``govee_reference.client_row``); a pact not yet heard applies none."""
     status_read: tuple[int, ...] = field(default=_H60A6_STATUS_READ, kw_only=True)
     """``readback="status"``: the TLV types the 0xAC status read requests, in request order (command codes;
-    a devices.yaml row's ``status_read``). The default is the H60A6's ``0x41, 0x30, 0xA5``, 1.x's request.
-    The 0xA5 colour groups are left out while :attr:`status_color_groups_pact` rules them out (a list is
-    kept as a tuple)."""
+    a devices.yaml row's ``status_read``); empty is the bare read ``ac 03 00``, which requests none and gets
+    the TLVs the firmware chooses (the h70dx screen's). The default is the H60A6's ``0x41, 0x30, 0xA5``,
+    1.x's request. The 0xA5 colour groups are left out while :attr:`status_color_groups_pact` rules them out
+    (a list is kept as a tuple)."""
     status_decode: tuple[tuple[str, str | int | bool], ...] = field(
         default=_H60A6_STATUS_DECODE, kw_only=True)
     """``readback="status"``: how the 0xAC reply is read, a devices.yaml row's wire facts as ``(govee_profile
@@ -397,10 +398,9 @@ class DeviceProfile:
         if isinstance(self.status_read, list):
             object.__setattr__(self, "status_read", tuple(self.status_read))
         types = self.status_read
-        if (not isinstance(types, tuple) or not types or len(set(types)) != len(types)
+        if (not isinstance(types, tuple) or len(set(types)) != len(types)
                 or not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= 0xFF for t in types)):
-            raise GoveeBleInvalidValue(
-                f"{where}: status_read={types!r} (distinct command codes, at least one)")
+            raise GoveeBleInvalidValue(f"{where}: status_read={types!r} (distinct command codes)")
         self._check_status_decode(where)
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(

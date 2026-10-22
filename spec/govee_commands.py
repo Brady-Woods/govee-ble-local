@@ -6572,7 +6572,9 @@ def build_status_request(types: list[int], *, command: int = 0x03) -> bytes:
     split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:158-160
     (H60A6 [41,30](+A5 if J5())), .../h1270/VM4LightH1270$afterConnectedSingleReadDeviceInfo$1.java:149,
     .../h1250/VM4LightH1250$afterConnectedSingleReadDeviceInfo$1.java:184,
-    .../h12d0/VM4LightH12D0$afterConnectedSingleReadDeviceInfo$1.java:150 ([41,30,A5]).
+    .../h12d0/VM4LightH12D0$afterConnectedSingleReadDeviceInfo$1.java:150 ([41,30,A5]); no types, the
+    bare [0xAC, 0x03, 0x00]: split_h70b1/com/govee/h70dx/vm/VM4H70DX.java:463-489
+    (Compose4BaseInfoSingleRead.Companion.a, Compose4BaseInfoSingleRead.java:156-158, passes no ext bytes).
     """
     return append_bcc(bytes([0xAC, command & 0xFF, len(types), *[t & 0xFF for t in types]]))
 
@@ -12696,6 +12698,7 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
             and build_status_request([0x41, 0x30, 0xA5])
             == append_bcc(bytes([0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5]))
             and build_status_request([0x41, 0x30]) == append_bcc(bytes([0xAC, 0x03, 0x02, 0x41, 0x30]))
+            and build_status_request([]) == bytes([0xAC, 0x03] + [0] * 17 + [0xAF])
             and len(build_status_request([0x41, 0x30])) == 20
             and build_status_request([0x41, 0x30])[19] == bcc(build_status_request([0x41, 0x30]))
         ),

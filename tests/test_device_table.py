@@ -21,10 +21,12 @@ from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
 from govee_ble_local.devices.profile import PROFILES, DeviceProfile, RelayPower, profile_for, wire_profile
+from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
 from govee_ble_local.models import Zone
 from govee_ble_local.transport.connection import HeartbeatTiming
+from govee_ble_local.wire import build
 from govee_ble_local.wire.build import ColorScheme
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -117,6 +119,14 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
     assert set(_resolve.HEARTBEAT_TIMINGS) == set(get_args(HeartbeatTiming))
+
+    def builds_segment_brightness(scheme: Any) -> bool:
+        try:
+            return bool(build.segment_brightness(1, 50, scheme, 1))
+        except GoveeBleNotSupported:
+            return False
+    assert _resolve.SEGMENT_BRIGHTNESS_SCHEMES == {
+        s for s in _resolve.COLOR_SCHEMES if builds_segment_brightness(s)}
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -329,6 +339,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "the family color_scheme h61a8 would drop ['color_temp']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["color_functions"].remove("color_temperature"),
      "color_functions ['segment_brightness'] disagree"),
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["capabilities"].remove("segments"),
+     "color_functions ['segment_brightness', 'color_temperature'] disagree"),   # h60a6 has the 15 02 frame
     ("bulblightv3", "64", lambda f: _row(f, "64").update(scene_dialect="graffiti"),
      "scene_dialect 'graffiti'"),
     ("h6047", "119", lambda f: _row(f, "119").update(scene_versions=[0, -1]), "scene_versions [0, -1]"),
@@ -359,6 +371,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),
+    ("bulblightv3", "342", lambda f: _row(f, "348")["models"].append("H14A1"),
+     "by_model connect_writes on a SKU that rows ['342', '348'] list"),
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),
@@ -412,6 +426,17 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
         return {sku for group, _fields, _routes in _resolve.profiles(cut, table, levels) for sku in group}
 
     assert "H6052" not in skus(_resolve.ADMITTED) and "H6052" in skus(_resolve.MODELLED)
+    # A SKU's by_model connect_writes replaces its row's for that SKU alone (bulblight Support.c's split).
+    split = edited("bulblightv3", lambda f: f["client_profile"]["by_model"].update(
+        H6006={"connect_writes": ["light_effect_stop"]}))
+    table, cut = gen.project(split, schema)
+    stops = {sku: fields["light_effect_stop"] for group, fields, _routes in _resolve.profiles(cut, table)
+             for sku in group}
+    assert stops["H6006"] and not stops["H6008"]
+    # The segment-brightness flag calls for segments only where the row's scheme has that frame (h60a6's
+    # 15 02, refused above without them): on an h6006 row it binds nothing, as on H6071 / H6075 (no frame).
+    gen.project(edited("bulblightv3", lambda f: _row(f, "342").update(
+        color_functions=["segment_brightness", "color_temperature"])), schema)
 
 
 def _reference() -> Any:

@@ -10,7 +10,8 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
-  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`), for 197 and 65 in all. None is
+  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). With the 16 that the next three
+  entries admit by default, that makes 213 admitted by default and 65 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -52,6 +53,18 @@ model, from which the shipped readers are generated).
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
     H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
   - h7057: **H3510**, **H3511**† (349).
+- **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
+  (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
+  (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
+  (below). Not hardware-verified (none is on the bench).
+- **H70D1 / H80D1**† (h70dx 267), **H70D2** (268) and **H70D3** (269), admitted by default (`app_traced`). Their
+  screen's connect read is the bare 0xAC status read `ac 03 00`, which requests no TLV type
+  (`VM4H70DX.e5`), and it parses each TLV the reply carries, the 0xA5 colour groups included
+  (`VM4H70DX.g5`). Which TLVs the firmware returns is not in the app; not hardware-verified.
+- **H14C0 / H14A1 / R14A1 / H14C2 / R14C2 / H14C1 / R14C0 / R14C1** (bulblightv3 342), admitted by default
+  (`app_traced`). After its connect reads the screen sends `33 25 01` (light_effect_stop) only for H14A1 /
+  R14A1 / H14C2 / R14C2 (bulblight `Support.c`, `VM4Light.i5`), so those four SKUs carry it as a `by_model`
+  connect write and the other four send none. Not hardware-verified (none is on the bench).
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -69,9 +82,28 @@ model, from which the shipped readers are generated).
   admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its
   rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
   that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
-  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
+  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with
+  H600A-H600D / H6011 / H6013 / H800B (H600A stays first). H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+- The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
+  polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
+  it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
+  only (no `DeviceProfile` field), so no profile, frame or decoded state moves.
+- `DeviceProfile.status_read` may be empty: the bare status read `ac 03 00` (`build.status_query(types=())`).
+  On such a profile the reply's TLV 0xA5 is read as colour groups where the row's `f_a5` is `color_group`,
+  though it was not requested. Every status row admitted before requests at least one type, so its request
+  and decode are unchanged.
+- A SKU's `by_model` `connect_writes` replaces its row's (`DeviceProfile.light_effect_stop`), where a screen
+  splits its connect write by SKU within one goodsType; the build refuses one on a SKU that two supported rows
+  of its family list. No SKU admitted before has one.
+- The resolver ties a row's `segment_brightness` colour-page flag (`color_functions`) to the `segments`
+  capability only where the row's colour scheme has a segment-brightness frame (`h60a6`'s `33 05 15 02`,
+  `Bytes.G`; `_resolve.SEGMENT_BRIGHTNESS_SCHEMES`), not on the flag alone. H6071 / H6075 (h6071 57 / 67) keep
+  their traced flag: the app shows the slider (`Config.I[57]` / `[67]`), but there is no relative-brightness
+  version for them (no `Config.y` / `Config.z` entry), so it sends no frame and the one-piece lamps have no
+  segments. They stay without support until their colour-temperature scheme and the Kelvin + brightness pair
+  land. Every admitted row with the flag is on `h60a6`, so no profile changes.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
@@ -95,8 +127,10 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 122
-    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 160 with `support` (66), of them 129
+    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 145 without (118). The trace gave 153
+    of them support; the other 7 (h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342) are
+    `app_traced` through the resolver changes under Changed.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
   - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
@@ -111,8 +145,8 @@ model, from which the shipped readers are generated).
   - Spec corrections the trace made inside family blocks change no admitted SKU. For example, H6171 is off
     barelightv1 17 (it reads aa 40 there, which the row's other SKUs don't), H6119 is off h7090 44 (h7090's
     screen never opens for it), and H615E is listed on stringlightv2 108, its catalogue goodsType.
-  - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
-    by h613839's (65535,255) bind item), where it was H615E.
+  - The catalogue snapshot routes 33 SKUs no row lists (15 before), H8069 and H80D1 among them. For review:
+    H613A-F (catalogue 39, named by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named constant
@@ -152,6 +186,18 @@ model, from which the shipped readers are generated).
     library from the live aa 40. They differ only after a resize the app never saw. This is now documented, in
     the row and in `walk_mechanism_a_direct`, as a divergence for the user to decide. The row stays `modelled`
     for its write mask.
+- **The status rows with an aa 01 keep-alive state the app's live power.** straightfloorlamp 69, h7020 296 and
+  h61d3 263 drop their `[push_30]` override and h7086 293 its `[]`, so each takes its family's list again;
+  rgbiclight 351 / 352 and h7020 361 list `[heartbeat_aa01]`. Each screen's `I3` is true (ConnectHeartbeat
+  type 1), and `ShareVM.N3` takes the switch from the reply (`J3`). The overrides only worked around the
+  resolver gate above. No profile changes.
+- **The bare status read.** `devices.schema.json` clientRow `status_read` allows `[]` (`minItems` 0), the
+  read `ac 03 00` with no type requested. `govee_ble_frame` `status_read_args.num_types` documents 0 as that
+  read (`Compose4BaseInfoSingleRead.Companion.a` passes no ext bytes), and `govee_commands`'
+  `build_status_request` self-check covers it.
+- **Per-SKU connect writes.** `devices.schema.json` `clientModel` takes `connect_writes` (the row's stays
+  required), which `govee_reference.client_row` applies for the SKU. bulblightv3's `by_model` gives H14A1 /
+  R14A1 / H14C2 / R14C2 `[light_effect_stop]` over row 342's `[]`.
 
 ## [1.6.1] — 2026-10-21
 

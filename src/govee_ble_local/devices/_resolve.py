@@ -61,7 +61,12 @@ the row lacks fails the build: nothing defaults silently.
   generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the app's read
   of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
-  scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
+  scheme the row names itself: a family default that would drop one raises. A traced ``color_functions``
+  agrees with the capabilities: ``color_temperature`` with ``color_temp``, and ``segment_brightness`` with
+  ``segments`` only where the row's scheme has a segment-brightness frame
+  (:data:`SEGMENT_BRIGHTNESS_SCHEMES`). Elsewhere the flag alone calls for nothing: the slider has no frame
+  the library could send (H6071 / H6075's one-piece lamps, with no relative-brightness version and no
+  scheme yet; h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
   only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
@@ -70,11 +75,13 @@ the row lacks fails the build: nothing defaults silently.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
-  (``DeviceProfile.status_read``, ``build.status_query(types=)``), and its reply is read with the row's own
-  wire facts (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the
-  status stream reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as
-  colour groups (a requested ``color_group`` under ``f_a5: color_group``; any other 0xA5 is skipped), and
-  the TLV 0x05's mode decode (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
+  (``DeviceProfile.status_read``, ``build.status_query(types=)``; ``[]`` is the bare ``ac 03 00``, the h70dx
+  screen's, which requests no type), and its reply is read with the row's own wire facts
+  (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the status stream
+  reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as colour groups (under
+  ``f_a5: color_group``, a requested ``color_group`` or any 0xA5 the bare read's reply carries, as the
+  h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
+  (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
   reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
@@ -90,14 +97,19 @@ the row lacks fails the build: nothing defaults silently.
   records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
-  handshake and any unlock. A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead of a scene apply,
-  H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
+  handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
+  splits them by SKU within one goodsType (bulblight ``Support.c`` at 342), on a SKU one row of the family
+  lists (a ``by_model`` entry is family-wide). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
+  of a scene apply, H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
   default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
   ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
   ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
-  ``push_30``-only row may send any.
+  ``push_30``-only row may send any. The library folds no keep-alive reply or ee 30 push into state: the
+  poll's own power read stands in for them, aa 01 on a polled row and the status read's TLV 0x01 on a
+  status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
+  ``push_30`` with its wire ``f_ee_30``.
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
@@ -224,6 +236,7 @@ class ClientModel(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     scene_power_on: bool
+    connect_writes: tuple[str, ...]
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -374,6 +387,10 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
 }
+# The colour schemes with a segment-brightness frame (wire.build.segment_brightness: 33 05 15 02, Bytes.G),
+# the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for
+# it calls for segments.
+SEGMENT_BRIGHTNESS_SCHEMES: Final = frozenset({"h60a6"})
 # Wire branches the library leaves unread on purpose: (family, layer, branch) -> the branch exactly.
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
@@ -763,8 +780,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                                   for key, branch in by_pact.items() if "scene_versions" in branch))
     gate = None
     if status_read is not None:
-        if not status_read or len(set(status_read)) != len(status_read):
-            fail(f"status_read {list(status_read)} (distinct TLV types, at least one)")
+        if len(set(status_read)) != len(status_read):
+            fail(f"status_read {list(status_read)} (distinct TLV types)")
         gate = _status_gate(row, tuple(status_read), fail)
 
     row_caps = frozenset(need(row.get("capabilities"), "capabilities"))
@@ -785,7 +802,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     caps -= lacks
     cf = row.get("color_functions")
     if cf is not None and (("color_temperature" in cf) != ("color_temp" in row_caps)
-                           or ("segment_brightness" in cf) != ("segments" in row_caps)):
+                           or (scheme in SEGMENT_BRIGHTNESS_SCHEMES
+                               and ("segment_brightness" in cf) != ("segments" in row_caps))):
         fail(f"color_functions {list(cf)} disagree with capabilities {sorted(row_caps)}")
     dialect = row.get("scene_dialect")
     if "scenes" in caps and dialect not in (*_DIALECTS, "untraced"):
@@ -840,8 +858,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             forms.get("f_a5", ""), "")
         if not color_readback:
             fail(f"colour read-back with f_a5 {forms.get('f_a5')!r}")
-    # The status read takes colour groups from TLV 0xA5 where it requests them and the row reads them so.
-    status_groups = "color_group" in (status_read or ()) and forms.get("f_a5") == "color_group"
+    # The status read takes colour groups from TLV 0xA5 where it requests them, or on the bare read (whose
+    # screen parses each 0xA5 that arrives, VM4H70DX.g5), and the row reads them so.
+    status_groups = (status_read is not None and ("color_group" in status_read or not status_read)
+                     and forms.get("f_a5") == "color_group")
     if (color_readback or status_groups) and cp.get("has_brightness") is not True:
         fail("a colour-group read without has_brightness true (the library reads [brightness, r, g, b])")
     # Either read walks the row's group size (Controller4ColorInfoByGroup takes it from its caller), and the
@@ -869,6 +889,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
     writes = tuple(need(row.get("connect_writes"), "connect_writes"))
+    if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
+        writes = tuple(model["connect_writes"])
+        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
+                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
+        if len(listing) > 1:
+            fail(f"by_model connect_writes on a SKU that rows {listing} list (the screen splits them by SKU "
+                 "within one goodsType)")
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
              "light_effect_stop or nothing on a light)")
@@ -877,13 +904,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         need(resync, "power_resync")
     elif resync:
         fail("power_resync on a light (the library re-syncs a plug's session only)")
-    live_served = {"heartbeat_aa01": readback == "polled", "heartbeat_aa36": bar,
+    live_served = {"heartbeat_aa01": readback in ("polled", "status"), "heartbeat_aa36": bar,
                    "push_30": forms.get("f_ee_30", "unknown") != "unknown"}
     lives = row.get("power_live", cp.get("power_live")) or ()
     for live in lives:
         if not live_served.get(live, False):
-            fail(f"power_live {live} is not served (the library polls aa 01, the aa 36 bars or the status "
-                 "read, and an ee 30 push needs its wire f_ee_30)")
+            fail(f"power_live {live} is not served (the library polls aa 01 or the status read's TLV 0x01, "
+                 "the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
     heartbeat = need(row.get("heartbeat"), "heartbeat")
     timing = row.get("heartbeat_timing", "fixed_rate")
     if timing not in HEARTBEAT_TIMINGS:

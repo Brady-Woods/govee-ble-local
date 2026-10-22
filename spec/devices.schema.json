@@ -387,7 +387,7 @@
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this goodsType's colour page; wins over the family's specs.kelvin_range." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" },
         "mode_reports_kelvin": { "type": "boolean", "description": "false = the device's aa 05 colour report carries Kelvin 0 after a colour-temperature write, so the Kelvin last written stands, as the screen keeps what it set (hardware-observed; doc names the device); absent = the report carries it." },
-        "status_read": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; absent = no status read." },
+        "status_read": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; [] = the bare read ac 03 00, no types requested, whose reply carries the TLVs the firmware chooses (Compose4BaseInfoSingleRead.Companion.a passes no ext bytes; the h70dx screen); absent = no status read." },
         "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The state reads (aa <command>) the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order; device-info, timer and Wi-Fi reads are not listed." },
         "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
         "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
@@ -433,13 +433,14 @@
     "clientModel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, and the scene apply's power-on.",
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, the scene apply's power-on, and the connect writes.",
       "properties": {
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this SKU's colour page (KelvinConfig by SKU); the row's own kelvin_range wins over it." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
         "scene_power_on": { "type": "boolean", "description": "true = the control screen writes the power-on switch (33 01 01, SwitchControllerConfig.d) ahead of a scene or DIY apply while its stored switch state for the device is off, and an unknown state reads as off (ApplyOffNeedOpenConfig's SKU set, ApplyOffNeedOpenHelper.b / .d, DeviceSwitchConfig.getSwitch); absent = false. Only on a SKU whose row offers scenes." },
+        "connect_writes": { "$ref": "#/$defs/clientRow/properties/connect_writes", "description": "This SKU's connect writes, replacing its row's, which stay required for the row's other SKUs: the screen splits them by SKU within one goodsType (bulblight Support.c at 342). Only on a SKU that one row of the family lists." },
         "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
         "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }
