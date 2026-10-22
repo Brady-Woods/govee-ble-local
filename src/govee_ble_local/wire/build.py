@@ -180,14 +180,14 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # H6161 and H6163 by their firmware. No built-in profile uses it: the H61A8 (goodsType 19) sends the h60a6
 # forms, as do 123 and the other dreamcolorlightv1 goodsTypes from 19 up (devices.yaml dreamcolorlightv1
 # client_profile); it stays for custom profiles.
-# "h6188" = 0x0d with the white-slot CCT: same RGB frame as h6006, but the CCT is
-# `0d ff ff ff <K> <tint>` (Config.N[2] = Config.GM -> Bytes.A), NOT the h6006 form. It is the
-# illumination tab's Kelvin write (H8015, via KelvinConfig.b) and the rgblight group / automation
-# frame; it is no longer H6188's, whose colour tab sends the h6006 form (devices.yaml h6188 row). The
-# name is kept: it is the public ColorScheme literal.
+# "h6188" = 0x0d with the white-slot CCT: same RGB frame as h6006, but the CCT is `0d ff ff ff <K> <tint>`
+# (Config.N[2] = Config.GM -> Bytes.A), NOT the h6006 form. It is the illumination tab's Kelvin write
+# (H8015, via KelvinConfig.b) and the rgblight group / automation frame; it is no longer H6188's, whose
+# colour tab sends the h6006 form (devices.yaml h6188 row). The name is kept: it is the public ColorScheme
+# literal.
 # "h6061" = Glide Hexa panels, 0x15 colour version 5 (Config.Zt), whole device only: RGB is
-# `15 01 R G B 00 00 <mask>` (Bytes.l), CCT `15 01 <tint> <K> <mask>` (Bytes.u), one frame each.
-# See the "Glide Hexa" section below.
+# `15 01 R G B 00 00 <mask>` (Bytes.l), CCT `15 01 <tint> <K> <mask>` (Bytes.u), one frame each. See the
+# "Glide Hexa" section below.
 # Every scheme with a colour-temperature mode also sends an RGB pick that is exactly one of the
 # Kelvin tint colours (within the SKU's range) as a CCT frame instead of RGB, with the picked colour
 # as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB.
@@ -409,10 +409,10 @@ def _op15_color_frame(form: int, rgb: tuple[int, int, int], mask: int, positions
 # CubeColorModeV2.realMyColorPiece = max(layout size, 1) (ColorModeUtil.e), through
 # ColorModeControllerConfig.c -> Config.J[5] = Config.Zt: one 15 01 frame, Bytes.l for an RGB pick and
 # Bytes.u for a Kelvin tint (the spec's op15_color, form kelvin). The device never reports the layout; the
-# goodsType's panel count stands in for it
-# (devices.yaml h6061 wire counts.num_segments, the profile's segments; Device passes it as ``pieces``):
-# Support.getBulbStringMaxNum(51) = 23 on the H6061, the default. The 15 04 group frames (Bytes.m) are the
-# colour-stripe path (ColorViewModel.O -> ColorModeControllerConfig.k), which the library doesn't send.
+# goodsType's panel count stands in for it (devices.yaml h6061 wire counts.num_segments, the profile's
+# segments; Device passes it as ``pieces``): Support.getBulbStringMaxNum(51) = 23 on the H6061, the
+# default. The 15 04 group frames (Bytes.m) are the colour-stripe path (ColorViewModel.O ->
+# ColorModeControllerConfig.k), which the library doesn't send.
 H6061_MAX_PANELS: Final = 23
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
 

@@ -264,11 +264,10 @@ def make_profile(**facts: Any) -> Any:
 
     Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
     has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero,
-    light_heartbeat_nonzero; and the mode decode
-    c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
-    enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
-    Generated parents check a profile param by identity: build one object per set of device facts and
-    reuse it (the library's wire_profile() does this from devices.yaml)."""
+    light_heartbeat_nonzero; and the mode decode c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode
+    object serves both mode and mode_status). An enum-typed fact may be given by its member name, e.g.
+    make_profile(f_15_01="kelvin_tint"). Generated parents check a profile param by identity: build one object
+    per set of device facts and reuse it (the library's wire_profile() does this from devices.yaml)."""
     profile_cls = _module("govee_profile").GoveeProfile
     common = _module("govee_common").GoveeCommon
     unknown = set(facts) - {k for params in _LEAVES.values() for k in params}
@@ -450,8 +449,8 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     items carry it too, ahead of the row's items. The row's own range wins over the model's and its
     branches (the library refuses a by_model range under it). The SKU's connect_writes replace the row's
     (the screen's split by SKU within one goodsType). Only those: the by_model colour report is not resolved
-    here. Versions compare field by field, but a kelvin_range item's gate is a string
-    compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+    here. Versions compare field by field, but a kelvin_range item's gate is a string compare, as the app's
+    (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
 
     Known difference: where several kelvin_range items hold, the last in list order wins here, while the
     library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items

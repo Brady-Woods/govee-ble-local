@@ -748,8 +748,7 @@ def wire_profile(profile: DeviceProfile) -> Any:
     ``readback="plug"`` profile its relay mask, :attr:`DeviceProfile.relay_on_mask`, as the aa 01 heartbeat
     rule the library's poll follows: ``power_state.is_on_heartbeat``; else a light's, masks 0, with
     :attr:`DeviceProfile.light_nonzero`, the poll's rule, as both ``light_nonzero`` and
-    ``light_heartbeat_nonzero``), and on a ``readback="status"`` profile the 0xAC
-    reply's decode
+    ``light_heartbeat_nonzero``), and on a ``readback="status"`` profile the 0xAC reply's decode
     (:attr:`DeviceProfile.status_decode`: its forms and colour-group form, and the TLV 0x05's music layout and
     empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with.
     Cached per set of facts (``_spec.profile``)."""

@@ -41,14 +41,13 @@ the row lacks fails the build: nothing defaults silently.
   an advertisement without one: the app rewrites only a record whose pact meets the gate, and a record without
   one holds 0 (``SkuToGoodsTypeUtil.f``:66-99 over ``OldRgbBkUtil.a`` / ``.b``:75-97, the pact
   ``OldBleModel.itemClickOp``:52-60 copies, the int fields ``Info4BleIotDevice.p`` / ``.v``:90-91), so it
-  runs the source goodsType. A target-row route carries the gate (``Route.gate``), and
-  ``profile.profile_for`` takes it only on an advertised pact. It takes a ``pact_required`` row's route
-  (``Route.pact_required``) the same way: the app also accepts the row's goodsType at pacts that run a path
-  the row doesn't serve (straightfloorlamp 69's (1,1), and the h70b3 rows' (1,1)), so a unit advertising no
-  pact may be one of them.
+  runs the source goodsType. A target-row route carries the gate (``Route.gate``), and ``profile.profile_for``
+  takes it only on an advertised pact. It takes a ``pact_required`` row's route (``Route.pact_required``) the
+  same way: the app also accepts the row's goodsType at pacts that run a path the row doesn't serve
+  (straightfloorlamp 69's (1,1), and the h70b3 rows' (1,1)), so a unit advertising no pact may be one of them.
   ``pact_required`` with ``pacts: any`` raises. A SKU that a ``modelled`` row and an admitted row both list
-  raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in
-  must leave the admitted routes as they are.
+  raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in must
+  leave the admitted routes as they are.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
   (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
@@ -78,18 +77,16 @@ the row lacks fails the build: nothing defaults silently.
   scheme yet; h61a8's 0x0b segment colour). A row's ``segment_brightness_groups`` (the strip's
   ``canClickBrightness`` groups) becomes ``DeviceProfile.segment_brightness_groups``, which the
   segment-brightness write widens a selection to, on a row with that frame and ``segments`` only, as disjoint
-  groups of the row's segments. ``rgb``, ``color_temp`` or
-  ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. A row that keeps ``segments`` and ``color_temp`` after those drops
-  says whether its screen sends a Kelvin over a piece selection (``segment_color_temp``, which becomes
-  ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
-  ``LightColorCapabilityCenter.C2``); a row that keeps fewer may not say. An ``untraced`` scene dialect
-  drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that
-  offers them ships one: a SKU the scene store has no catalog for (``scenes/store.json``, the generated
-  ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's
-  scene facts still checked.
-  An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
-  the screen parses no colour).
+  groups of the row's segments. ``rgb``, ``color_temp`` or ``segments`` on a relay row raises (the library
+  resolves no colour scheme or Kelvin range for a plug), and elsewhere they need a colour scheme. A row that
+  keeps ``segments`` and ``color_temp`` after those drops says whether its screen sends a Kelvin over a piece
+  selection (``segment_color_temp``, which becomes ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin
+  item, ``DelegateColorV2Part.Z0`` -> ``LightColorCapabilityCenter.C2``); a row that keeps fewer may not say.
+  An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as
+  every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
+  (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
+  offered no ``scenes``, its row's scene facts still checked. An ``untraced`` colour parse on a row with
+  ``rgb`` or ``color_temp`` raises (``none`` is a traced value: the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
   (``DeviceProfile.status_read``, ``build.status_query(types=)``; ``[]`` is the bare ``ac 03 00``, the h70dx
   screen's, which requests no type), and its reply is read with the row's own wire facts
@@ -97,27 +94,26 @@ the row lacks fails the build: nothing defaults silently.
   reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as colour groups (under
   ``f_a5: color_group``, a requested ``color_group`` or any 0xA5 the bare read's reply carries, as the
   h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
-  (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
-  requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
-  becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
-  with the brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen
-  doesn't: ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists
-  ``brightness`` exactly on a polled row with the capability and ``gradual`` wherever the capability is; a
-  ``gradual`` read without the capability (the screen's default ``Compose4InfoBleIot`` read, with no
-  gradual control) is made on every poll too and its
-  reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
-  default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
-  ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
-  (H6641), or, with ``ic_pieces: fixed``, it is made on every poll and discarded
-  (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
-  form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
-  is read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte
-  records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``). Every
-  status row names its ``device_info_reads`` and no other row does: whether the library adds the aa 06 /
-  aa 07 03 / aa 07 02 device-info reads it makes on every other row (``DeviceProfile.device_info_reads``). At
-  ``none`` it doesn't, and takes the versions and device id from the status reply's TLV 0x07 alone, as the
-  screen does (``Compose4BaseInfoSingleRead.w``); at ``firmware`` (a FIRMWARE-SOURCED extension the row
-  cites: H60A6, H6076) it does. There is no third value: without that evidence a status row sends none.
+  (mode_status over mode). The library takes the zone bits from TLV 0x30, so a requested ``cmd_30`` needs
+  ``f_30: zone_power``. A pact branch may only drop ``color_group``, which becomes
+  ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row with the
+  brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen doesn't:
+  ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness``
+  exactly on a polled row with the capability and ``gradual`` wherever the capability is; a ``gradual`` read
+  without the capability (the screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made
+  on every poll too and its reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only:
+  that is where the default read is traced (the h7050 screens), and a status or plug row's reads are its own
+  strategy's. An ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the
+  read-back's pieces (H6641), or, with ``ic_pieces: fixed``, it is made on every poll and discarded
+  (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command form the library sends or reads for
+  the row must be the row's (wire ``forms``), a polled row's aa 05 reply is read with the spec's default
+  decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
+  ``group.num_per_group`` (and, in the status read, its ``group.rule``). Every status row names its
+  ``device_info_reads`` and no other row does: whether the library adds the aa 06 / aa 07 03 / aa 07 02
+  device-info reads it makes on every other row (``DeviceProfile.device_info_reads``). At ``none`` it doesn't,
+  and takes the versions and device id from the status reply's TLV 0x07 alone, as the screen does
+  (``Compose4BaseInfoSingleRead.w``); at ``firmware`` (a FIRMWARE-SOURCED extension the row cites: H60A6,
+  H6076) it does. There is no third value: without that evidence a status row sends none.
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
@@ -160,13 +156,13 @@ the row lacks fails the build: nothing defaults silently.
   Support.getSupportScenesOpSet). Before the read, each version not yet read meets its own gates, so the
   newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
   Any other firmware fact or gate raises.
-- Light power read-back: a polled light's aa 01 reply is on at a byte of 1
-  (``ControllerSwitch.Companion.c``), or at any non-zero byte where the row's wire ``power`` says
-  ``light_nonzero`` (the connect read's own decoder: the legacy ``SwitchController``, the H70BX connect
-  read) or ``light_heartbeat_nonzero`` (the aa 01 heartbeat's, where the connect read takes == 1: H1168's
-  ``HeartControllerWithBattery``). Either becomes ``DeviceProfile.light_nonzero``: as for a plug, the
-  heartbeat rule beats the connect read's. On a status or plug row either raises (neither reads a light's
-  aa 01 reply), and ``light_heartbeat_nonzero`` raises without the aa 01 heartbeat (``heartbeat: power``).
+- Light power read-back: a polled light's aa 01 reply is on at a byte of 1 (``ControllerSwitch.Companion.c``),
+  or at any non-zero byte where the row's wire ``power`` says ``light_nonzero`` (the connect read's own
+  decoder: the legacy ``SwitchController``, the H70BX connect read) or ``light_heartbeat_nonzero`` (the aa 01
+  heartbeat's, where the connect read takes == 1: H1168's ``HeartControllerWithBattery``). Either becomes
+  ``DeviceProfile.light_nonzero``: as for a plug, the heartbeat rule beats the connect read's. On a status or
+  plug row either raises (neither reads a light's aa 01 reply), and ``light_heartbeat_nonzero`` raises without
+  the aa 01 heartbeat (``heartbeat: power``).
 - Plug power read-back: the wire's ``relay_heartbeat_on_mask`` beats the row's ``relay_on_mask``, because
   every aa 01 poll the library makes follows the heartbeat rule (``power_state.is_on_heartbeat``). So for
   goodsTypes 50 and 307 the row's 0xFF (the connect read's) is never consumed, and the library uses their
