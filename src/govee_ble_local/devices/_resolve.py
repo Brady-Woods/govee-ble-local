@@ -249,17 +249,18 @@ the row lacks fails the build: nothing defaults silently.
   raises.
 - Firmware branches resolve after the device-info read (D6): a ``kelvin_range`` item gated on the hardware
   version alone becomes ``kelvin_by_hardware``, and one gated on the soft version alone
-  ``kelvin_by_software`` (both compared as a string, as ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2`` do), so
-  the gate must be in the app's ``a.bb.cc`` form, two-digit fields, for the string compare to order it. A
-  goodsType whose KelvinConfig function compares its version numerically (:data:`_NUMERIC_KELVIN_GATES`:
-  235's ``Config.Y2``, ``BleUtils.isHigherVersion``) raises. They are the row's, or the SKU's ``by_model``
-  ones over its own ``kelvin_range`` (bulblightv3 H14A1), never both, and on one version. A ``by_model``
-  range under the row's own (which wins) raises. A ``scene_versions`` item gated on the soft and / or hard
-  version becomes ``scene_versions_by_firmware`` (the dreamcolorlightv1 rows' part-brightness gates,
-  Support.getSupportScenesOpSet), compared as :func:`parse_version` (``BleUtil.parseVersion``). Every gate is
-  a version that parses above 0. Before the read, each version not yet read meets its own gates, so the
-  newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
-  Any other firmware fact or gate raises.
+  ``kelvin_by_software``, compared as the item's ``compare`` says (``DeviceProfile.kelvin_version_compare``,
+  :data:`KELVIN_COMPARES`). ``string``, the default, is ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2``'s
+  ``compareTo``, so its gate must be in the app's ``a.bb.cc`` form, two-digit fields, for the string compare
+  to order it. ``numeric`` is ``Config.Y2``'s ``BleUtils.isHigherVersion`` (:func:`parse_version` of each,
+  at least the gate's: h60ax 235). A row's items are on one compare, and ``compare`` on any other item raises.
+  They are the row's, or the SKU's ``by_model`` ones over its own ``kelvin_range`` (bulblightv3 H14A1), never
+  both, and on one version. A ``by_model`` range under the row's own (which wins) raises. A
+  ``scene_versions`` item gated on the soft and / or hard version becomes ``scene_versions_by_firmware`` (the
+  dreamcolorlightv1 rows' part-brightness gates, Support.getSupportScenesOpSet), compared as
+  :func:`parse_version` (``BleUtil.parseVersion``). Every gate is a version that parses above 0. Before the
+  read, each version not yet read meets its own gates, so the newest firmware's set applies, as 1.x assumed,
+  and the Kelvin range is the one valid on every revision. Any other firmware fact or gate raises.
 - Light power read-back: a polled light's aa 01 reply is on at a byte of 1
   (``ControllerSwitch.Companion.c``), or at any non-zero byte where the row's wire ``power`` says
   ``light_nonzero`` (the connect read's own decoder: the legacy ``SwitchController``, the H70BX connect
@@ -347,6 +348,7 @@ class FirmwareBranch(TypedDict, total=False):
     min_soft_version: str
     min_hard_version: str
     min_wifi_soft_version: str
+    compare: str
     mode_color_parse: str
     scene_versions: tuple[int, ...]
     kelvin_range: tuple[int, ...]
@@ -641,10 +643,9 @@ PACT_FALLBACK_SKUS: Final = frozenset({
     "H60A6", "H6047", "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061",
     "H5080", "H5083", "H5085", "H5082", "H5089", "H5160", "H5161"})
 _LAYERED: Final = ("scene_versions", "kelvin_range", "brightness_range")
-# Kelvin firmware gates the app compares numerically, where the library compares a gate as a string (as the
-# other KelvinConfig functions do): goodsType -> that function. A Kelvin firmware branch on one raises.
-_NUMERIC_KELVIN_GATES: Final[Mapping[int, str]] = {
-    235: "KelvinConfig.Config.Y2 (BleUtils.isHigherVersion)"}
+# clientFirmware compare, a Kelvin item's (DeviceProfile.kelvin_version_compare; module doc): "string", the
+# default, is KelvinConfig.Config.z2 / Z2 / X2's compareTo; "numeric" is Config.Y2's isHigherVersion.
+KELVIN_COMPARES: Final = ("string", "numeric")
 # A string-compared gate's form: the app's version strings, with two-digit minor fields ("3.08.01").
 _STRING_GATE: Final = re.compile(r"\d+\.\d{2}\.\d{2}")
 _PERCENT: Final = (1, 100)
@@ -668,6 +669,15 @@ def parse_version(text: str | None) -> int:
     except ValueError:   # more digits than int() takes from a str (sys.get_int_max_str_digits)
         return 0
     return value if -(2**31) <= value < 2**31 else 0
+
+
+def version_key(text: str, compare: str) -> tuple[int, str]:
+    """A version's order under ``compare``: a device version meets a gate when its key is at least the
+    gate's. ``"numeric"``: :func:`parse_version` (``BleUtils.isHigherVersion`` -> ``Q``,
+    base-classes10/com/govee/base2kt/utils/BleUtils.java:327-335, ``q0(device) >= q0(gate)``, inclusive
+    through ``isHigherVersion$default``, :74-79; and ``BleUtil.parseVersion``'s gates). ``"string"``: the text
+    itself (``KelvinConfig.Config.z2`` / ``Z2`` / ``X2``'s ``compareTo``, :data:`KELVIN_COMPARES`)."""
+    return (parse_version(text), "") if compare == "numeric" else (0, text)
 
 
 def _is_int(value: object) -> bool:
@@ -1069,7 +1079,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     w = _wire(fam, gt, sku, fail)
     forms, counts, group, power = w["forms"], w["counts"], w["group"], w["power"]
     relay = forms.get("f_01") == "relays"
-    if model.get("by_pact") or any(k != "kelvin_range" and not k.startswith("min_")
+    if model.get("by_pact") or any(k not in ("kelvin_range", "compare") and not k.startswith("min_")
                                    for item in model.get("by_firmware") or () for k in item):
         fail("by_model pact / firmware branches are not served (but a firmware kelvin_range)")
     per_row = sorted(k for k in _ROW_OVERRIDES if k in model)
@@ -1095,14 +1105,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     row_kelvin, scenes_by_firmware = _firmware(row, fail)
     model_kelvin, _no_scenes = _firmware(model, fail)
     kelvin_fw = row_kelvin or model_kelvin
-    if kelvin_fw and int(gt) in _NUMERIC_KELVIN_GATES:
-        fail(f"a Kelvin firmware branch on goodsType {gt}, whose gate the app compares numerically "
-             f"({_NUMERIC_KELVIN_GATES[int(gt)]}), where the library compares it as a string")
     if ((row_kelvin and model_kelvin) or (model_kelvin and "kelvin_range" not in mine)
             or len({gate for gate, *_entry in kelvin_fw}) > 1):
         fail("Kelvin firmware branches must be the row's, or the SKU's by_model ones over its own "
              "kelvin_range, on one version")
-    kelvin_by_version = [(at, lo, hi) for _gate, at, lo, hi in kelvin_fw]
+    compares = sorted({compare for *_entry, compare in kelvin_fw})
+    if len(compares) > 1:
+        fail(f"Kelvin firmware branches on compares {compares} (a row's items are on one compare)")
+    kelvin_compare = compares[0] if compares else "string"
+    kelvin_by_version = sorted(((at, lo, hi) for _gate, at, lo, hi, _compare in kelvin_fw),
+                               key=lambda entry: version_key(entry[0], kelvin_compare), reverse=True)
     by_soft = any(gate == "min_soft_version" for gate, *_entry in kelvin_fw)
 
     status_read = row.get("status_read")
@@ -1209,7 +1221,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
              "is a Kelvin tint colour in the range as colour temperature (KelvinConfig.i)")
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
               if layered.get("kelvin_range") is not None and not relay else None)
-    _check_kelvin_by_firmware(kelvin, kelvin_by_version, fail)
+    _check_kelvin_by_firmware(kelvin, kelvin_by_version, kelvin_compare, fail)
     kelvin_by_pact = tuple(sorted(
         [(_pact(key), *_kelvin(branch["kelvin_range"], f"pact {key} kelvin_range", fail))
          for key, branch in by_pact.items() if "kelvin_range" in branch], key=lambda e: e[0]))
@@ -1477,8 +1489,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "brightness_by_pact": bright_by_pact,
         "status_color_groups_pact": gate,
         "power_resync": bool(resync),
-        "kelvin_by_hardware": () if by_soft else tuple(sorted(kelvin_by_version, reverse=True)),
-        "kelvin_by_software": tuple(sorted(kelvin_by_version, reverse=True)) if by_soft else (),
+        "kelvin_by_hardware": () if by_soft else tuple(kelvin_by_version),   # highest version first
+        "kelvin_by_software": tuple(kelvin_by_version) if by_soft else (),
+        "kelvin_version_compare": kelvin_compare,
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
         "device_info_reads": info_reads != "none",
         "light_effect_stop": writes == ("light_effect_stop",),
@@ -1682,26 +1695,32 @@ def _check_forms(forms: Mapping[str, str], used: Sequence[tuple[str, str]], fail
             fail(f"wire forms {form} {forms.get(form)!r}, where the library uses {member}")
 
 
-def _firmware(row: Row | ClientModel, fail: Fail) -> tuple[list[tuple[str, str, int, int]],
+def _firmware(row: Row | ClientModel, fail: Fail) -> tuple[list[tuple[str, str, int, int, str]],
                                                            list[tuple[str, str, tuple[int, ...]]]]:
     """The row's (or a by_model entry's) ``by_firmware`` items as Kelvin entries, ``(gate, version, min,
-    max)`` with the gate ``min_hard_version`` or ``min_soft_version``, and ``scene_versions_by_firmware``
-    entries."""
-    kelvin: list[tuple[str, str, int, int]] = []
+    max, compare)`` with the gate ``min_hard_version`` or ``min_soft_version`` and the item's ``compare``
+    (:data:`KELVIN_COMPARES`, ``string`` by default), and ``scene_versions_by_firmware`` entries."""
+    kelvin: list[tuple[str, str, int, int, str]] = []
     scenes: list[tuple[str, str, tuple[int, ...]]] = []
     for item in row.get("by_firmware") or ():
         gates: dict[str, Any] = {k: v for k, v in item.items() if k.startswith("min_")}
-        facts: dict[str, Any] = {k: v for k, v in item.items() if not k.startswith("min_")}
+        facts: dict[str, Any] = {k: v for k, v in item.items() if not k.startswith("min_") and k != "compare"}
         if not all(isinstance(v, str) and parse_version(v) > 0 for v in gates.values()):
             fail(f"firmware gates {gates} are not all a.bb.cc versions")
         if "kelvin_range" in facts:
+            compare = item.get("compare", "string")
             if len(facts) != 1 or set(gates) not in ({"min_hard_version"}, {"min_soft_version"}):
                 fail("a Kelvin firmware branch must gate on min_hard_version or min_soft_version alone")
+            if compare not in KELVIN_COMPARES:
+                fail(f"Kelvin firmware compare {compare!r} (one of {list(KELVIN_COMPARES)})")
             (gate, at), = gates.items()
-            if not _STRING_GATE.fullmatch(at):
+            if compare == "string" and not _STRING_GATE.fullmatch(at):
                 fail(f"Kelvin firmware gate {at!r} is not the app's a.bb.cc form (two-digit fields: the gate "
                      "compares as a string)")
-            kelvin.append((gate, at, *_kelvin(facts["kelvin_range"], "firmware kelvin_range", fail)))
+            kelvin.append((gate, at, *_kelvin(facts["kelvin_range"], "firmware kelvin_range", fail), compare))
+        elif "compare" in item:
+            fail(f"firmware compare on {sorted(facts)}: only a Kelvin branch chooses its compare (the others "
+                 "compare as BleUtil.parseVersion)")
         elif set(facts) == {"scene_versions"}:
             if not gates or not set(gates) <= {"min_soft_version", "min_hard_version"}:
                 fail("a scene firmware branch must gate on the soft / hard version")
@@ -1720,13 +1739,14 @@ def _kelvin(value: Any, name: str, fail: Fail) -> tuple[int, int]:
 
 
 def _check_kelvin_by_firmware(base: tuple[int, int] | None, gated: Sequence[tuple[str, int, int]],
-                              fail: Fail) -> None:
+                              compare: str, fail: Fail) -> None:
     """``kelvin_by_hardware`` / ``kelvin_by_software``'s rules (``DeviceProfile._check_kelvin_by_version``):
-    a base range, one entry per version, each overlapping the base, and a range valid on every revision."""
+    a base range, one entry per version (under ``compare``: :func:`version_key`), each overlapping the base,
+    and a range valid on every revision."""
     if not gated:
         return
     lo, hi = base if base is not None else (0, -1)
-    if (base is None or len({v for v, _lo, _hi in gated}) != len(gated)
+    if (base is None or len({version_key(v, compare) for v, _lo, _hi in gated}) != len(gated)
             or any(k_lo > hi or k_hi < lo for _v, k_lo, k_hi in gated)
             or max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated))):
         fail(f"Kelvin firmware branches {list(gated)} need a base kelvin_range {base}, one per version, "

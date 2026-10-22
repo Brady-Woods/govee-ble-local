@@ -16,7 +16,7 @@ from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
 from ..wire.cct import kelvin_for_tint, tint_for_kelvin
 from .brightness import raw_to_percent
-from ._resolve import parse_version
+from ._resolve import parse_version, version_key
 from .profile import DeviceProfile, wire_profile
 
 
@@ -24,8 +24,9 @@ def kelvin_range(profile: DeviceProfile, hardware: str | None = None,
                  pact: tuple[int, int] | None = None, soft: str | None = None) -> tuple[int, int] | None:
     """The device's inclusive Kelvin range, or None when the profile leaves either end open: the first
     :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry the ``hardware`` version is at least (or
-    :attr:`~.profile.DeviceProfile.kelvin_by_software` entry the ``soft`` version is; a string compare, as
-    the app's), else the profile's base range, or the :attr:`~.profile.DeviceProfile.kelvin_by_pact` range
+    :attr:`~.profile.DeviceProfile.kelvin_by_software` entry the ``soft`` version is; compared as the app's
+    KelvinConfig function compares it, :attr:`~.profile.DeviceProfile.kelvin_version_compare`), else the
+    profile's base range, or the :attr:`~.profile.DeviceProfile.kelvin_by_pact` range
     of the advertised ``pact`` (a profile has one kind of entry only). With that version or the pact not yet
     known (None), the range that holds on every revision, or on every pact: the base range cut to each
     entry's."""
@@ -43,8 +44,9 @@ def kelvin_range(profile: DeviceProfile, hardware: str | None = None,
         for _min_version, lo, hi in gated:
             lo_, hi_ = max(lo_, lo), min(hi_, hi)
         return lo_, hi_
+    compare = profile.kelvin_version_compare
     for min_version, lo, hi in gated:
-        if have >= min_version:
+        if version_key(have, compare) >= version_key(min_version, compare):
             return lo, hi
     return lo_, hi_
 

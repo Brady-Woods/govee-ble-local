@@ -99,13 +99,31 @@ APP_RANGES = {
     "H6006": (2700, 6500), "H6061": (2000, 9000),
     # H61A8: KelvinConfig.Config.z2, [2000, 9000] below hardware "3.08.01" (test_device_v3 has the branch)
     "H61A8": (2000, 9000),
+    # H60A1: KelvinConfig.Config.Y2, [2200, 6500] below hardware "1.04.03" (the branch below)
+    "H60A1": (2200, 6500),
 }
+# By the hardware version (aa 07 03) where the app gates the range. H60A1 (h60ax 235): Config.Y2 compares as
+# BleUtils.isHigherVersion does, numbers: q0 of each, the digits with the dots removed, 0 when empty or
+# unparsable, inclusive (KelvinConfig.java:406-407,423-427,1434-1436; BleUtils.java:74-79,327-335,1065-1074),
+# so 1.4.3 (143) and junk are below 1.04.03 (10403), where a string compare puts them above. H61A8:
+# Config.z2's string compare, so 10.00.00 is below 3.08.01, where the numbers put it above.
+_V1, _V2 = (2200, 6500), (2700, 6500)
+APP_RANGES_BY_HARDWARE = [
+    *(("H60A1", hardware, _V2) for hardware in ("1.04.03", "1.10.00")),
+    *(("H60A1", hardware, _V1) for hardware in ("1.04.02", "1.02.00", "1.4.3", "", "abc")),
+    ("H61A8", "10.00.00", (2000, 9000)), ("H61A8", "3.08.01", _V2)]
 
 
-def test_profile_ranges_equal_the_apps_kelvin_config() -> None:
-    for sku, (lo, hi) in APP_RANGES.items():
-        p = profile_for(sku)
-        assert p is not None and (p.min_kelvin, p.max_kelvin) == (lo, hi), sku
+@pytest.mark.parametrize(("sku", "hardware", "span"), [
+    *((sku, None, span) for sku, span in APP_RANGES.items()), *APP_RANGES_BY_HARDWARE])
+def test_profile_ranges_equal_the_apps_kelvin_config(sku: str, hardware: str | None,
+                                                     span: tuple[int, int]) -> None:
+    p = profile_for(sku)
+    assert p is not None
+    if hardware is None:   # the profile's base range
+        assert (p.min_kelvin, p.max_kelvin) == span
+    else:
+        assert _fold.kelvin_range(p, hardware) == span
 
 
 # ── golden frames, whole device (Device.set_rgb and turn_on(rgb=)) ───────────

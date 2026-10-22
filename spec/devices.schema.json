@@ -324,7 +324,7 @@
     "modeColorVersion": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "A firmware version 'a.bb.cc', compared as the app's BleUtil.parseVersion compares it (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121; BleUtils.q0, base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074, is the same: the digits with the dots removed, as one int, so 1.6.0 is below 1.06.00); an empty or unparsable device version parses to 0 and fails (the older branch applies). A kelvin_range item's gate is a string compare instead (KelvinConfig)."
+      "description": "A firmware version 'a.bb.cc', compared as the app's BleUtil.parseVersion compares it (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121; BleUtils.q0, base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074, is the same: the digits with the dots removed, as one int, so 1.6.0 is below 1.06.00); an empty or unparsable device version parses to 0 and fails (the older branch applies). A kelvin_range item's gate compares as its compare says (clientFirmware), a string compare by default (KelvinConfig)."
     },
     "commandId": {
       "type": "string",
@@ -554,11 +554,13 @@
       "additionalProperties": false,
       "minProperties": 2,
       "anyOf": [ { "required": ["min_soft_version"] }, { "required": ["min_hard_version"] }, { "required": ["min_wifi_soft_version"] } ],
-      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version or min_soft_version is a string compare, as KelvinConfig.Config.z2's versionHard.compareTo and Z2 / X2's versionSoft.compareTo are: hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
+      "dependentRequired": { "compare": ["kelvin_range"] },
+      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version or min_soft_version compares as its compare says: by default a string compare, as KelvinConfig.Config.z2's versionHard.compareTo and Z2 / X2's versionSoft.compareTo are, so hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
       "properties": {
         "min_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE firmware (soft) version." },
         "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version." },
         "min_wifi_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum Wi-Fi module firmware version." },
+        "compare": { "type": "string", "enum": ["string", "numeric"], "description": "How a kelvin_range item's gate compares the device's version (only a kelvin_range item has it; absent = string). string: as KelvinConfig.Config.z2 / Z2 / X2's compareTo (the gate in a.bb.cc form, two-digit fields). numeric: as KelvinConfig.Config.Y2's BleUtils.isHigherVersion (base-classes10/com/govee/base2kt/utils/BleUtils.java:74-79,327-335): q0 of each (modeColorVersion's parse), the device's at least the gate's, so 1.4.3 (143) is below 1.04.03 (10403)." },
         "doc": { "type": "string" },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },

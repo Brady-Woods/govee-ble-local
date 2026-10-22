@@ -467,8 +467,10 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     branches (the library refuses a by_model range under it). The SKU's connect_reads, connect_writes,
     ic_pieces and support replace the row's (the screen's split by SKU within one goodsType). Only those:
     the by_model colour report is not resolved here. Versions compare as the app's BleUtil.parseVersion
-    (_parse_version: 1.6.0 is below 1.06.00), but a kelvin_range item's gate is a string compare, as the
-    app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+    (_parse_version: 1.6.0 is below 1.06.00), but a kelvin_range item's gate compares as its compare says:
+    by default a string compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0),
+    and with compare numeric BleUtils.isHigherVersion's (KelvinConfig.Config.Y2: q0(versionHard) >=
+    q0("1.04.03"), BleUtils.java:74-79,327-335).
 
     Known difference: where several kelvin_range items hold, the last in list order wins here, while the
     library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items
@@ -495,11 +497,13 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
             return bool(dev) and str(dev) >= gate
         return dev is not None and _parse_version(dev) >= _parse_version(gate)
 
-    items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges}
+    items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges or k == "compare"}
                for item in model.get("by_firmware") or []), *(row.get("by_firmware") or [])]
     for item in items:
-        if all(holds(v, have[k], "kelvin_range" in item) for k, v in item.items() if k.startswith("min_")):
-            out.update({k: v for k, v in item.items() if not k.startswith("min_") and k != "doc"})
+        as_string = "kelvin_range" in item and item.get("compare", "string") == "string"
+        if all(holds(v, have[k], as_string) for k, v in item.items() if k.startswith("min_")):
+            out.update({k: v for k, v in item.items()
+                        if not k.startswith("min_") and k not in ("doc", "compare")})
     return out
 
 
@@ -586,6 +590,12 @@ def _selftest(*, strict: bool = False) -> int:
               == [([0, 1, 2, 3], [2000, 9000]), ([0, 1, 2, 3], [2700, 6500]), ([0, 1, 2, 3], [2000, 9000])]
               and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000]
               and [r["scene_versions"] for r in h6168] == [[0, 1, 2, 3], [0, 1, 2], [0, 1, 2]])
+        h60a1 = {hard: client_row(reg, "h60ax", 235, hard=hard)["kelvin_range"]
+                 for hard in ("1.04.03", "1.10.00", "1.04.02", "1.02.00", "1.4.3", "", "abc")}
+        check("H60A1 Kelvin (compare numeric, KelvinConfig.Config.Y2 / BleUtils.q0): [2700, 6500] from hard "
+              "1.04.03 and at 1.10.00, else [2200, 6500]: 1.4.3 (143), empty and unparsable below it",
+              h60a1 == {"1.04.03": [2700, 6500], "1.10.00": [2700, 6500],
+                        **{hard: [2200, 6500] for hard in ("1.04.02", "1.02.00", "1.4.3", "", "abc")}})
         check("H60A6 pact (1,1): no 0xA5 in the status read; H7070 adds 0x42 at (1,2) / (2,1); with the pact "
               "unknown the row's own applies",
               client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]

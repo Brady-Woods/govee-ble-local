@@ -21,7 +21,7 @@ from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
 from govee_ble_local.devices.profile import (
-    PROFILES, DeviceProfile, IcRounding, RelayPower, SessionMode, profile_for, wire_profile)
+    PROFILES, DeviceProfile, IcRounding, KelvinCompare, RelayPower, SessionMode, profile_for, wire_profile)
 from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
@@ -146,6 +146,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert set(_resolve.WHITE_TYPES) == set(get_args(WhiteType))
     assert set(_resolve.SESSIONS) == set(get_args(SessionMode))
     assert set(_resolve.IC_ROUNDINGS) == set(get_args(IcRounding))
+    assert set(_resolve.KELVIN_COMPARES) == set(get_args(KelvinCompare))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -324,10 +325,11 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "need a base kelvin_range (2000, 9000), one per version"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(min_hard_version="3.8.01"),
      "Kelvin firmware gate '3.8.01' is not the app's a.bb.cc form"),
-    ("h60ax", "235", lambda f: f["client_profile"]["by_goods_type"].update({"235": {
-        **_row(f, "303"), "models": ["HX235"],
-        "by_firmware": [{"min_hard_version": "1.04.03", "kelvin_range": [2700, 6500]}]}}),
-     "whose gate the app compares numerically (KelvinConfig.Config.Y2"),
+    ("h60ax", "235", lambda f: _row(f, "235")["by_firmware"].append(
+        {"min_hard_version": "1.05.00", "kelvin_range": [2700, 6500]}),
+     "Kelvin firmware branches on compares ['numeric', 'string']"),
+    ("dreamcolorlightv1", "136", lambda f: _row(f, "136")["by_firmware"][0].update(compare="numeric"),
+     "firmware compare on ['scene_versions']"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"].update(mode_color_parse="kelvin_15"),
      "pact branch 1,1 on ['mode_color_parse']"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"].update({"9,9": {"status_read": _STATUS_PAIR}}),

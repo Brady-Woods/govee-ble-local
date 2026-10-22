@@ -41,6 +41,9 @@ ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How a live IC count divides into pieces (DeviceProfile.color_readback_ic_rounding): "ceil" rounds up,
 # "floor" is Java's integer division.
 IcRounding = Literal["ceil", "floor"]
+# How a Kelvin firmware gate compares the device's version (DeviceProfile.kelvin_version_compare): "string" =
+# KelvinConfig's compareTo (Config.z2 / Z2 / X2), "numeric" = BleUtils.isHigherVersion (Config.Y2).
+KelvinCompare = Literal["string", "numeric"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
 # name of the spec's mode_color_parse table (devices.yaml ``mode_color_parse``, which maps each colour
 # sub-mode to a color_decode; :func:`wire_profile`), e.g. "kelvin_15_rgb_kelvin_0d" (H60A6) or
@@ -256,17 +259,25 @@ class DeviceProfile:
     kelvin_by_hardware: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
     """Kelvin ranges that replace [:attr:`min_kelvin`, :attr:`max_kelvin`] from a hardware version up:
     ``(min_hard_version, min_kelvin, max_kelvin)`` entries, highest version first, of which the first
-    the device's hardware version (``aa 07 03``) is at least applies, compared as strings, as the app
-    does (``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``; a devices.yaml row's ``by_firmware``).
-    Until the hardware version is read, the range valid on every revision applies: the base range cut to
-    each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in force). Needs both
-    :attr:`min_kelvin` and :attr:`max_kelvin`; each entry must overlap the base range, and so must the
-    range valid on every revision."""
+    the device's hardware version (``aa 07 03``) is at least applies, compared as
+    :attr:`kelvin_version_compare` says, as the app does (a devices.yaml row's ``by_firmware``; strings for
+    ``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``). Until the hardware version is read, the
+    range valid on every revision applies: the base range cut to each entry's (``Device.min_kelvin`` /
+    ``max_kelvin`` give the range in force). Needs both :attr:`min_kelvin` and :attr:`max_kelvin`; each
+    entry must overlap the base range, and so must the range valid on every revision."""
     kelvin_by_software: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
     """The same from a soft version up: ``(min_soft_version, min_kelvin, max_kelvin)`` entries, applied with
     the device's soft version (``aa 06``) exactly as :attr:`kelvin_by_hardware` is with the hardware
-    version, compared as strings too (``KelvinConfig.Config.Z2``: bulblightv3 goodsType 348 from
-    ``"1.00.15"``). The same rules; a profile has entries of one kind only."""
+    version (``KelvinConfig.Config.Z2``: bulblightv3 goodsType 348 from ``"1.00.15"``, as strings). The same
+    rules; a profile has entries of one kind only."""
+    kelvin_version_compare: KelvinCompare = field(default="string", kw_only=True)
+    """How :attr:`kelvin_by_hardware` / :attr:`kelvin_by_software` compare the device's version with an
+    entry's (a devices.yaml Kelvin ``by_firmware`` item's ``compare``). ``"string"`` (the default):
+    the strings, as ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2``'s ``compareTo`` do, so a hardware
+    ``10.00.00`` is below ``3.08.01``. ``"numeric"``: each as one int of its digits, the dots removed, 0
+    when empty or unparsable (``_resolve.parse_version``), at least the entry's, as ``Config.Y2``'s
+    ``BleUtils.isHigherVersion`` does (h60ax goodsType 235, H60A1 / H80A1 from hardware ``"1.04.03"``), so
+    ``1.4.3`` (143) is below ``1.04.03`` (10403)."""
     mode_reports_kelvin: bool = field(default=True, kw_only=True)
     """Whether the ``aa 05`` mode report carries the Kelvin of a colour-temperature write. False where it
     reads 0 after one (H61A8: ``15 01 00 00`` after either write, bench 2026-10-17): a colour report of
@@ -704,6 +715,7 @@ class DeviceProfile:
             ("white_type", WhiteType),
             ("session", SessionMode),
             ("color_readback_ic_rounding", IcRounding),
+            ("kelvin_version_compare", KelvinCompare),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -944,8 +956,8 @@ class DeviceProfile:
 
     def _check_kelvin_by_version(self, where: str, name: str) -> None:
         """:attr:`kelvin_by_hardware` / :attr:`kelvin_by_software` (``name``)'s rules: well-formed entries,
-        highest version first, a base range, and an overlap with it for each entry and for the range valid
-        on every revision."""
+        highest version first (as :attr:`kelvin_version_compare` orders them), a base range, and an overlap
+        with it for each entry and for the range valid on every revision."""
         gated: tuple[tuple[str, int, int], ...] = getattr(self, name)
         if not gated:
             return
@@ -958,7 +970,7 @@ class DeviceProfile:
         lo, hi = self.min_kelvin, self.max_kelvin
         if lo is None or hi is None:
             raise GoveeBleInvalidValue(f"{bad} needs min_kelvin and max_kelvin")
-        versions = [entry[0] for entry in gated]
+        versions = [_resolve.version_key(entry[0], self.kelvin_version_compare) for entry in gated]
         if versions != sorted(versions, reverse=True) or len(set(versions)) != len(versions):
             raise GoveeBleInvalidValue(f"{bad}: list the versions highest first, once each")
         if any(k_lo > hi or k_hi < lo for _version, k_lo, k_hi in gated):
