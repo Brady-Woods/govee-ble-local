@@ -360,17 +360,23 @@ model, from which the shipped readers are generated).
     gives no count walks the static pieces), and `clientModel` (`by_model`) gains `ic_pieces` and `support`,
     which replace the row's for that SKU, on a SKU one row of the family lists, as `connect_writes` does (the
     generator refuses them on any other SKU). `govee_reference.client_row` applies them.
-  - Library: a readback-only rule sets `color_readback_live_ic` without `color_writes_live_ic`, so the poll's
-    one aa 40 read (where the discarded read was) sizes the walk and never `segment_count`;
-    `_readback.walk_pieces` gives the static pieces where it gives no count. `_resolve.sku_support` gives a
-    route's level.
+  - Library: `DeviceProfile.color_readback_ic_walk_only` (keyword-only, default False; with
+    `color_readback_live_ic` and without `color_writes_live_ic`), which a readback-only rule sets, so the
+    poll's one aa 40 read (where the discarded read was) sizes the walk and never `segment_count`. On it a read
+    with no count walks the static pieces (`_readback.walk_pieces`), where a live-IC profile skips the walk, and
+    a walk of other than `segment_count` pieces is made but not applied to `state.segments`: the strip applies
+    a colour or brightness read-back only of its own length (`H70C456789ColorMode.updateColor` /
+    `updateBrightness`), so at IC 1000 the app walks 20 pieces and shows none. A profile without the field,
+    such as a 1.6.1-style one with `color_readback_live_ic` alone, still skips the walk without a count.
+    `_resolve.sku_support` gives a route's level.
   - **H70C9 / H7084 / H6871 / R6871** and, by the catalogue, **H80C5** (260) are promoted to the default table
     (`app_traced`): their walk and writes are the static 20 / 10 / 15 / 15 / 10 pieces at any IC, as the app's.
     Their profiles are unchanged.
   - **H70C4 / H70C5 / H70C7 / H6870 / H80C4** stay behind `allow_modelled`, now walking 20 pieces (5 groups)
-    at IC 1000 and 10 otherwise, the writes still 10. They are modelled for one inferred fact, as H6609 (173):
-    the app's IC there is the one its pairing aa 40 read stored (`DefInfo.G0`; the connect aa 40 goes to
-    `Info4Detail.v`, which nothing reads), and the library applies the table to the connect aa 40.
+    at IC 1000, whose read-back is not applied (above), and 10 otherwise, the writes still 10. They are
+    modelled for one inferred fact, as H6609 (173): the app's IC there is the one its pairing aa 40 read stored
+    (`DefInfo.G0`; the connect aa 40 goes to `Info4Detail.v`, which nothing reads), and the library applies
+    the table to the connect aa 40.
   - H6065 (h6061 121) is not changed: its read-back (23 pieces) and writes (one panel) differ only with no
     layout stored, and with a stored layout L both are L (`CubeVM4Light.l5`, `realMyColorPiece`), so a 23 / 20
     split would be a pair the app never sends; the row stays modelled for its inferred L.

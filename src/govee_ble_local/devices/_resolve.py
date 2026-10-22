@@ -127,8 +127,9 @@ the row lacks fails the build: nothing defaults silently.
   pair rule needs; a SKU's ``by_model`` ``ic_pieces`` and ``connect_reads`` replace its row's, on a SKU one
   row lists, where the screen sizes the pieces or adds the aa 40 read by SKU: h6609 ``H70c4Support.b`` at
   260, rgbiclight ``ControllerStrategyConfig.E1``'s ``supportBindWithIcNum`` / ``supportIcFresh`` at 71 /
-  123), and, but under a table's ``readback_only`` (the walk alone; the writes keep the static pieces, and a
-  read with no count walks them: ``_readback.walk_pieces``), the writes (``color_writes_live_ic``:
+  123), and, but under a table's ``readback_only`` (``DeviceProfile.color_readback_ic_walk_only``: the walk
+  alone; the writes keep the static pieces, a read with no count walks them, ``_readback.walk_pieces``, and
+  a walk of other than the strip's pieces is not applied), the writes (``color_writes_live_ic``:
   each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
@@ -1174,7 +1175,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
         # the live pieces size the writes too (ColorPieceConfig.c), unless the rule sizes the walk alone
-        "color_writes_live_ic": live_ic and not (isinstance(ic, dict) and ic.get("readback_only", False)),
+        "color_writes_live_ic": live_ic and not ic_rule.get("color_readback_ic_walk_only", False),
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
@@ -1270,7 +1271,9 @@ def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
                 or not isinstance(rule.get("readback_only", False), bool)):
             fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1, readback_only a "
                  "boolean)")
-        return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"]}
+        walk_only = {"color_readback_ic_walk_only": True} if rule.get("readback_only", False) else {}
+        return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"],
+                **walk_only}
     if "pair_max" in rule:
         if rule["pair_max"] < 1 or rule["otherwise"] < 1:
             fail(f"ic_pieces {dict(rule)} (pair_max and otherwise >= 1)")

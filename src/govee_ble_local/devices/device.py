@@ -1928,16 +1928,27 @@ class Device:
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
         whole unless a setter raced it. On a live-IC profile the poll's one ``aa 40`` read comes first
         (:meth:`_read_live_ic`); without a count the walk is skipped, or covers the static pieces where the
-        rule sizes the walk alone (:func:`._readback.walk_pieces`)."""
+        rule sizes the walk alone (:func:`._readback.walk_pieces`). There
+        (``DeviceProfile.color_readback_ic_walk_only``) a walk of other than :attr:`segment_count` pieces is
+        made and not applied: the strip applies a read-back only of its own length (h6609
+        ``H70C456789ColorMode.updateColor`` / ``updateBrightness``)."""
         pieces = None
+        apply: Callable[[list[Segment]], None] = self._apply_segments
         if self.profile.color_readback_live_ic:
             pieces = _readback.walk_pieces(self, await self._read_live_ic(budget))
             if pieces is None:
                 return
+            if self.profile.color_readback_ic_walk_only and pieces != self.segment_count:
+                walked = pieces
+
+                def drop(_segments: list[Segment]) -> None:
+                    _LOGGER.debug("%s (%s): the %d-piece colour read-back is not applied: the strip holds %d",
+                                  self.address, self._sku, walked, self.segment_count)
+                apply = drop
         await self._read_fresh(
             "segment colour",
             lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces),
-            self._apply_segments)
+            apply)
 
     async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
         """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a

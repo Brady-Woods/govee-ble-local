@@ -12676,7 +12676,11 @@ families:
             IC when that is <= 0, AbsAcLightDetail.K1), and the connect aa 40 is stored in Info4Detail.v only (r0), which
             nothing reads. The library applies the table to the connect aa 40, the one IC a client can read, so its walk
             is the app's only where the device reports the IC it reported at pairing; a read with no count walks the
-            static 10. Not hardware-verified.
+            static 10. At IC 1000 the app walks 20 pieces and shows none of them: the colour page hands the strip the
+            20-long read-back (DelegateColor.d0 -> SubMode4Color.d), and the strip applies a colour or brightness
+            array only of its own length, 10 (H70C456789ColorMode.updateColor / updateBrightness), so the library
+            makes that walk and leaves the segment state as it was (DeviceProfile.color_readback_ic_walk_only). Not
+            hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:72-73
             - split_h6840/com/govee/h6609/pact/Support.java:74-89,109-133,259-261
@@ -12689,7 +12693,8 @@ families:
             - split_h6840/com/govee/h6609/adjust/new_detail/viewmodel/DetailViewModel.java:472-512,557-576,798-830,977-1002,1014-1034,1186-1193,1424-1434,1643-1667
             - split_h6840/com/govee/h6609/adjust/new_detail/H70c4Config.java:189-201
             - split_h6840/com/govee/h6609/adjust/new_detail/Info4Detail.java:887-901
-            - split_h6840/com/govee/h6609/adjust/new_detail/mode/H70C456789ColorMode.java:84-117,250-266,330-366
+            - split_h6840/com/govee/h6609/adjust/new_detail/mode/H70C456789ColorMode.java:84-117,250-266,330-366,449-525
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:164-169
             - base-classes11/com/govee/base2light/mode/graffiti/H70c4Support.java:101-132
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-85,354-367,1036-1038,1121-1123,1677-1687
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1413

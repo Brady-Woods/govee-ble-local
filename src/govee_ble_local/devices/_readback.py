@@ -126,7 +126,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     derived the way the app does (:func:`live_ic_pieces`; ``live_pieces``, where the caller made that read:
     ``Device`` makes it once per poll, as it sizes the writes too). When that read fails the app still walks
     the groups from the IC count it stored earlier; the library has none, so it skips the walk, but where the
-    rule sizes the walk alone (:func:`walk_pieces`: h6609 goodsType 260) it walks the static pieces. With
+    rule sizes the walk alone (:func:`walk_pieces`, ``color_readback_ic_walk_only``: h6609 goodsType 260) it
+    walks the static pieces. With
     `color_readback_ic_sections` (goodsTypes 141 / 204) the same read's section sum sizes the walk, else the
     static count when it is 0, in Java's group count (:func:`_java_group_count`); a failed read skips it.
 
@@ -205,30 +206,34 @@ def _java_group_count(pieces: int, group_size: int) -> int:
 def walk_pieces(dev: ReadTarget, live: int | None) -> int | None:
     """The pieces a live-IC walk covers, from its ``aa 40`` read's pieces ``live`` (:func:`read_live_ic`):
     those, or where the read gave no count, none (the walk is skipped: the app walks the count it stored,
-    which the library doesn't have) on a profile whose live pieces size the writes too, and the static pieces
-    (``color_readback_segments``, else the segment count) on one whose rule sizes the walk alone
-    (``color_writes_live_ic`` False: the devices.yaml ``readback_only`` table). That screen walks the IC it
-    stored at pairing (h6609 ``DetailViewModel.T5`` over ``H70c4Support.b(SKU, q())``) and writes the static
-    pieces; the static count is its walk at every IC but the table's."""
-    if live is not None or dev.profile.color_writes_live_ic:
+    which the library doesn't have), but the static pieces (``color_readback_segments``, else the segment
+    count) on a :attr:`~.profile.DeviceProfile.color_readback_ic_walk_only` profile (the devices.yaml
+    ``readback_only`` table). That screen walks the IC it stored at pairing (h6609 ``DetailViewModel.T5``
+    over ``H70c4Support.b(SKU, q())``) and writes the static pieces; the static count is its walk at every IC
+    but the table's. Logs which, where the read gave no count."""
+    if live is not None:
         return live
-    return dev.profile.color_readback_segments or dev.segment_count
+    if not dev.profile.color_readback_ic_walk_only:
+        _LOGGER.debug("%s (%s): no live IC count; skipping segment colour read-back", dev.address, dev.sku)
+        return None
+    pieces = dev.profile.color_readback_segments or dev.segment_count
+    _LOGGER.debug("%s (%s): no live IC count; walking the static %d pieces", dev.address, dev.sku, pieces)
+    return pieces
 
 
 async def read_live_ic(dev: ReadTarget, read_reply: ReadReply) -> int | None:
     """The ``aa 40`` read of :attr:`~.profile.DeviceProfile.color_readback_live_ic`: the pieces
     :func:`live_ic_pieces` derives from its reply, or None (logged) when the read failed or the app's reader
-    would store no count."""
+    would store no count (what the walk then does is :func:`walk_pieces`'s)."""
     reply = await read_reply(build.ic_count_query())
     ic = parse.parse_ic_count(reply) if reply else None
     if ic is None:
-        _LOGGER.debug("%s (%s): live IC-count read failed; skipping segment colour read-back",
-                      dev.address, dev.sku)
+        _LOGGER.debug("%s (%s): live IC-count read failed: no count", dev.address, dev.sku)
         return None
     pieces = live_ic_pieces(dev, ic)
     if pieces is None:
-        _LOGGER.debug("%s (%s): implausible live IC count 0x%04x; skipping segment colour read-back",
-                      dev.address, dev.sku, ic.ic_count)
+        _LOGGER.debug("%s (%s): implausible live IC count 0x%04x: no count", dev.address, dev.sku,
+                      ic.ic_count)
     return pieces
 
 

@@ -178,7 +178,8 @@ class DeviceProfile:
     The newdetail screens read getColorPieceSize pieces, while H6047's old detail screen reads
     getBulbStringMaxNum = the 10 write segments, so it leaves this None. None -> falls back to
     :attr:`segments`. Ignored when :attr:`color_readback_live_ic` is True (the live 0x40 read
-    supplies the count instead)."""
+    supplies the count instead), but as a :attr:`color_readback_ic_walk_only` profile's walk where that
+    read gives no count."""
     color_readback_live_ic: bool = False
     """mechanism_a_direct only: read the live 0x40 IC count first and derive the colour-piece count
     from it instead of a static :attr:`color_readback_segments`, as the app does for SKUs whose
@@ -483,9 +484,20 @@ class DeviceProfile:
     carries a mask before any count is known reads ``aa 40`` first and raises GoveeBleError, sending nothing,
     when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then
     only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it
-    but a ``readback_only`` rule's (h6609 goodsType 260: the strip is sized once by ``ColorPieceConfig.b``,
-    the walk by ``H70c4Support.b``), whose walk covers the static pieces where the read gives no count;
-    False (the default): the writes keep :attr:`segments`."""
+    but a ``readback_only`` rule's (:attr:`color_readback_ic_walk_only`); False (the default): the writes keep
+    :attr:`segments`."""
+    color_readback_ic_walk_only: bool = field(default=False, kw_only=True)
+    """With :attr:`color_readback_live_ic` and without :attr:`color_writes_live_ic`: the IC rule sizes the
+    walk alone, the screen's strip keeping the static pieces it was built with (h6609 goodsType 260: the
+    ``H70C456789ColorMode`` strip is sized once by ``ColorPieceConfig.b``, its resize ``T()`` has no caller,
+    while ``DetailViewModel.T5`` walks ``H70c4Support.b(SKU, IC)`` pieces; a devices.yaml ``ic_pieces``
+    table with ``readback_only``). So a read that gives no count walks the static pieces
+    (:attr:`color_readback_segments`, else the segment count), as the screen walks the IC it stored, where a
+    live-IC profile otherwise skips the walk; and a walk of other than
+    :attr:`~.device.Device.segment_count` pieces is not applied, as the strip applies a colour or brightness
+    read-back only of its own length (``H70C456789ColorMode.updateColor`` / ``updateBrightness``), so it
+    shows none of it. False (the default, every profile before 1.9.0): the live-IC walk is skipped without a
+    count and applied whole."""
     status_segment_count: bool = field(default=False, kw_only=True)
     """``readback="status"``: the 0xAC status read's TLV 0xA1 (:attr:`status_decode` ``f_a1``
     ``segment_info``) reports the device's segment count, its first byte, which the screen takes as its
@@ -578,6 +590,10 @@ class DeviceProfile:
         if self.color_writes_live_ic and not self.color_readback_live_ic:
             raise GoveeBleInvalidValue(f"{where}: color_writes_live_ic without color_readback_live_ic (the "
                                        "live pieces come from its aa 40 read)")
+        if self.color_readback_ic_walk_only and (
+                not self.color_readback_live_ic or self.color_writes_live_ic):
+            raise GoveeBleInvalidValue(f"{where}: color_readback_ic_walk_only needs color_readback_live_ic "
+                                       "and no color_writes_live_ic (the live pieces size the walk alone)")
         if self.status_segment_count and self.readback != "status":
             raise GoveeBleInvalidValue(f"{where}: status_segment_count on readback={self.readback!r} (the "
                                        "count is the 0xAC status read's TLV 0xA1)")

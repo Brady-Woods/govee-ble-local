@@ -762,6 +762,12 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
     with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_writes_live_ic=True)
+    # The walk is the live read's, and the writes keep the static pieces.
+    for walk in (dict(color_readback_ic_walk_only=True),
+                 dict(color_readback_ic_walk_only=True, color_readback_live_ic=True,
+                      color_writes_live_ic=True)):
+        with pytest.raises(ValueError, match="color_readback_ic_walk_only"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), **walk)   # type: ignore[arg-type]
     with pytest.raises(ValueError, match="status_segment_count"):   # its count is the status read's TLV 0xA1
         DeviceProfile(skus=("HX",), capabilities=frozenset(), readback="polled", status_segment_count=True)
 
@@ -884,14 +890,28 @@ def test_whole_device_colour_builder_error_names_the_sku(monkeypatch: pytest.Mon
 
 
 # ── WP3-052: an IC count the app can't parse is a failed IC read ──────────────────────────
-@pytest.mark.parametrize("ic", [0x1000, 0x7FFF])
-def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
+# h6609 260's readback_only table (H70c4Support.b) on H6641's walk: the walk alone, the strip H6641's 14.
+_WALK_ONLY = dict(color_writes_live_ic=False, color_readback_ic_walk_only=True, color_readback_ic_range=None,
+                  color_readback_ic_table=((1000, 20),), color_readback_ic_otherwise=10)
+
+
+@pytest.mark.parametrize(("ic", "rule", "groups", "kept"), [
+    (0x1000, {}, 0, 0),
+    (0x7FFF, {}, 0, 0),
+    (0x1000, dict(color_writes_live_ic=False), 0, 0),   # a 1.6.1 live-IC profile: no count, no walk
+    (0x1000, _WALK_ONLY, 4, 14),   # no count: the static pieces, as the screen walks its stored IC
+    (1000, _WALK_ONLY, 5, 0),      # IC 1000: 20 pieces walked, none applied (updateColor: not the strip's 14)
+])
+def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(
+    ic: int, rule: dict[str, Any], groups: int, kept: int,
+) -> None:
     # ReadIcController.Companion.a: a signed count >= 0x1000 takes the byte-swap branch, which reads
     # past its 2-byte array, so the app never stores it (VM4Light.D5 does not run).
     d = _dev("H6641", {0x40: [_frame(0xAA, 0x40, ic >> 8, ic & 0xFF, 3)],
-                       0xA5: [_frame(0xAA, 0xA5, 1, *([50, 1, 2, 3] * 4))]})
+                       0xA5: [_frame(0xAA, 0xA5, 1, *([50, 1, 2, 3] * 4))]}, **rule)
     run(d._read_mechanism_a_direct())
-    assert [q[1] for q in _queried(d)] == [0x40] and d.state.segments == []
+    assert [q[1] for q in _queried(d)] == [0x40, *[0xA5] * groups]
+    assert [s.index for s in d.state.segments] == list(range(kept))
 
 
 _A1 = 0xA1   # the H707A status read's segment-info TLV (form_a1 segment_info): [count][IC per segment]
