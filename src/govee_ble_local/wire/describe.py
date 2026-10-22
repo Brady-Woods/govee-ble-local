@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import collections
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from kaitaistruct import KaitaiStruct, ValidationGreaterThanError
 
@@ -137,10 +137,11 @@ def chunk_redacted(chunk: bytes) -> bool:
 
 def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
     """0xAC: framing checked as for any frame (length, BCC: the runtime drops a chunk that fails
-    them). A TX frame is the status request, which the spec models (``status_request``) and is read with
-    the reader; an RX chunk is a burst fragment, not parseable alone
-    (:func:`status_burst_report` judges the bursts). A redacted chunk (:func:`chunk_redacted`) is
-    labelled as a chunk without an issue."""
+    them). A TX frame is a 0xAC request, which the spec models (``status_request``) and is read with
+    the reader: the status read is labelled by the count of types it requests, another reader by its
+    command (the special-info read ``ac a1``: ``status-request/special_info``); an RX chunk is a burst
+    fragment, not parseable alone (:func:`status_burst_report` judges the bursts). A redacted chunk
+    (:func:`chunk_redacted`) is labelled as a chunk without an issue."""
     if len(plain) != FRAME_LEN:
         return (f"len={len(plain)}", [("artifact", f"not {FRAME_LEN} bytes (len {len(plain)})")])
     if direction != "tx" and chunk_redacted(plain) and not checksum_ok(plain):
@@ -154,6 +155,10 @@ def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
     except Exception as exc:  # noqa: BLE001 - a request the spec can't read is a gap
         why = shown_error(plain, exc)
         return ("parse_error", [("hard", f"kaitai parse failed on the 0xAC request: {why}")])
+    command: Any = req.command   # the reader keeps an unknown command as its raw int
+    if command != _F.StatusCommand.status_read:
+        name = command.name if isinstance(command, _F.StatusCommand) else f"0x{int(command):02x}"
+        return (f"status-request/{name}", [])
     args = getattr(req, "args", None)
     return (f"status-request/{0 if args is None else len(args.types)}", [])
 
@@ -242,6 +247,7 @@ class StatusBurstReport:
     truncated: int = 0     # walked up to the cut: a complete burst whose TLV stream overruns it
     #                        (the runtime, like the app, uses NO state from such a burst)
     redacted: int = 0      # never walked, framing judged by index only: payload zeroed by the masking
+    special_info: int = 0  # complete special-info replies (ac a1, sub segment_ic): one record, no TLVs
 
     @property
     def malformed(self) -> int:
@@ -320,6 +326,21 @@ def _redacted_framing(burst: list[bytes]) -> tuple[bool, int]:
     return 0xFF in unique and len(unique) == run + 1, conflicts
 
 
+_STATUS_READ: Final = (_reassemble.BurstAssembler.command, _reassemble.BurstAssembler.sub)
+_SPECIAL_INFO: Final = (_reassemble.SPECIAL_INFO_COMMAND, _reassemble.SEGMENT_IC_SUB)
+
+
+def _reader(first: bytes) -> tuple[int, int]:
+    """The reader whose reply a burst is, ``(command, sub)``, from its first chunk (bytes 5 / 6, which the
+    app matches, ``AbsController4BleSingleSendMultiBack.f``): the special-info read's (``ac a1``, sub
+    ``segment_ic``: ``ControllerReadSpecialInfoMultiBack.Companion.k``), else the status read's, which
+    judges every other burst as before."""
+    chunk = _reassemble._chunk_of(first)
+    if chunk is None or not chunk.is_first or (int(chunk.command), int(chunk.sub)) != _SPECIAL_INFO:
+        return _STATUS_READ
+    return _SPECIAL_INFO
+
+
 def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     """Group RX ``0xAC`` reply chunks into bursts and read each complete reassembled TLV stream.
 
@@ -331,9 +352,10 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     identical first chunk can't be told from a double delivery), and a first chunk repeated after
     interior chunks, which splits one read into two incomplete bursts. Each burst is then judged
     by the runtime's own rule (:func:`.reassemble.burst_chunks`: the app's state machine, chunks
-    taken in order) and read by the runtime's own root read (:func:`.reassemble.read_status_stream`),
-    with the H60A6's colour decode (its default; the H60A6 is the one device whose readback is this read),
-    so a 0x15 / 0x0d mode value short of the H60A6's layout is a gap, as the runtime rejects it.
+    taken in order, under the reader its first chunk names, :func:`_reader`) and read by the runtime's own
+    root read (:func:`.reassemble.read_status_stream`), with the H60A6's colour decode (its default; the
+    H60A6 is the one device whose readback is this read), so a 0x15 / 0x0d mode value short of the H60A6's
+    layout is a gap, as the runtime rejects it.
     Like the runtime, only complete bursts are read; a burst with conflicting duplicate chunks is not
     read either. In those, a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`, a TLV its spec type can't
     read, or one whose value fails the app's read (``status_tlv.app_read_fails``, e.g. an empty value the
@@ -342,6 +364,10 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     TLV whose len byte the app reads as negative (0x80 or more). A stream that ends in a 0-2 byte tail ends
     cleanly, as in the app. A complete burst whose TLV stream overruns it is read up to the record that runs
     past and counted in :attr:`StatusBurstReport.truncated`: the runtime uses no state from it.
+
+    A complete special-info reply (``ac a1``'s, sub ``segment_ic``: goodsType 180's segment count) is one
+    record, not a TLV stream: it is counted in :attr:`StatusBurstReport.special_info` and read as the
+    runtime reads it (:func:`.reassemble.read_segment_ic`); an empty one fails the app's read, a gap.
 
     A burst from a redacted field-test capture (first chunk zeroed past ``ac 00``,
     :func:`_header_redacted`) has no packet count and no payload: it is counted in
@@ -354,11 +380,12 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     rx_ac = [fr for fr in rx_ac if checksum_ok(fr) or chunk_redacted(fr)]
     for burst in _split_bursts(rx_ac):
         redacted = _header_redacted(burst[0])   # burst[0] is always its index-0x00 chunk
+        reader = _reader(burst[0])
         if redacted:
             report.redacted += 1
             complete, conflicts = _redacted_framing(burst)
         else:
-            _chunks, complete, conflicts = _reassemble.burst_chunks(burst)
+            _chunks, complete, conflicts = _reassemble.burst_chunks(burst, command=reader[0], sub=reader[1])
         if conflicts:
             report.conflicting += 1
             continue
@@ -366,6 +393,12 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
             report.incomplete += 1
             continue
         if redacted:                            # payload zeroed: no TLVs to walk
+            continue
+        if reader == _SPECIAL_INFO:             # one segment IC record, not a TLV stream
+            report.special_info += 1
+            if _reassemble.read_segment_ic(_reassemble.reassemble(burst, command=reader[0],
+                                                                  sub=reader[1])).app_read_fails:
+                report.gaps.append("0xAC special-info reply (sub segment_ic) is empty: the app's read fails")
             continue
         stream, err = _reassemble.read_status_stream(_reassemble.reassemble(burst))
         tlvs = list(getattr(stream, "tlvs", None) or [])

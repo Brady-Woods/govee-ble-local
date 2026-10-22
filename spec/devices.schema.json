@@ -331,6 +331,13 @@
       "pattern": "^[a-z][a-z0-9_]*$",
       "description": "A govee_common::command member id (govee_common.ksy enum command), e.g. cmd_41, color_group, plug_sync_time."
     },
+    "connectRead": {
+      "anyOf": [
+        { "$ref": "#/$defs/commandId", "description": "An aa <command> read, by its govee_common::command id." },
+        { "const": "special_info", "description": "The 0xAC special-info read ac a1 (govee_ble_frame.ksy status_command special_info), whose reply's segment IC record (sub segment_ic, govee_status_stream segment_ic_info) is the device's segment count: the goodsType 180 screen's (VM4Light.x5)." }
+      ],
+      "description": "One connect read (clientRow connect_reads)."
+    },
     "docRef": {
       "type": "array",
       "minItems": 1,
@@ -396,8 +403,9 @@
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this goodsType's colour page; wins over the family's specs.kelvin_range." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" },
         "mode_reports_kelvin": { "type": "boolean", "description": "false = the device's aa 05 colour report carries Kelvin 0 after a colour-temperature write, so the Kelvin last written stands, as the screen keeps what it set (hardware-observed; doc names the device); absent = the report carries it." },
+        "kelvin_readback": { "enum": ["pieces"], "description": "Where the screen takes the colour-temperature state from on a read-back, where not the mode report's Kelvin (absent). pieces = the colour read-back's pieces, once the connect read has read them all: the Kelvin of their one colour when every piece shows the same one and it is one of the app's tint colours (its whole 1000-10000 K table, ColorUtils.C, not the row's kelvin_range), else none; it replaces the mode report's Kelvin as the colour mode's, and a non-zero one is the screen's held Kelvin whatever the mode (goodsType 180: VM4Light.g5 -> ColorUtils.r, SubMode4Color.s, syncKelvin). Needs color_temp and the direct colour read-back on a polled row whose walk is not IC-sized." },
         "status_read": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; [] = the bare read ac 03 00, no types requested, whose reply carries the TLVs the firmware chooses (Compose4BaseInfoSingleRead.Companion.a passes no ext bytes; the h70dx screen); absent = no status read." },
-        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The state reads (aa <command>) the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order; device-info, timer and Wi-Fi reads are not listed." },
+        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectRead" }, "description": "The state reads the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order: aa <command> reads and the 0xAC special-info read (connectRead); device-info, timer and Wi-Fi reads are not listed." },
         "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
         "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
         "ic_pieces": {
@@ -445,7 +453,7 @@
               },
               "description": "Two strips: min(IC 1, pair_max) + min(IC 2, pair_max) where the IC-pair reader (ControllerIcNum.e) returns a second pair, the first IC is not 0 (the list VM4Light.h5 keeps) and the second is above 0, else otherwise; no count where that reader throws (govee_state ic_count app_pair_fails). H61D3Support.e and ColorModeH1A45's strip for goodsType 375: min(ic1, 15) + min(ic2, 15), else 30."
             },
-            { "const": "fixed", "description": "The IC count sizes nothing: the screen's piece count is fixed (the row's static pieces)." },
+            { "const": "fixed", "description": "The aa 40 IC count does not size the pieces: the screen reads it and the library discards it. The pieces are the row's static count, or, with the special_info connect read, the segment count the device reports (goodsType 180)." },
             { "const": "sections", "description": "The read-back walks the aa 40 reply's two section bytes summed as Java bytes (govee_state ic_count section_sum, as the sectioned IC-pair reader ControllerIcNum.d passes them on) when the sum is not 0, else the row's static pieces, in Java's sum / group + (sum % group != 0) groups (none below 1); no walk where the reader throws (rgbiclight VM4Light.N5). Writes keep the static pieces." }
           ],
           "description": "The colour pieces from the IC count read at connect (connect_reads ic_num): an object form derives them from the aa 40 reply's IC count (govee_state ic_count ic_count_checked; no count where it is absent), or from its IC pair. Where the row's wire f_40 is ic_pair the screen reads the reply with the IC-pair reader (ControllerIcNum.e), and there is no count where that reader throws (govee_state ic_count app_pair_fails: either IC field 0x1000 or more), whichever form; the pair form needs it. An object form's pieces size the direct read-back's walk and every colour write: they are every pick's position set, the whole-device mask included, with no cap but the rule's, as the screens that size their strip by the IC count build it (ColorPieceConfig.c over the stored IC; the row's doc names its strip). A strip that the connect read does not resize (the h61d3 and H7067 screens store the count without posting deviceInfoChanged; the row's doc says so) keeps the count it was built with until a calibration or settings event, so in the first app session after the IC changed with no app connected its picks have the old count, where the library's writes take the new one. The row's wire num_segments is then only the count before the first read. sections sizes the read-back alone."

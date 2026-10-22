@@ -210,7 +210,7 @@ def analyze(records: list[dict[str, object]], malformed_lines: int = 0) -> int:
         if d == "rx" and p and p[0] == PRO_MULTI_AC:
             rx_ac.setdefault(addr, []).append(p)
     tlv_types: collections.Counter[int] = collections.Counter()
-    malformed = truncated = redacted = 0
+    malformed = truncated = redacted = special = 0
     for chunks in rx_ac.values():
         report = status_burst_report(chunks)
         tlv_types.update(report.tlv_types)
@@ -218,6 +218,7 @@ def analyze(records: list[dict[str, object]], malformed_lines: int = 0) -> int:
         malformed += report.malformed
         truncated += report.truncated
         redacted += report.redacted
+        special += report.special_info
 
     print(f"== frame-log analysis ({len(frames)} plaintext frames; {skipped} skipped/ciphertext) ==")
     if malformed_lines:
@@ -230,6 +231,8 @@ def analyze(records: list[dict[str, object]], malformed_lines: int = 0) -> int:
     if tlv_types:
         print("\n0xAC status reply — reassembled TLV types seen (type:count):")
         print("  " + ", ".join(f"0x{t:02x}:{n}" for t, n in sorted(tlv_types.items())))
+    if special:
+        print(f"\n0xAC special-info replies (ac a1 segment IC record, not a TLV stream): {special}")
     if malformed:
         print(f"\nmalformed 0xAC bursts skipped (dropped/merged frames, NOT spec gaps): {malformed}")
     if truncated:

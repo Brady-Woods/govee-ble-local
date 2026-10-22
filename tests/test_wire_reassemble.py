@@ -3,6 +3,8 @@
 Validated against a real captured H60A6 burst (13 segments, both zones on, brightness 80)."""
 from __future__ import annotations
 
+import pytest
+
 from govee_ble_local.wire import reassemble as r
 
 # Real captured H60A6 0xAC status burst (segments set to a cycling R/G/B pattern).
@@ -125,3 +127,23 @@ def test_a_gap_gives_no_state() -> None:
 def test_duplicate_chunks_collapse() -> None:
     st = r.parse_status(_LIVE[:5] + _LIVE[3:])
     assert len(st.segments) == 13
+
+
+# The ac a1 special-info read (goodsType 180): its reply, matched on bytes 5 / 6 = a1 0b, is [segments][IC per
+# segment ...] (ControllerReadSpecialInfoMultiBack.Companion.k, Info4Detail.z0). Hex goldens, XOR at byte 19;
+# the one-packet reply is test_h6062's, through Device.update().
+_SEG12 = ["ac00020001a10b0c05050505050505050505050c",                # two: 12 data bytes, then lastLen 1
+          "acff050000000000000000000000000000000056"]
+
+
+@pytest.mark.parametrize(("frames", "count"), [
+    (_SEG12, 12),
+    (_SEG12[:1], None),                                       # the last packet lost: the read never ends
+    (["ac00010000a10b00000000000000000000000007"], None),     # an empty payload: z0 stores nothing
+    (["ac000100070300060101010101010000000000af"], None),     # a status-read head is not this reader's
+])
+def test_the_special_info_burst_gives_the_segment_count(frames: list[str], count: int | None) -> None:
+    burst = [bytes.fromhex(h) for h in frames]
+    assert r.parse_segment_ic(burst) == count
+    if burst[0][5:7] == b"\xa1\x0b":
+        assert r.parse_status(burst) == r.StatusReply()       # nor is an a1 0b head the status read's

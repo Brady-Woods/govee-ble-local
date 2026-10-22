@@ -17,9 +17,9 @@ model, from which the shipped readers are generated).
   command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and
   H6631 on the device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme;
   H615A-E, whose pairing write is read as an exact-pact condition; and through the live piece count H1A45 and the
-  five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 / H61B9 / H61F2 / H61F5 / H61F6) and 12 more behind
-  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1 and H6609), for 285
-  admitted by default and 52 behind `allow_modelled` in all. None is
+  five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 / H61B9 / H61F2 / H61F5 / H61F6) and 17 more behind
+  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1, H6609 and H706A / H706B /
+  H706C / H806A / H806C), for 285 admitted by default and 57 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -437,6 +437,43 @@ model, from which the shipped readers are generated).
     colour temperature and the gradual flag are served, over 18 or 14 pieces.
 
   None is hardware-verified: none of these SKUs is on the bench.
+- **`DeviceProfile.special_info_read`** (keyword-only, default False; a devices.yaml row's `connect_reads`
+  entry `special_info`): the device reports its own segment count in the 0xAC special-info read `ac a1`,
+  whose multi-packet reply, under sub `0x0B`, is `[segments][IC per segment ...]` (the goodsType 180 screen's
+  connect read: `ControllerReadSpecialInfoMultiBack.Companion.k`, `VM4Light.x5` -> `Info4Detail.z0`). That count
+  sizes every mask and the `aa a5` walk, as the H6062's `aa 41` section count does: `update()` reads it before
+  `aa 05`, a mask write reads it first while it is unknown and sends nothing without it (GoveeBleError naming
+  `ac a1`), and the walk is skipped until it is known. New: `build.special_info_query()`,
+  `reassemble.parse_segment_ic()` and `reassemble.read_segment_ic()`, `GoveeConnection.query`'s keyword-only
+  `burst_command` / `burst_sub` and `reassemble.burst_chunks`'s keyword-only `command` / `sub` (defaults: the
+  status read's, so every status burst assembles as before). `govee-ble-analyze` (`describe`) judges a burst
+  by the reader its first chunk names: it labels the request `status-request/special_info` and counts a
+  complete reply on its own line (the new `StatusBurstReport.special_info`), not as a malformed status burst,
+  with an empty one a gap (the app's read fails on it). No admitted row uses it. Source-modelled, not
+  live-verified: no goodsType 180 unit is on the bench.
+- **`DeviceProfile.kelvin_from_pieces`** (keyword-only, default False; a devices.yaml row's `kelvin_readback:
+  pieces`): the colour-temperature state comes from the `aa a5` walk's pieces, as the goodsType 180 screen
+  takes it after its connect read (`VM4Light.g5` -> `ColorUtils.r` -> `SubMode4Color.s`): once a poll's walk
+  has read every piece and the poll's `aa 05` report showed the colour mode, `state.color_temp_kelvin` is the
+  Kelvin of their one colour when every piece shows the same one and it is one of the app's 178 tint colours
+  (the whole 1000-10000 K table, not the row's range), else None, in place of the report's Kelvin. In another
+  mode (a scene, music, DIY) the screen shows no colour temperature, so only `state.last_color_temp_kelvin`
+  takes the pieces' Kelvin, as g5 syncs a non-zero one whatever the mode (`syncKelvin` -> `Info4Detail.f`);
+  when the pieces give none, the report's own Kelvin stays the held one (`Info4Detail.V`). A walk that lost a
+  group, or an unanswered `aa 05`, changes neither. The resolver takes `kelvin_readback` only on a polled row
+  whose walk is not IC-sized (the fold counts the static or device-reported pieces). No admitted row uses it.
+- **H706A / H706B / H706C / H806A / H806C** (h705a 180), behind `allow_modelled` (`modelled`): power,
+  brightness (1-100), RGB, colour temperature [2200, 6500] with the white-type-0 slot (`00 00 00`), segment
+  colour, colour temperature and brightness over the device's own segment count (the `ac a1` read, above), and
+  gradual. The read-back is `aa 01`, `aa 04`, `ac a1`, `aa 05`, the discarded `aa 40`, the `aa a5` walk with
+  the Kelvin from its pieces, and `aa a3`. `modelled` for one gap, which the row's `doc` names: the app's colour
+  page refuses a segment-brightness pick while a selected piece shows a Kelvin tint colour, and the library
+  sends it. Not hardware-verified (none is on the bench). Their `DeviceProfile.segments` is 12, only the bound
+  (the segment-settings page's most), as the H6062's 33 is: the unit's own count (the app's defaults are 6 on
+  H706A / H806A, 9 on H706B, 12 on H706C / H806C) is `Device.segment_count` once a poll has read it, and a
+  segment index at or past it raises. An integration that makes one entity per `profile.segments`
+  (hass-govee-ble-local's segment lights, disabled by default) offers 12, those past the unit's count
+  unusable, until it sizes them from `Device.segment_count`.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -611,9 +648,9 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 207 with `support` (66), of them 171
-    `app_traced`, 32 `modelled` and the same 4 `hardware_verified`, and 98 without (118). 66 of the 207 had
-    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 54 take it through the library
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 208 with `support` (66), of them 171
+    `app_traced`, 33 `modelled` and the same 4 `hardware_verified`, and 97 without (118). 66 of the 208 had
+    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 55 take it through the library
     and spec changes under Added, Changed, Fixed and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269,
     bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows (h6092 334 / 333 /
     401, h7072 371 / 294, h70b6 341), the nine BK target rows, the five Glide panel rows (h6061 96 / 97 / 121 /
@@ -622,10 +659,10 @@ model, from which the shipped readers are generated).
     `app_traced`), h7050 98 (H7061's two heads;
     the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
     (h70b2 185, h6630 285 / 286), h6092 283 (H7070's exact-pact status read), h6071 57 / 67 (the
-    `kelvin_v9` scheme), stringlightv2 40 / 108 (the exact-pact pairing write), and h61d3 375 and h6609 173 (the
-    IC piece rules), all `app_traced` but h7072 294, h6119 44, the Glide panels, h60ax 235, h61d3 239 / 246 and
-    h6609 173 (`modelled`). The segment split promoted the trace's h61d3 202, and the live piece count h705a
-    125 / 240 / 250 and h61d3 299 / 261, to `app_traced`.
+    `kelvin_v9` scheme), stringlightv2 40 / 108 (the exact-pact pairing write), h61d3 375 and h6609 173 (the IC
+    piece rules) and h705a 180 (the special-info read), all `app_traced` but h7072 294, h6119 44, the Glide
+    panels, h60ax 235, h61d3 239 / 246, h6609 173 and h705a 180 (`modelled`). The segment split promoted the
+    trace's h61d3 202, and the live piece count h705a 125 / 240 / 250 and h61d3 299 / 261, to `app_traced`.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -879,6 +916,31 @@ model, from which the shipped readers are generated).
   `ceil(clamp(IC, 41, 70) / 5)` gives, where it was the library's bound of 16. The h705a 125 / 240 / 250 / 184
   wire rows take `f_40: ic_pair`, the reader their screens read aa 40 with (the pair form needs it), and
   govee_common's `form_40::ic_pair` doc names that read.
+- **The 0xAC special-info read.** `govee_ble_frame.ksy`: `status_command` gains `special_info` (0xA1: `ac a1`,
+  no args), and the reply chunk's sub byte takes the new `status_sub` enum (`none`, the status read's 0;
+  `segment_ic`, 0x0B). `govee_status_stream.ksy` is the joined 0xAC reply of either reader: the root takes the
+  `reader` (a `status_command`, the request's command, which the first chunk echoes) after the profile, and
+  reads the status read's TLV stream or the special-info read's `segment_ic`, the new `segment_ic_info` record
+  (`num_segments`, `ic_per_segment`, Java bytes; `app_read_fails` for an empty payload). No `aa a1` reply is
+  typed: no app path reads one, and H707A's status TLV 0xA1, which its screen reads with its own reader
+  (`H707AInfo4Detail.G0`: unsigned, IC / 3), stays untyped. devices.schema.json: `connect_reads` items are a
+  `connectRead`, a command id or `special_info`.
+  The reference's self-test joins a two-packet reply and reads it. Corrections: the read is `ac a1` on proType
+  0xAC, not `aa a1 0b` (0x0B is only the reply's sub), and it has callers (`govee_commands.read_special_info_a1`
+  and OPCODE_COVERAGE's 0xa1 row said none): goodsType 180's connect read and its refreshes, and H707A-C's
+  refresh after its segment page. h705a 180 lists the read, `aa 40` as `ic_pieces: fixed` and a 12-segment
+  bound (the segment-settings page's most). devices.schema.json's `ic_pieces: fixed` (and
+  `DeviceProfile.ic_num_read_only`) now says what it means on that row too: the aa 40 count does not size the
+  pieces, which are the row's static count or, with the `special_info` read, the device-reported one.
+- **`clientRow.kelvin_readback`** (`pieces`; absent = the mode report's Kelvin): the screen reads its
+  colour-temperature state from the read-back's pieces (goodsType 180's `VM4Light.g5` -> `ColorUtils.r`); the
+  resolver takes it with `color_temp` and the direct colour read-back only, on a polled row whose walk is not
+  IC-sized. **h705a 180 gets `support:
+  modelled`** with `capabilities` `[power, brightness, rgb, color_temp, segments, gradual]` (Config.I[180] all
+  on; Config.z / G = 0), `color_functions` and `kelvin_readback: pieces`. Its `doc` names the one gap that keeps
+  it from `app_traced`: the colour page refuses a segment-brightness pick while a selected piece shows a tint
+  colour (`ColorModeV2` / `ColorMode.canClickBrightness`: `Y` -> `ColorUtils.o`, a toast and no frame), and the
+  library sends the `33 05 15 02` frame there.
 
 ## [1.6.1] — 2026-10-21
 

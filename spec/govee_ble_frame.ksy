@@ -1116,10 +1116,11 @@ types:
   status_request:
     doc: |
       The 0xAC request [command][args][rest]; AC 03 [N][types] is the status TLV
-      read.
+      read, AC A1 (no args) the special-info read.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-95
       - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-179,230
+      - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109
       - H60A6 FUN_9b04c11c @0x9b04c11c
     seq:
       - id: command
@@ -1189,8 +1190,9 @@ types:
         doc: the echoed request command (status_command values for 0xAC)
       - id: sub
         type: u1
+        enum: status_sub
         if: has_sub and is_first
-        doc: the reader's sub-command, 0 for the status read
+        doc: the reader's sub-command (its d()), which the app matches
       - id: data
         size-eos: true
         doc: the data window; the app takes len_first_data, 17 or len_last
@@ -1204,7 +1206,7 @@ types:
         value: >-
           has_sub and index == 0
           and command == status_command::status_read.to_i
-          and sub == 0
+          and sub == status_sub::none
         doc: first chunk of the status read (command 3, sub 0)
       len_window:
         value: 'is_first ? (has_sub ? 12 : 13) : 17'
@@ -1924,6 +1926,31 @@ enums:
       id: day_sync
       doc-ref:
         - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncVM.java:319
+    0xa1:
+      id: special_info
+      doc: |
+        the special-info read AC A1 (no args); the reply's sub names its record:
+        segment_ic, a govee_status_stream segment_ic_info (goodsType 180's connect read)
+      doc-ref:
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109,127-133
+        - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165
+        - split_h705a/com/govee/h705a/newDetail/VM4Light.java:604-606,1566-1572
+  status_sub:
+    0x00:
+      id: none
+      doc: the status read's (ControllerSingleRead leaves d() at 0)
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:91-93
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-95
+    0x0b:
+      id: segment_ic
+      doc: |
+        the special-info read's segment IC record: [segments][IC per segment],
+        govee_status_stream segment_ic_info
+      doc-ref:
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109
+        - base-classes11/com/govee/base2light/pact/feast/BleProtocol.java:25
+        - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:839-860
   wifi_multi_command:
     0x01:
       id: matter_info

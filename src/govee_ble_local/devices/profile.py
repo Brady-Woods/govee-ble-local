@@ -121,8 +121,8 @@ class DeviceProfile:
     segments: int = 0
     """Segment count: the whole-device mask width and the segment index bound (H6061: its panel
     count); 0 for a single-colour device. ``Device.set_segment_count`` overrides it with a count the
-    device reports, and so does the device's own read of it on a :attr:`section_count_read` or
-    :attr:`color_writes_live_ic` profile (``Device.segment_count``)."""
+    device reports, and so does the device's own read of it on a :attr:`section_count_read`,
+    :attr:`special_info_read` or :attr:`color_writes_live_ic` profile (``Device.segment_count``)."""
     zones: tuple[Zone, ...] = ()
     """Independently switchable zones (empty for an unzoned device)."""
     scene_versions: frozenset[int] = field(default_factory=frozenset)
@@ -340,10 +340,11 @@ class DeviceProfile:
     ic_num_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`color_readback_live_ic` or :attr:`color_readback_ic_sections`. Without them: the
     screen reads the ``aa 40`` IC count at
-    connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
+    connect, but it does not size the pieces (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
     :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
-    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
-    devices.yaml row with ``ic_pieces: fixed``)."""
+    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces, or with
+    :attr:`special_info_read` the segment count the device reports (goodsType 180; a devices.yaml row with
+    ``ic_pieces: fixed``)."""
     scene_power_on: bool = field(default=False, kw_only=True)
     """A scene write is led by the power-on switch (``33 01 01``) unless the device is known to be on: the
     screen prepends it to a scene apply while its stored switch state is off, and an unknown state reads as
@@ -506,6 +507,28 @@ class DeviceProfile:
     when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then
     only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it;
     False (the default): the writes keep :attr:`segments`."""
+    special_info_read: bool = field(default=False, kw_only=True)
+    """``readback="polled"`` only, and not with :attr:`section_count_read`: the device reports its own
+    segment count in the 0xAC special-info read (``ac a1``, its reply's segment IC record
+    ``[segments][IC per segment ...]``: the spec's ``segment_ic_info``; a devices.yaml row whose
+    ``connect_reads`` lists ``special_info``), which the goodsType 180 screen (H706A-C, H806A, H806C) makes
+    on every connect and stores (``VM4Light.x5`` -> ``Info4Detail.z0`` -> ``SegmentIcDataConfig``). That
+    count is the colour page's piece count, so the width of every mask (``ColorModeV2.d0``), and the pieces
+    the ``aa a5`` walk reads (``Support.b(180)``, ``VM4Light.F5``). As for :attr:`section_count_read`,
+    :meth:`~.device.Device.update` reads it on each poll, before ``aa 05`` and the walk as the app does, a
+    mask write reads it first while it is unknown and sends nothing without it, and :attr:`segments` is only
+    the profile's upper bound. Source-modelled, not live-verified."""
+    kelvin_from_pieces: bool = field(default=False, kw_only=True)
+    """``color_readback="mechanism_a_direct"`` only: the colour-temperature state comes from the read-back's
+    pieces, not the ``aa 05`` report's Kelvin (a devices.yaml row's ``kelvin_readback: pieces``; goodsType
+    180: ``VM4Light.g5`` -> ``ColorUtils.r`` of ``SubMode4Color.d``, then ``SubMode4Color.s``). Once a poll's
+    ``aa a5`` walk has read every piece, and the poll's ``aa 05`` report showed the colour mode,
+    ``state.color_temp_kelvin`` is the Kelvin of their one colour when they all show the same colour and it is
+    one of the app's tint colours (its whole 1000-10000 K table, which may lie outside :attr:`min_kelvin` /
+    :attr:`max_kelvin`), else None (:func:`._fold.apply_piece_kelvin`). In another mode (a scene, music, DIY)
+    that Kelvin, when there is one, goes to ``state.last_color_temp_kelvin`` only, as g5 syncs it whatever the
+    mode. A poll whose walk lost a group, or whose ``aa 05`` read went unanswered, leaves both as they were.
+    Source-modelled, not live-verified."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

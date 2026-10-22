@@ -14,7 +14,7 @@ import copy
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Final, Literal, Never, ParamSpec, TypedDict, TypeVar
+from typing import Any, Final, Literal, Never, ParamSpec, TypedDict, TypeVar
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -188,6 +188,9 @@ class Device:
         self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
+        # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
+        # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
+        self._polled_color_mode: bool | None = None
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -342,9 +345,10 @@ class Device:
         """Segments this device addresses: the count it reported at runtime if any, else the profile's
         static ``segments``. Sets the whole-device mask and its byte width (2 bytes up to 16 segments,
         ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
-        ``section_count_read`` profile (H6062's aa 41) and on a ``color_writes_live_ic`` one (the live pieces
-        of each poll's aa 40 read: H6641, the other IC-sized rows), as does :meth:`set_segment_count`, until
-        the next such read. A caller that offers one entity per segment reads it after the first
+        ``section_count_read`` profile (H6062's aa 41), on a ``special_info_read`` one (goodsType 180's ac a1)
+        and on a ``color_writes_live_ic`` one (the live pieces of each poll's aa 40 read: H6641, the other
+        IC-sized rows), as does :meth:`set_segment_count`, until the next such read. A caller that offers one
+        entity per segment reads it after the first
         :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
@@ -1822,7 +1826,7 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b(budget)
         elif self.profile.color_readback == "mechanism_a_direct":
-            if self.profile.section_count_read and self._segment_count is None:
+            if self._reads_segment_count and self._segment_count is None:
                 _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
                               self.address, self._sku)
             else:
@@ -1947,17 +1951,26 @@ class Device:
     async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
-        whole unless a setter raced it. On a live-IC profile the poll's one ``aa 40`` read comes first
-        (:meth:`_read_live_ic`); without a count the walk is skipped."""
+        whole unless a setter raced it, with the colour temperature read from the pieces where the profile
+        takes it from them (:attr:`.DeviceProfile.kelvin_from_pieces`, :func:`._fold.apply_piece_kelvin`),
+        under the mode the poll's aa 05 report showed. On a live-IC profile the poll's one ``aa 40`` read
+        comes first (:meth:`_read_live_ic`); without a count the walk is skipped."""
         pieces = None
         if self.profile.color_readback_live_ic:
             pieces = await self._read_live_ic(budget)
             if pieces is None:
                 return
+
+        def apply(segments: list[Segment]) -> None:
+            self._apply_segments(segments)
+            if self.profile.kelvin_from_pieces:   # the walk's pieces: static or device-reported (_resolve)
+                count = self.profile.color_readback_segments or self.segment_count
+                _fold.apply_piece_kelvin(self._state, count, self._polled_color_mode)
+
         await self._read_fresh(
             "segment colour",
             lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces),
-            self._apply_segments)
+            apply)
 
     async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
         """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a
@@ -2091,19 +2104,27 @@ class Device:
             if await self._read_bar_switch(budget) == "applied":
                 applied = power_read = True   # the bars set is_on (device on iff either bar is on)
                 since = bars_since
-        if self.profile.section_count_read:
-            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
-            await self._read_section_count(budget)
+        if self._reads_segment_count:
+            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O); on goodsType
+            # 180 the ac a1 special-info read, among the extras before aa 05 (VM4Light.i5 -> x5).
+            await self._read_segment_count(budget)
         if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode(budget) == "applied":
             applied = True
         self._finish_read(applied, power_read, since)
         return applied
 
     async def _read_mode(self, budget: ConnectBudget | None = None) -> _ReadResult:
-        """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
+        """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`), and keep whether it showed the
+        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) for the poll's walk."""
         prof = wire_profile(self.profile)
+        self._polled_color_mode = None
+
+        def apply(m: Any) -> None:
+            _fold.apply_mode(self.profile, self._state, m)
+            self._polled_color_mode = parse.mode_color(m) is not None
+
         return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
-                                        lambda m: _fold.apply_mode(self.profile, self._state, m), budget)
+                                        apply, budget)
 
     async def _read_section_count(self, budget: ConnectBudget | None = None) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
@@ -2118,20 +2139,55 @@ class Device:
         self._segment_count = sc.section_num
         return True
 
+    async def _read_special_info(self, budget: ConnectBudget | None = None) -> bool:
+        """Read the segment count the device reports in its 0xAC special-info reply (``ac a1``, sub
+        ``segment_ic``: ``reassemble.parse_segment_ic``) and adopt it as :attr:`segment_count`, as the
+        goodsType 180 screen does on every connect (``VM4Light.x5`` -> ``Info4Detail.z0``). Returns False
+        (state left as it was) when the burst is incomplete or the count is one the masks cannot carry.
+        The app keeps one count for all its devices (``SegmentIcDataConfig``, one persisted store); the
+        library keeps each device's own."""
+        async with self._read_gate:   # never between a scene's upload and its activation
+            await self._send_pending_unlock(budget)
+            frames = await self._conn.query(
+                build.special_info_query(), timeout=STATUS_READ_TIMEOUT,
+                burst_command=reassemble.SPECIAL_INFO_COMMAND, burst_sub=reassemble.SEGMENT_IC_SUB,
+                **_budget_kw(budget))
+        count = reassemble.parse_segment_ic([f for f in frames if f and f[0] == build.PRO_MULTI_AC])
+        if count is None or not 1 <= count <= build.MAX_MASK_SEGMENTS:
+            _LOGGER.debug("%s (%s): ac a1 special-info read gave no usable segment count (%s)",
+                          self.address, self._sku, count)
+            return False
+        self._segment_count = count
+        return True
+
+    @property
+    def _reads_segment_count(self) -> bool:
+        """Whether the device reports its own segment count (the aa 41 section count or the ac a1
+        special-info read), which then sizes every mask and the colour walk."""
+        return self.profile.section_count_read or self.profile.special_info_read
+
+    async def _read_segment_count(self, budget: ConnectBudget | None = None) -> bool:
+        """The profile's segment-count read: :meth:`_read_section_count` or :meth:`_read_special_info`."""
+        if self.profile.special_info_read:
+            return await self._read_special_info(budget)
+        return await self._read_section_count(budget)
+
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
-        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
-        ``section_count_read`` (aa 41) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so
-        every pick's position set take) does the same lazily here and sends nothing if the device gives no
-        usable count, rather than guessing a mask. A no-op on every other profile and once the count is
-        known. Every caller holds the heartbeat across this read and the write it sizes
-        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
-        in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
-        if (self._segment_count is None and self.profile.section_count_read
-                and not await self._read_section_count()):
+        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read; the ac a1 read's
+        ``isTempTryComm`` is false), so a profile with ``section_count_read`` (aa 41), ``special_info_read``
+        (ac a1) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so every pick's position set
+        take) does the same lazily here and sends nothing if the device gives no usable count, rather than
+        guessing a mask. A no-op on every other profile and once the count is known. Every caller holds the
+        heartbeat across this read and the write it sizes (``GoveeConnection.hold_heartbeat``), as
+        :meth:`update` holds its reads: the app reads the count in its connect read, during which it sends
+        none (``ShareVM.R`` -> ``updateSkipHeart``)."""
+        if (self._reads_segment_count and self._segment_count is None
+                and not await self._read_segment_count()):
+            read = "ac a1" if self.profile.special_info_read else "aa 41"
             raise GoveeBleError(
-                f"{self._sku}: the device did not report its segment count (aa 41); "
+                f"{self._sku}: the device did not report its segment count ({read}); "
                 "not sending a colour frame with a guessed segment mask")
         if self._segment_count is None and self.profile.color_writes_live_ic:
             await self._read_live_ic()

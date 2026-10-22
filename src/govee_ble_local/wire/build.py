@@ -1078,3 +1078,12 @@ def status_query(*, full: bool = False, types: Sequence[int] | None = None) -> b
         req.args = _spec.node(_F.StatusReadArgs, req, num_types=len(requested), types=requested)
         return req
     return _frame_of(_PLAIN, _C.ProType.status_read, body)
+
+
+def special_info_query() -> bytes:
+    """0xAC special-info read ``ac a1`` (``status_request`` ``special_info``, no args): the goodsType 180
+    screen's connect read of the device's segment IC record
+    (``ControllerReadSpecialInfoMultiBack.Companion.k``, sent by ``VM4Light.x5``). The reply is a
+    multi-packet burst under sub ``segment_ic`` (:func:`.reassemble.parse_segment_ic`)."""
+    return _frame_of(_PLAIN, _C.ProType.status_read, lambda f: _spec.node(
+        _F.StatusRequest, f, command=_F.StatusCommand.special_info, rest=_spec.echo()))

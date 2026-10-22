@@ -104,10 +104,13 @@ the row lacks fails the build: nothing defaults silently.
   ``color_temp_control: whole_device`` (the
   colour page's Kelvin pick always writes every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 /
   246) needs ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of
-  the device. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a
-  bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
-  (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
-  offered no ``scenes``, its row's scene facts still checked.
+  the device. A row's ``kelvin_readback: pieces`` (the colour-temperature state read from the read-back's
+  pieces, goodsType 180's ``VM4Light.g5``) becomes ``DeviceProfile.kelvin_from_pieces``; it needs
+  ``color_temp`` and the direct colour read-back on a polled row, over the static or device-reported pieces
+  (not an IC-sized walk). An ``untraced`` scene dialect drops ``scenes``; ``none`` is
+  activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the
+  scene store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
+  :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
@@ -144,7 +147,12 @@ the row lacks fails the build: nothing defaults silently.
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
   alone (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every
-  poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  poll and discarded (``DeviceProfile.ic_num_read_only``: the pieces are the static count, or the
+  ``special_info`` read's). A ``special_info`` read (the 0xAC
+  special-info read ``ac a1``, whose segment IC record gives the device's segment count, the goodsType
+  180 screen's: ``DeviceProfile.special_info_read``) sizes the masks and the walk as the aa 41 section
+  count does, so it goes on a polled row with ``segments``, never with that read or an IC-sized
+  read-back. Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -315,6 +323,7 @@ class Row(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     mode_reports_kelvin: bool
+    kelvin_readback: str
     status_read: tuple[str, ...]
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
@@ -476,6 +485,9 @@ _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188", "kelvin_v9"})
 # clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's
 # Kelvin over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
+# clientRow kelvin_readback: where the read-back's colour temperature comes from where not the mode report's
+# Kelvin (absent). pieces gives DeviceProfile.kelvin_from_pieces.
+KELVIN_READBACKS: Final = ("pieces",)
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 SESSIONS: Final = ("held", "per_command")                          # devices.profile.SessionMode
@@ -531,7 +543,8 @@ _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "pol
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
-_READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
+_READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41",
+                           "special_info"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
 # capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
@@ -1171,6 +1184,19 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
+    special_info = "special_info" in reads
+    if special_info and (section_count or readback != "polled" or "segments" not in row_caps
+                         or isinstance(ic, dict) or ic == "sections"):
+        fail("the special_info segment-count read on a polled row with segments only, without the aa 41 "
+             "section count or an IC-sized read-back (one source sizes the masks and the walk)")
+    piece_kelvin = row.get("kelvin_readback")
+    # The fold counts the static or device-reported pieces (an IC-sized walk counts others) and takes the
+    # mode from the same poll's aa 05 report (_fold.apply_piece_kelvin).
+    if piece_kelvin is not None and (piece_kelvin not in KELVIN_READBACKS or "color_temp" not in caps
+                                     or color_readback != "mechanism_a_direct" or readback != "polled"
+                                     or live_ic or ic == "sections"):
+        fail(f"kelvin_readback {piece_kelvin!r} (one of {list(KELVIN_READBACKS)}, with color_temp and the "
+             "direct colour read-back whose pieces it reads, on a polled row whose walk is not IC-sized)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
@@ -1250,6 +1276,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
+        "special_info_read": special_info,
         "brightness_range": raw_bright,
         "kelvin_by_pact": kelvin_by_pact,
         "brightness_by_pact": bright_by_pact,
@@ -1284,6 +1311,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["segment_brightness"] = False
     if control == "illumination":
         out["kelvin_with_brightness"] = True
+    if piece_kelvin is not None:
+        out["kelvin_from_pieces"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         if status_by_pact:

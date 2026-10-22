@@ -1,6 +1,7 @@
 """H6062 (Glide wall light, striplight split, goodsType 41): the h60a6 0x15 layout with the tint,
 the `aa 41` section-count read, masks that follow the device-reported segment count, the
-`aa a5` read-back walk of ceil(sectionNum / 4) groups, and the cloud-library scenes.
+`aa a5` read-back walk of ceil(sectionNum / 4) groups, and the cloud-library scenes; and the same
+device-reported count from the `ac a1` special-info read, goodsType 180's source.
 
 All expectations are derived from the decompiled Govee Home 7.7.02 app (see the H6062 entry in
 spec/devices.yaml for citations); none are hardware-verified. Golden frames are written out as hex
@@ -19,7 +20,7 @@ from fake_ble import ble_device, unacked_via
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.wire import build as b
@@ -57,8 +58,10 @@ def _group(index: int, *records: tuple[int, int, int, int]) -> bytes:
 class _Dev:
     """A Device on a mocked connection that logs every query and write, in order."""
 
-    def __init__(self, replies: dict[int, list[bytes]] | None = None) -> None:
-        d = make_device(ble_device("AA:BB:CC:DD:EE:62", "H6062"), "H6062")
+    def __init__(self, replies: dict[int, list[bytes]] | None = None,
+                 profile: DeviceProfile | None = None) -> None:
+        d = (make_device(ble_device("AA:BB:CC:DD:EE:62", "H6062"), "H6062") if profile is None
+             else Device(profile, ble_device("AA:BB:CC:DD:EE:80", profile.skus[0]), sku=profile.skus[0]))
         assert d is not None
         self.dev: Device = d
         self.log: list[tuple[str, bytes]] = []
@@ -297,6 +300,59 @@ def test_update_without_an_answer_skips_the_walk_but_keeps_the_poll() -> None:
     st = asyncio.run(t.dev.update())
     assert [f for f in t.queried if f[1] == 0xA5] == []        # no guessed group count
     assert st.is_on is True and st.brightness == 50 and st.segments == []
+
+
+# ── the same count from the ac a1 special-info read (goodsType 180's: VM4Light.x5 -> Info4Detail.z0) ──
+_H706A = profile_for("H706A", allow_modelled=True)
+_SIX_SEGMENTS = [bytes.fromhex("ac00010007a10b060a0a0a0a0a0a000000000006")]   # [6][IC 10 x 6], a1 0b head
+_TINT_4000 = (0xFF, 0xD5, 0xA1)
+
+
+def _h706a(colours: list[tuple[int, int, int]], mode: str = "15010fa0", lost: int | None = None) -> _Dev:
+    """An H706A poll's replies: six segments, aa 05 ``mode`` (default 0x15 at 4000 K), the walk's two groups
+    of ``colours`` (group ``lost`` unanswered)."""
+    r = {0x01: [_frame(0xAA, 0x01, 0x01)], 0x04: [_frame(0xAA, 0x04, 0x32)], 0xA1: _SIX_SEGMENTS,
+         0x05: [_hex("aa05" + mode)]}
+    for g in (1, 2):
+        if g != lost:
+            r[0xA5 << 8 | g] = [_group(g, *[(100, *c) for c in colours[(g - 1) * 4: g * 4]])]
+    assert _H706A is not None
+    return _Dev(r, _H706A)
+
+
+def test_the_special_info_read_sizes_the_masks_and_the_walk() -> None:
+    t = _h706a([(1, i, 0) for i in range(6)])
+    st = asyncio.run(t.dev.update())
+    # aa a1 before aa 05, as x5 among the screen's extras; aa 40 discarded (ic_pieces fixed); then the walk
+    assert [f[:2].hex() for f in t.queried[:5]] == ["aa01", "aa04", "aca1", "aa05", "aa40"]
+    assert t.queried[2] == b.special_info_query() == _hex("aca1")
+    assert [f[2] for f in t.queried if f[1] == 0xA5] == [1, 2]
+    assert t.dev.segment_count == 6 and [s.index for s in st.segments] == list(range(6))
+    asyncio.run(t.dev.set_rgb((1, 2, 3)))
+    assert t.sent[-1] == _c("010203", "3f00")                  # six mask bits
+    asyncio.run(t.dev.set_color_temp(4000))
+    assert t.sent[-1] == _hex("33051501000000" + "0fa0" + "ffd5a1" + "3f00")   # white type 0: 00 00 00
+    silent = _Dev({0xA1: []}, _H706A)
+    with pytest.raises(GoveeBleError, match="ac a1"):
+        asyncio.run(silent.dev.set_rgb((1, 2, 3)))
+    assert silent.sent == []
+
+
+# kelvin: (the Kelvin shown, the Kelvin held): g5 stores the pieces' Kelvin as the colour mode's and syncs a
+# non-zero one as the held Kelvin whatever the mode (VM4Light.g5); aa 05 stored its own first (Info4Detail.V).
+@pytest.mark.parametrize(("colours", "mode", "lost", "kelvin"), [
+    ([_TINT_4000] * 6, "15010bb8", None, (4000, 4000)),          # one tint colour: its Kelvin, over aa 05's
+    ([(0xFF, 0x33, 0x00)] * 6, "15010fa0", None, (1000, 1000)),  # the whole table, below the row's 2200
+    ([_TINT_4000] * 5 + [(0xFF, 0xD1, 0xA3)], "15010fa0", None, (None, 4000)),   # 4000 K's other colour
+    ([(1, 2, 3)] * 6, "15010fa0", None, (None, 4000)),           # no tint: none shown; aa 05's 4000 held
+    ([_TINT_4000] * 6, "15010bb8", 2, (3000, 3000)),             # a lost group: aa 05's 3000 stands
+    ([_TINT_4000] * 6, "040100", None, (None, 4000)),            # a scene shows no colour temperature
+    ([_TINT_4000] * 6, "1300000000", None, (None, 4000)),        # nor does music
+])
+def test_the_kelvin_reads_back_from_the_pieces(colours: list[tuple[int, int, int]], mode: str,
+                                               lost: int | None, kelvin: tuple[int | None, int]) -> None:
+    st = asyncio.run(_h706a(colours, mode, lost).dev.update())
+    assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == kelvin and st.rgb_color is None
 
 
 def test_scene_activation_frame_needs_no_segment_count() -> None:
