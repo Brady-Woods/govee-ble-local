@@ -108,22 +108,26 @@ async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follow
     fake.read_replies[0x01] = frame(0xAA, 0x01, 0x00)              # the keep-alive reply: off
     dev = _device(monkeypatch, fake, sku, held=True, allow_modelled=True)
     assert dev.profile.heartbeat_power is follows
+    beat_frame = build.heartbeat(dev.profile.heartbeat)
     with virtual_time():
         await dev.update()
         assert dev.state.is_on is True
-        with _span(fake) as beat:
-            await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL + 0.5)    # a beat, its reply and any re-read
-        assert [f[:3].hex() if f[1] == 0xA5 else f[:2].hex() for f in beat
-                if f[:2] in (b"\xaa\x05", b"\xaa\xa5")] == reread
+        with _span(fake) as beat:   # two beats: the first reply changes the power, the second doesn't
+            await asyncio.sleep(2 * conn_mod.HEARTBEAT_INTERVAL + 0.5)
+        # one re-read in all: J3 re-reads only on a change (zSwitchCur != z)
+        assert beat.count(beat_frame) == 2 and [f[:3].hex() if f[1] == 0xA5 else f[:2].hex() for f in beat
+                                                if f[:2] in (b"\xaa\x05", b"\xaa\xa5")] == reread
         # stamped with is_on now off: the reply's stamp where it follows (the status read's gave on)
         assert dev.power_read_at is not None and dev.state.is_on is not follows
         with _span(fake) as polled:
             await dev.update()
         assert dev.state.is_on is not follows
-        if follows:   # a drop after the beat (an advert, a write): the next reply to it stamps nothing
-            dev._drop_power_read()
+        if follows:   # a drop after the beat (an advert, a write): the reply to that beat stamps nothing,
+            dev._drop_power_read()   # and the reply to the next beat, sent after the drop, stamps again
             dev._on_beat_reply(frame(0xAA, 0x01, 0x00))
             assert dev.power_read_at is None and dev.state.is_on is False
+            await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL)
+            assert dev.power_read_at is not None
         await dev.release()
         with _span(fake) as fresh:
             await dev.update()
