@@ -201,6 +201,12 @@ class Device:
         # a read issued after the last of them clears it (_finish_read).
         self._power_unsure = False
         self._power_unsure_seq = 0
+        # The last read that returned the whole-device on/off, as (time.monotonic(), the on/off it gave),
+        # while nothing since may have changed the device's power unseen (power_read_at). _power_read_drops
+        # counts the times it was dropped, so a read issued before a drop never stamps after it
+        # (_stamp_power_read).
+        self._power_read: tuple[float, bool] | None = None
+        self._power_read_drops = 0
         # H60A6 (global_power): for each zone a 33 01 / 33 30 write (or a 33 04 wake) set since the last
         # status reply carrying it, the powers it may end at once the firmware's message thread has applied
         # them (_post_zone_power). The firmware acks them before that thread applies them (see _read_status),
@@ -377,6 +383,39 @@ class Device:
     def is_on(self) -> bool | None:
         """Power state, or None if unknown."""
         return self._state.is_on
+
+    @property
+    def power_read_at(self) -> float | None:
+        """When a read last returned the device's whole on/off (``state.is_on``): ``time.monotonic()``
+        seconds, while ``is_on`` still holds what that read gave; None when no read has, or it no longer does.
+
+        Stamped only by a read that returned the on/off: an answered 0xAC status read (its TLV 0x01; a reply
+        without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 36``
+        bar read of a bar-switch device (in a poll, or before a bar write), and a plug's ``aa 01`` relay read.
+        A read that returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as
+        stale, an advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of
+        the read before it.
+
+        Dropped when the device may hold another on/off than ``is_on`` without a read saying so:
+
+        - anything but a read changes ``is_on`` (an advertisement, an acked write, the on/off derived from the
+          zones), even if it later changes back;
+        - a power write or a scene activation raises, since it may have reached the device (as it drops
+          ``DeviceState.zone_power_confirmed``);
+        - a write wakes a zoned device not known to be on (an H60A6 or H6047 ``33 04`` / ``33 05``,
+          :meth:`_wake_power`), or switches a zone on while ``is_on`` is not True (an H60A6 ``33 30`` zone-on
+          also sets the main switch, FUN_9b0278dc @0x9b02795e);
+        - ``is_on`` may say on for a device that is off: a write that may have switched it off raised, an
+          acked H60A6 zone-off may have switched the main switch off, or a status reply came before the device
+          applied an acked power write (see ``DeviceState.zone_power_confirmed``).
+
+        A read issued before a drop does not stamp after it. A zone's power has its own stamp,
+        ``DeviceState.zone_power_confirmed``. This one is on the Device, not in :class:`DeviceState`, so
+        ``dataclasses.asdict(state)`` and :meth:`snapshot` don't carry it."""
+        read = self._power_read
+        if read is None or read[1] != self._state.is_on:
+            return None
+        return read[0]
 
     @property
     def scene_names(self) -> list[str]:
@@ -583,12 +622,30 @@ class Device:
         self._ble_device = ble_device
         self._conn.update_ble_device(ble_device)
 
+    def advertised_on(self, advertisement_data: AdvertisementData) -> bool | None:
+        """The on/off ``advertisement_data`` carries, decoded as this device decodes it; None when it carries
+        none. PASSIVE: nothing is connected and the state is left as it is (:meth:`ingest_advertisement` folds
+        the on/off in, outside its suppress window).
+
+        The app reads the advertised switch byte the same way for every device
+        (``BleUtil.parseBleBroadOnOff``, :func:`.identify.parse_broadcast_onoff`: the overload at
+        ``:719-744`` for lights, the one at ``:700-717`` for plugs, the same read), and each device model
+        decodes it in its own ``z(scanRecord)``: a light is on for a byte of 1
+        (``AbsBaseBleModel.z:393-397``), a plug for any bit of its profile's
+        :attr:`.DeviceProfile.advert_on_mask` (h5080 ``Model.z:254-265``, ``Model4Plug2.z:269-290``). Read
+        from the Govee manufacturer data whatever the advertised name. None also for an advertisement without
+        manufacturer data, or whose Govee broadcast has no switch byte (a header below 2, too short)."""
+        mfg = getattr(advertisement_data, "manufacturer_data", None)
+        if not mfg:
+            return None
+        return parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
+
     def ingest_advertisement(self, advertisement_data: AdvertisementData) -> bool:
         """Update passive state from a BLE advertisement — no connection needed.
 
-        Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff, decoded
-        with the profile's ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`), both
-        whatever the advertised name. The command channel stays the one chosen when the Device was built.
+        Reads on/off from the Govee manufacturer data (:meth:`advertised_on`, decoded with the profile's
+        ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`), both whatever the advertised
+        name. The command channel stays the one chosen when the Device was built.
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
         stored, whether or not the on/off changed with it.
@@ -604,11 +661,12 @@ class Device:
             return False
         adv = bound_advertisement(advertisement_data, self._sku, fallback_name=self._ble_device.name)
         pact_changed = self._learn_pact(adv)
-        on = parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
+        on = self.advertised_on(advertisement_data)
         # Within the suppress window a command/read is fresher than the lagging advertised on/off.
         power_changed = False
         if on is not None and on != self._state.is_on and time.monotonic() >= self._advert_ignore_until:
             _fold.apply_advert_power(self.profile, self._state, on)   # zones kept consistent (state only)
+            self._drop_power_read()   # not a read (power_read_at)
             power_changed = True
         if power_changed or pact_changed:
             self._notify()
@@ -685,9 +743,24 @@ class Device:
             self._mark_authoritative()
 
     def _set_power_unsure(self) -> None:
-        """``is_on`` may say on for a device that is off (see ``_power_unsure``)."""
+        """``is_on`` may say on for a device that is off (see ``_power_unsure``), so no read vouches for it
+        (:attr:`power_read_at`)."""
         self._power_unsure = True
         self._power_unsure_seq += 1
+        self._drop_power_read()
+
+    def _drop_power_read(self) -> None:
+        """The device may hold another on/off than ``is_on`` without a read saying so
+        (:attr:`power_read_at`)."""
+        self._power_read = None
+        self._power_read_drops += 1
+
+    def _stamp_power_read(self, since: int) -> None:
+        """A read issued when ``_power_read_drops`` was ``since`` returned the on/off now in ``is_on``: stamp
+        it (:attr:`power_read_at`), unless a drop came after the read was issued."""
+        on = self._state.is_on
+        if since == self._power_read_drops and on is not None:   # every read sets it; narrows the type
+            self._power_read = (time.monotonic(), on)
 
     def _wrote(self, ticket: int) -> None:
         """Record that write call ``ticket``'s frames went out on the link that is up (``_link_write``)."""
@@ -761,7 +834,11 @@ class Device:
         of "off", acked or not (:func:`._fold.unconfirm_contradicted`). On a
         :attr:`.DeviceProfile.global_power` fixture the zone power the frames hand the firmware's message
         thread is kept for the next status read, acked or not (``_zone_power_posted``,
-        :meth:`_read_status`)."""
+        :meth:`_read_status`).
+
+        No write vouches for :attr:`power_read_at`: an acked one that changes ``is_on`` drops it, and so does
+        a power write (``zones`` or ``fixture``) that raises, whatever its power, and a write that wakes the
+        device or lights a zone while ``is_on`` is not True, acked or not."""
         mine = self._ticket() if ticket is None else ticket
         await self._send_pending_unlock(ticket=mine)
         batch = [frames] if isinstance(frames, bytes) else frames
@@ -780,13 +857,19 @@ class Device:
             self._post_zone_power(batch, zones, wake, acked=False)
             if zones and not any(zones.values()):
                 self._set_power_unsure()
+            if fixture or zones is not None or (wake and self._state.is_on is not True):
+                self._drop_power_read()
             raise
         self._wrote(mine)
         wake = {**wake, **self._wake_power(batch)}   # a power-off applied while this write waited
         known_on = self._state.is_on is True and not self._power_unsure
+        was_on = self._state.is_on
         self._mutated()
         apply()
         _fold.unconfirm_contradicted(self._state, wake)
+        lights = bool(wake) or bool(zones and any(zones.values()))
+        if self._state.is_on != was_on or (lights and self._state.is_on is not True):
+            self._drop_power_read()
         self._post_zone_power(batch, zones, wake, acked=True)
         if zones is not None and len(zones) == len(self.profile.zones):
             self._power_unsure = False
@@ -1312,9 +1395,12 @@ class Device:
     async def _read_bar_switch(self, budget: ConnectBudget | None = None) -> _ReadResult:
         """Read the bar switch into state: "applied" (bars and the derived on/off were read back),
         "stale" (the reply was discarded: a setter applied state meanwhile) or "none" (no usable
-        reply)."""
+        reply). The derived on/off is a read of the device's (:attr:`power_read_at`)."""
+        drops = self._power_read_drops
+
         def apply(bars: tuple[bool, bool]) -> None:
             _fold.apply_bar_switch(self._state, bars)
+            self._stamp_power_read(drops)
 
         return await self._read_command(
             "bar-switch", build.bar_switch_query(), parse.parse_bar_switch, apply, budget)
@@ -1483,6 +1569,7 @@ class Device:
                             await self._conn.send_unacked(sized)
                         except BaseException:
                             _fold.unconfirm_zones(self._state)
+                            self._drop_power_read()   # a power write that may have reached the device
                             raise
                         finally:
                             # As _commit does; counted as raised either way (no profile has both a global
@@ -1654,11 +1741,12 @@ class Device:
         set (:func:`.parse.parse_relay_on`): bit 0 on the single-outlet SKUs, as the app's
         BleOpV1/BleOpV3 detail screens read it. Returns whether the relay state was read back."""
         prof = wire_profile(self.profile)
+        since, drops = self._power_unsure_seq, self._power_read_drops
 
         def apply(on: bool) -> None:
             self._state.is_on = on
+            self._stamp_power_read(drops)
 
-        since = self._power_unsure_seq
         applied = await self._read_command(
             "plug power", build.power_query(), lambda r: parse.parse_relay_on(r, prof), apply,
             budget) == "applied"
@@ -1779,7 +1867,7 @@ class Device:
         # unsettled; the read after it does). Unless it does so for every posted zone, its on/off is not
         # trusted to rule a wake out either (_power_unsure).
         applied = power_read = False
-        since = self._power_unsure_seq
+        since, drops = self._power_unsure_seq, self._power_read_drops
 
         def apply(st: reassemble.StatusReply) -> None:
             nonlocal applied, power_read
@@ -1787,6 +1875,8 @@ class Device:
             unsettled = [i for i, on in st.zone_power.items() if posted.get(i, {on}) != {on}]
             applied, power_read = _fold.apply_status(self.profile, self._state, st, self._pact,
                                                      unsettled=unsettled)
+            if power_read:
+                self._stamp_power_read(drops)   # TLV 0x01; dropped again just below if the reply may predate
             if power_read and any(i not in st.zone_power or i in unsettled for i in posted):
                 self._set_power_unsure()
             for i in st.zone_power:
@@ -1802,8 +1892,11 @@ class Device:
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
         """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
         came back (see :meth:`_read_status`)."""
+        drops = self._power_read_drops   # when the power read is issued (_stamp_power_read)
+
         def apply_power(on: bool) -> None:
             self._state.is_on = on
+            self._stamp_power_read(drops)
             held = self._state.zone_power
             if self.profile.bar_switch and on != any(held.values()):
                 # aa 01 answers bar 0 | bar 1 (H6047 FUN_01004f32, query path 0x01004fb0-0x01004fd4), so
