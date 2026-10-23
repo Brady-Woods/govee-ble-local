@@ -68,9 +68,10 @@ model, from which the shipped readers are generated).
   that promotes H61D2-H61D6, the live piece count that promotes 14 h705a SKUs and, by the user's decision on its
   first walk, H608A-D / H808A, the status rows' IC reads that promote H3401 and H3510 / H3511, the per-SKU support
   level that promotes five h6609 260 SKUs, the colour page's Kelvin-tint read-back that promotes the six h70b3
-  SKUs, the user's decision on their 7.5.12 trace that promotes H604B / H604D, and H6057's light-switch power,
-  below): 140 admitted by default (`app_traced`) and 18 behind `allow_modelled` (`modelled`).
-  The entries below admit 123 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
+  SKUs, the user's decision on their 7.5.12 trace that promotes H604B / H604D, the user's decision on parity with
+  H7092 that promotes H7090, and H6057's light-switch power, below): 141 admitted by default (`app_traced`) and 17
+  behind `allow_modelled` (`modelled`).
+  The entries below admit 126 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
   H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate; the 10 SKUs of the
   `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's
   status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose pairing write is read as an exact-pact
@@ -79,9 +80,10 @@ model, from which the shipped readers are generated).
   H702B / H702C, H7026 / H8026, H7027 and H30D0 / H30D1; through the 0xA3 colour unit H3010 / H3011 / H3012 / H3013;
   through the aa 0f string count the nine h7020 bulb-string SKUs; the six H707A strings through the status read's
   segment count; the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads; four Glide panels at
-  the layout editor's cap; and H60A1 / H80A1 through the numeric Kelvin compare) and 11 more behind
-  `allow_modelled` (H7072, H6119, the Glide H6063, H61E5 / H61E6, H6609 and H706A / H706B / H706C / H806A / H806C),
-  for 362 admitted by default and 29 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU
+  the layout editor's cap; H60A1 / H80A1 through the numeric Kelvin compare; and H7072 and H61E5 / H61E6 on
+  parity with admitted rows that share their one gap) and 8 more behind `allow_modelled` (H6119, the Glide H6063,
+  H6609 and H706A / H706B / H706C / H806A / H806C), for 366 admitted by default and 25 behind `allow_modelled` in
+  all (with H8015, a 1.6.1 SKU
   now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -101,7 +103,8 @@ model, from which the shipped readers are generated).
   - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
     **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), on an advertised pact only (below),
     **H16C0** (377);
-  - h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162);
+  - h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162); h7090: **H7090** (44), with the colour
+    read-back gap it shares with H7092 (Spec, below);
   - h6840: **H6840**, **H8840**† (278), **H6841**, **H8841**† (325), **H6842**, **R6842**† (381), **H6843**
     (382);
   - h6609: **H70C1 / H70C2 / H70CB** (181), **H70C9 / H7084 / H6871 / R6871**, **H80C5**† (260, by the per-SKU
@@ -131,7 +134,7 @@ model, from which the shipped readers are generated).
   - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H703A / H703B** (263);
   - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
-    (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
+    (59); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below).
 - **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
   (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
@@ -145,14 +148,14 @@ model, from which the shipped readers are generated).
   (`app_traced`). After its connect reads the screen sends `33 25 01` (light_effect_stop) only for H14A1 /
   R14A1 / H14C2 / R14C2 (bulblight `Support.c`, `VM4Light.i5`), so those four SKUs carry it as a `by_model`
   connect write and the other four send none. Not hardware-verified (none is on the bench).
-- **Six more SKUs whose status read names TLV types the spec now has ids for** (Spec, below): by default
-  **H7071** (h6092 334), **H7073** (333) and **H3860** (401), power and brightness; **H3351** (h7072 371) and
-  **H70B8** (h70b6 341), power, brightness, RGB and colour temperature; and **H7072** (h7072 294) behind
-  `allow_modelled`. Each sends the app's request: `ac 03 02 41 0c`, `ac 03 03 41 0c 42`, `ac 03 03 41 0c 45`,
-  `ac 03 03 41 a5 4b` and `ac 03 04 41 39 7d 7e` (`VM4LightH7070.T4`, `VM4LightH3860.T4`, `H7072VM4Light`,
-  `VM4H70B6.i5`). H7072 stays `modelled`: the app places each TLV 0xA5 group at (group - 1) x that TLV's own
-  record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its firmware's split is untraced. None is
-  hardware-verified.
+- **Six more SKUs whose status read names TLV types the spec now has ids for** (Spec, below), all by default:
+  **H7071** (h6092 334), **H7073** (333) and **H3860** (401), power and brightness; **H3351** (h7072 371),
+  **H70B8** (h70b6 341) and **H7072** (h7072 294), power, brightness, RGB and colour temperature. Each sends the
+  app's request: `ac 03 02 41 0c`, `ac 03 03 41 0c 42`, `ac 03 03 41 0c 45`, `ac 03 03 41 a5 4b` and
+  `ac 03 04 41 39 7d 7e` (`VM4LightH7070.T4`, `VM4LightH3860.T4`, `H7072VM4Light`, `VM4H70B6.i5`). H7072 is
+  `app_traced` with one gap named, as H3351 is (the user's decision D5, 2026-10-22): the app places each TLV 0xA5
+  group at (group - 1) x that TLV's own record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its
+  firmware's split is untraced; the admitted H6860 and H60B1 status rows share it. None is hardware-verified.
 - **The BK-firmware rows, on an advertised pact only.** The app rewrites these SKUs to a BK goodsType only for a
   record whose pact meets the gate, and keeps a record without a pact (an int 0) at its source goodsType
   (`SkuToGoodsTypeUtil.f` over `OldRgbBkUtil.a` / `.b`; `OldRgbicBkUtil.isRgbicBk4Ble`; `OldCarBkUtil.isBkCar`),
@@ -304,14 +307,16 @@ model, from which the shipped readers are generated).
   `set_color_temp`, `turn_on(kelvin=)`, an RGB pick that is a Kelvin tint colour, and the segment and zone Kelvin
   writes where the screen has them; the builders `color_temp`, `segment_color_temp`, `segment_rgb` and
   `color_rgb_frames` take `white_type=`. Only an h60a6 profile may set another value. It admits **H61E5** (h61d3
-  239) and **H61E6** (246) behind `allow_modelled`, not hardware-verified: the ColorMode colour page
+  239) and **H61E6** (246) by default (`app_traced`), not hardware-verified: the ColorMode colour page
   (`ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`) with `Config.P` = 3. Their Kelvin pick is
   whole-strip (`ColorMode.canClickColorTem`, `H61D3Support.i0`), so their segment Kelvin is refused (below) and
-  only an RGB pick of a tint colour on some segments takes the partial form. They stay `modelled` for two
-  colour-page differences: the app's posSet is the live piece count and the library's mask the cap (12 / 15), so
-  a tint-colour pick over exactly the live pieces is whole in the app and partial in the library; and the app
-  refuses segment brightness while a selected piece shows a Kelvin tint colour, which the library doesn't gate.
-  Their illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
+  only an RGB pick of a tint colour on some segments takes the partial form. Their writes take the live piece
+  count, as the app's posSet does (Fixed), so a tint-colour pick over exactly the live pieces is whole in both.
+  One colour-page difference is named, the user's decision D2 (a) (2026-10-22): the app refuses segment
+  brightness while a selected piece shows a Kelvin tint colour (`ColorMode.canClickBrightness`), which the
+  library doesn't gate, as on the admitted straightfloorlamp 69 / 377, dreamcolorlightv1 193, h7078 245 and h6047
+  119 rows, whose strips refuse it on a Kelvin tint too. The gate is a later release (D2 (b)). Their
+  illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
 - **Whole-device-only colour temperature** (`DeviceProfile.whole_device_kelvin`, devices.yaml
   `color_temp_control: whole_device`). Where the screen has no Kelvin on part of the device,
   `set_segment_color_temp` and `set_zone_color_temp` raise GoveeBleNotSupported, as a masked Kelvin is a frame the
@@ -1069,10 +1074,10 @@ model, from which the shipped readers are generated).
       versions from TLV 0x07);
     - the status rows 1.9.0 admits or promotes: h705a H3401 (394), h7057 H3510 / H3511 (349), h7020 H702A /
       H702B / H702C (316), H7026 / H8026 (318), H7027 (337), H30D0 / H30D1 (391), H3010 / H3011 / H3012 /
-      H3013 (411), h707a H707A / H707B / H707C / R707A / R707B / R707C (326), and h70b3 H70B3 (229), H70B4
-      (230), H70B5 (231), H6810 (255), H6811 / H8811 (256).
+      H3013 (411), h707a H707A / H707B / H707C / R707A / R707B / R707C (326), h70b3 H70B3 (229), H70B4
+      (230), H70B5 (231), H6810 (255), H6811 / H8811 (256), and h7072 H7072 (294).
   - `none`, behind `allow_modelled`: h60ax H1270 (346), H1232 (356), H1252 (373); h61d3
-    H703A / H703B (263); h1741 H1741 / R1741 (365); h7072 H7072 (294).
+    H703A / H703B (263); h1741 H1741 / R1741 (365).
   - The catalogue snapshot routes H8069, H80D1, R617G, R618D, H8840, H8841, R6842, H8057, H8025, H3511, H30D1
     and H8811. H7072 and H3351 share one screen path (`H7072VM4Light.o5` / `s5`, whose one goodsType branch is
     H2800's 396). H1232 and H1252 run the H60A6's screen, but the H60A6's evidence for its reads is its own
@@ -1107,11 +1112,11 @@ model, from which the shipped readers are generated).
   whose frames are as before byte for byte, `whole_device_kelvin` and `kelvin_with_brightness` False, and an
   empty `mode_decode`). H60A4 / H80A4, behind `allow_modelled` before, take the pair (Added).
 - For integrators: `Capability.SEGMENTS` with `Capability.COLOR_TEMP` no longer means the segment and zone Kelvin
-  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4, H61D2-H61D6 and H60A1 / H80A1
-  by default; H61E5 / H61E6 behind `allow_modelled`) `set_segment_color_temp` and `set_zone_color_temp`
+  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4, H61D2-H61D6, H60A1 / H80A1 and
+  H61E5 / H61E6) `set_segment_color_temp` and `set_zone_color_temp`
   raise GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Every such profile with
   segments also has `segment_color_temp=False` (its row says false, and the resolver refuses true beside a
-  `color_temp_control`), so the one gate is `getattr(device.profile, "segment_color_temp", True)`, the frozen
+  `color_temp_control`), so the one gate is `getattr(device.profile, "segment_color_temp", True)`, the
   field under Added; hass-govee-ble-local's segment lights need that follow-up (they offer colour temperature
   whenever the device has `COLOR_TEMP`). A profile built by hand with `whole_device_kelvin=True` is refused
   too, whatever its `segment_color_temp`. Every SKU of 1.6.1 has `whole_device_kelvin=False`.
@@ -1278,8 +1283,8 @@ model, from which the shipped readers are generated).
   and a colour write before the first poll reads aa 40 first (GoveeBleError, nothing sent, without a usable
   count). A unit at its rule's cap sends the bytes it sent before, but H6641, whose old 16 was above its cap:
   its `DeviceProfile.segments` is now 14, the most its rule gives (`H61D3Support.s` / `e`), where it was 16, a
-  library bound. Behind `allow_modelled`, H61E5 / H61E6 (239 / 246, the same screen) take the live mask too; they stay
-  `modelled` for their segment-brightness gate (`ColorMode.canClickBrightness`). The reads are unchanged: one aa 40 per poll, in its place. Source-traced,
+  library bound. H61E5 / H61E6 (239 / 246, the same screen) take the live mask too; they are `app_traced` with
+  their segment-brightness gate (`ColorMode.canClickBrightness`) named (Added). The reads are unchanged: one aa 40 per poll, in its place. Source-traced,
   not live-verified: the visible check on the bench H6641 (one whole-device colour with the live mask) is to
   follow.
 - **H6098 / H8098 (pact_h6099 203) and H6690 (336): segment brightness now covers the app's groups.** Their
@@ -1310,8 +1315,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 206
-    `app_traced`, 16 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 210
+    `app_traced`, 12 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
     at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 73 take
     it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383,
     h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows
@@ -1325,12 +1330,27 @@ model, from which the shipped readers are generated).
     h7020 316 / 318 / 337 / 391 (the status rows' IC reads), h7020 411 (the 0xA3 colour unit), the eight h7020
     bulb-string rows (53 / 54 / 62 / 63 / 100 / 102 / 149 / 161, the aa 0f string count), h707a 326 (the TLV 0xA1
     segment count) and dreamcolorlightv1 71 / 123 (narrowed, with the per-SKU connect reads), all `app_traced` but
-    h7072 294, h6119 44, the Glide h6061 228, h61d3 239 / 246, h6609 173 and h705a 180 (`modelled`); the numeric
-    Kelvin compare promoted h60ax 235 (Added). The segment split promoted the trace's h61d3 202, the live piece
+    h6119 44, the Glide h6061 228, h6609 173 and h705a 180 (`modelled`); the numeric Kelvin compare promoted h60ax
+    235 (Added), and the user's decisions on parity promoted h7072 294, h61d3 239 / 246 and the trace's h7090 44
+    (below). The segment split promoted the trace's h61d3 202, the live piece
     count h705a 125 / 240 / 250 and h61d3 299 / 261, the status rows' IC reads h705a 394 and h7057 349, and the
     read-back piece count h6609 260 (five of its SKUs held `modelled` by their own `support`), to `app_traced`,
     and the colour page's Kelvin-tint read-back the trace's h70b3 229 / 230 / 231 / 255 / 256; the user's
     decision promoted its h604a 109 / 133 (below).
+  - **h7090 44 (H7090), h7072 294 (H7072) and h61d3 239 / 246 (H61E5 / H61E6) are `app_traced` on parity with
+    admitted rows that share their one gap**, each gap still named in the row's doc (the user's decision 25: D5
+    and D2 (a), 2026-10-22). No fact or frame changed; the promotion only admits them by default:
+    - H7090 runs H7092's screen code (chassislightv1 162, h7090 `NewDetailActivity` / `VM4Light`): after a CCT
+      report `VM4Light.i5` keeps the tint fill as every segment's colour and takes only each aa a5 record's
+      brightness, where the library stores the walk's RGB. H7092's doc now names it too. The fold is a per-row
+      flag, a later release.
+    - H7072 shares H3351's screen (`H7072VM4Light`): the app places each TLV 0xA5 group at (group - 1) x that
+      TLV's own record count (`SubMode4Color.j`), the library at (group - 1) x 4 (`status_a5_stride_per_tlv`),
+      a gap the admitted H6860 / H60B1 status rows share.
+    - H61E5 / H61E6: `ColorMode.canClickBrightness` refuses segment brightness while a selected piece shows a
+      Kelvin tint colour; the library doesn't gate it, nor on the admitted rows whose strips do the same
+      (straightfloorlamp 69 / 377, dreamcolorlightv1 193, h7078 245, h6047 119:
+      `ColorMode10Segment.canClickBrightness:570-579`). The gate is the next release (D2 (b)).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
