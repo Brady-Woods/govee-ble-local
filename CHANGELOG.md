@@ -45,6 +45,12 @@ model, from which the shipped readers are generated).
     is not in `__all__`.
   - **What stays:** `identify.parse_broadcast_onoff` and `DeviceProfile.advert_on_mask` are unchanged and stay
     supported through 1.x, because released integrations import them.
+  - **Merged records:** the on/off comes from the Govee entry whose value last changed between two advertisements
+    the Device was given, and from that entry alone. That is the entry the latest broadcast carried. When it has no
+    switch byte, the advertisement gives no on/off. A key new in the record doesn't count as a change. Until one
+    has changed, or when the record lacks that entry, the first Govee entry with a switch byte is read.
+    `advertised_on` gives what `ingest_advertisement` would read from the same advertisement now, and stays
+    passive. Only an ingest moves on the advertisement the next one is compared with. See Fixed, below.
 - **`Device.power_read_at -> float | None`: when a read last returned the device's whole on/off.** The value is in
   `time.monotonic()` seconds, and only while `state.is_on` still holds what that read gave; otherwise None.
   - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01`, a bar-switch device's `aa 36` (in
@@ -531,6 +537,46 @@ model, from which the shipped readers are generated).
     - With one lookup error injected on the H60A6's first link, that link carried no frame. The second link
       handshook and its reads were answered.
   - Design: `govee-apks/library-audit/DESIGN_bgc_reread_per_connect.md`.
+- **The passive on/off no longer freezes on a stale entry of a merged advertisement record, and the pact
+  is no longer taken from one.** `Device.ingest_advertisement` read the on/off and the pact from the first Govee
+  entry of `manufacturer_data`. Home Assistant's record
+  keeps every manufacturer-data key it has heard for the address. habluetooth merges `{**prev, **new}`, as BlueZ
+  does: a key keeps its first slot and holds the value of the last frame that carried it. The Govee header, with
+  its encrypt bit and version, is the key's low byte. So after a header change (an OTA), the first entry is the
+  old header's, frozen at its last value. Each later change of the new header's entry made the library read the
+  frozen one again, and the advertised on/off stopped following the device for as long as the record held the
+  old key. habluetooth expires a record only when its address has been silent for 195 s, so the stale key stays
+  while the device keeps advertising, and it restores the record after a restart. Another device's Govee frame
+  merged under the address leaves the same kind of entry.
+  - **The on/off** now comes from the entry whose value last changed between two advertisements the Device was
+    given, through `advertised_on` (Added, above). Only a frame that carries a key changes that key's value. A key
+    new in the record doesn't count, whether it is another device's frame merged once, a key another scanner's
+    record brings back, or an OTA's new header, which counts from its first change. On the modelled images the
+    switch byte is the only state byte that changes. Before any change is seen, the first Govee entry with a
+    switch byte is read, as before.
+  - **Known limitation:** another device's Govee frame filed under the address twice, with different values,
+    does take over. Its entry then changed last, and the device's own identical frames fire no callback, so its
+    on/off holds until the device's own power next changes. That needs the proxy-path mis-attribution
+    (habluetooth#645). The frames seen so far were non-Govee, which are ignored. Clearing the address's
+    advertisement history in Home Assistant restores the device's own on/off only until the foreign key is filed
+    again: the Device keeps that key as its latest. A lasting cure also needs the Device rebuilt after the clear.
+  - **The pact** is now learned only when every Govee pact entry carries the same one, as the encrypt flag is.
+    A record whose entries disagree keeps the pact and logs one WARNING per spell, naming the pacts and the one
+    kept. The constructor and `create_device` still route by the first entry's pact.
+  - **What the app does:** it reads each broadcast on its own. The device card's handler (`AbsBleItem.B`) passes
+    one scan record to `AbsBaseBleModel.y` (the pact, `GoodsType.parseBleBroadcastPactInfo` ->
+    `BleUtil.parseBleBroadcastPact`) and to `AbsBaseBleModel.z` (the on/off, `BleUtil.parseBleBroadOnOff`). Each
+    parser takes the first Govee AD of that record. A record of one broadcast has one Govee key on every modelled
+    image, so single-key records read as before.
+  - **Bench** 2026-10-22: two passive scans from the Mac, with no connection and no writes.
+    - Between them they heard 14 Govee devices in the Mac's range: H60A6 x4, H6008 x2, H6006 x2, H6047, H6052,
+      H61A8, H61C3, H6641 and H5083. Neither heard the bench's other plugs (H5080, H5082, H5085, H5089, H5160,
+      H5161). The second run's files replaced the first's.
+    - Every record held one Govee key, and every device read its real records as the one-broadcast parsers do.
+    - Merged records built from the real entry of each of the 13 whose entry has a switch byte read as designed,
+      and nothing warned. The H6052's entry has none.
+    - The merged records themselves are source-modelled: no bench device can be made to change its header.
+  - Design: `govee-apks/library-audit/DESIGN_merged_record_pact_onoff.md`.
 - Docstrings cited the app's per-model advert decode as `AbsBaseBleModel.A`, h5080 `Model.A` and
   `Model4Plug2.A`; in the 7.7.02 decompile the method is `z`.
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`

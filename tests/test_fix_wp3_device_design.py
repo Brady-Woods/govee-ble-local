@@ -273,8 +273,8 @@ def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.Monke
     assert d is not None and d.profile is dimmer and d.pact == (3, 1) and not caplog.records
     assert make_device(ble_device("AA:BB:CC:DD:EE:3C", adv.name), "H6008",
                        dataclasses.replace(adv, pact_type=9, pact_code=9)) is None
-    d._learn_pact(dataclasses.replace(adv, pact_type=1))   # pact (1, 1): the bulb row's, not the dimmer's
-    d._learn_pact(dataclasses.replace(adv, pact_type=1))   # unchanged: not logged again
+    d._learn_pact((1, 1))   # the bulb row's pact, not the dimmer's
+    d._learn_pact((1, 1))   # unchanged: not logged again
     assert d.pact == (1, 1) and d.profile is dimmer
     assert [r.getMessage().split(": ", 1)[1][:28] for r in caplog.records] == ["advertises pact 1,1, which n"]
 

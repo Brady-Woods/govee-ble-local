@@ -288,6 +288,68 @@ def test_ingest_without_a_flag_keeps_the_cipher() -> None:
     assert d.encryption is Encryption.AES_RC4_PSK
 
 
+# ── a merged record's on/off and pact (Device.advertised_on, _learn_advertised_pact) ─────
+# Home Assistant's record keeps each key's last value (habluetooth merges {**prev, **new}), so the header
+# before an OTA, or another device's frame, stays in it, frozen. The app reads each broadcast on its own
+# (AbsBleItem.B).
+_OLD, _NEW, _OTHER = 0x8842, 0x8843, 0x8846   # all encrypted (versions 2, 3 and 6): the cipher agrees
+
+
+def _entry(on: int, pact_code: int = 1) -> bytes:
+    """A Govee entry's value: the marker's EC, pact 1,``pact_code``, the switch byte and a 0."""
+    return bytes([0xEC, 0x00, 0x01, pact_code, on, 0x00])
+
+
+def _onoff(d: Device, mfg: dict[int, bytes]) -> bool | None:
+    """Ingest ``mfg``. Returns the on/off it leaves, which ``advertised_on`` gave before and gives after."""
+    before = d.advertised_on(_adv(_RENAMED, mfg))
+    d.ingest_advertisement(_adv(_RENAMED, mfg))
+    assert d.advertised_on(_adv(_RENAMED, mfg)) is before is d.state.is_on
+    return d.state.is_on
+
+
+def test_the_on_off_follows_the_entry_that_last_changed() -> None:
+    # An OTA moved the header from 0x42 to 0x43; the old key keeps its first slot, frozen at "on".
+    d = _bound("H6008", _adv(_RENAMED, {_OLD: _entry(1)}))
+    assert _onoff(d, {_OLD: _entry(1), _NEW: _entry(1)}) is True    # the new key appears: not yet a change
+    assert _onoff(d, {_OLD: _entry(1), _NEW: _entry(0)}) is False   # WAS: True, from the frozen key
+    assert _onoff(d, {_OLD: _entry(1), _NEW: _entry(0), 0x2E28: b"\x00"}) is False   # no Govee change
+    assert _onoff(d, {_OLD: _entry(1)}) is True                     # a record without it: the first entry
+    assert _onoff(d, {_OLD: _entry(1), _NEW: _entry(0)}) is False   # the latest key still holds
+
+
+def test_a_key_new_in_the_record_does_not_take_over() -> None:
+    d = _bound("H6008", _adv(_RENAMED, {_NEW: _entry(1)}))
+    assert _onoff(d, {_NEW: _entry(0)}) is False                      # the device's own key is the latest
+    # Another scanner's record, with another device's Govee frame first, then a clean one, then back.
+    assert _onoff(d, {_OTHER: _entry(1), _NEW: _entry(0)}) is False   # WAS: True, its first entry
+    assert _onoff(d, {_NEW: _entry(0)}) is False
+    assert _onoff(d, {_OTHER: _entry(1), _NEW: _entry(0)}) is False   # a key coming back is not a change
+    assert _onoff(d, {_OTHER: _entry(1), _NEW: _entry(1)}) is True
+
+
+def test_a_merged_record_keeps_the_pact_unless_its_entries_agree(caplog: pytest.LogCaptureFixture) -> None:
+    # Pacts 1,3 and 1,2, which the pact-less H60A6 profile accepts (1,1 has a pact route of its own).
+    mixed = {_NEW: _entry(1, pact_code=3), _OLD: _entry(1, pact_code=2)}
+    assert _bound("H60A6", _adv(_RENAMED, mixed)).pact == (1, 3)   # the constructor reads the first entry
+    d = _bound("H60A6", _adv(_RENAMED, {_NEW: _entry(1, pact_code=3)}))
+    d.ingest_advertisement(_adv(_RENAMED, {_NEW: _entry(1, pact_code=3)}))   # its on/off, before the callback
+    calls: list[object] = []
+    d.register_callback(calls.append)
+    with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, mixed))
+        d.ingest_advertisement(_adv(_RENAMED, mixed))   # still mixed: warned once
+    assert d.pact == (1, 3) and calls == []
+    assert [r.getMessage().split(": ", 1)[1] for r in caplog.records] == [
+        "advertises Govee pacts 1,3 (header 0x43), 1,2 (header 0x42) (a merged advertisement record: an "
+        "earlier header, or another device's frame); the pact stays 1,3"]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, {_NEW: _entry(1, pact_code=2), _OLD: _entry(1, pact_code=2)}))
+        d.ingest_advertisement(_adv(_RENAMED, mixed))   # they agreed, so the pact moved; a new spell warns
+    assert d.pact == (1, 2) and len(calls) == 1 and len(caplog.records) == 1
+
+
 def test_encryption_constructor_uses_advertisement() -> None:
     # A raw bleak-style advert (what Home Assistant passes to create_device) decides the mode the
     # connection is built with; the same H6008 profile without an advert keeps its default.
