@@ -124,12 +124,13 @@ def test_a_version_a_firmware_gate_tests_is_read_again_until_it_is_in(lost: str)
     """Review G1 item 2: one lost aa 06 or aa 07 03 reply no longer fixes a firmware-gated fact for the life
     of the Device. The device-info read is done once the device answered, as before, but each later poll reads
     the version a gate tests that it did not bring back, alone, until it is in. H6168 with its scene gate
-    (soft 1.06.00 and hard 1.00.02: conftest.gated_scene_profile) on soft 1.05.00 / hard 3.01.10: while the
+    (soft 1.06.00 and hard 1.00.02: conftest.gated_scene_profile) on soft 1.6.0 / hard 3.01.10: while the
     soft version is missing its gate counts as met ({0, 1, 2, 3}, the newest firmware's), while the hard one
     is the read soft version already fails it ({0, 1, 2}, which no hard version changes); then its own
-    {0, 1, 2} either way."""
+    {0, 1, 2} either way. 1.6.0 is below 1.06.00 as the app parses both (BleUtil.parseVersion: 160 < 10600),
+    though field by field or as text it is not."""
     soft, hard, sn, *_ = CAPTURES["H61A8"]
-    replies = {"0600": bytes.fromhex(soft).replace(b"3.03.18", b"1.05.00"), "0703": bytes.fromhex(hard),
+    replies = {"0600": bytes.fromhex(soft).replace(b"3.03.18", b"1.6.0\0\0"), "0703": bytes.fromhex(hard),
                "0702": bytes.fromhex(sn)}
     answers = {**replies, lost: b""}   # this poll loses it
     d, sent = _dev("H6168", lambda fr: [answers[fr[1:3].hex()]] if answers.get(fr[1:3].hex()) else [])

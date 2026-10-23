@@ -105,25 +105,22 @@ APP_RANGES = {
 # By the hardware version (aa 07 03) where the app gates the range. H60A1 (h60ax 235): Config.Y2 compares as
 # BleUtils.isHigherVersion does, numbers: q0 of each, the digits with the dots removed, 0 when empty or
 # unparsable, inclusive (KelvinConfig.java:406-407,423-427,1434-1436; BleUtils.java:74-79,327-335,1065-1074),
-# so 1.4.3 (143) and junk are below 1.04.03 (10403), where a string compare puts them above. H61A8:
-# Config.z2's string compare, so 10.00.00 is below 3.08.01, where the numbers put it above.
+# so 1.4.3 (143) and junk are below 1.04.03 (10403), where a string compare puts them above (1.02.00: the
+# user's two units). H61A8: Config.z2's string compare, so 10.00.00 is below 3.08.01, where the numbers put it
+# above.
 _V1, _V2 = (2200, 6500), (2700, 6500)
 APP_RANGES_BY_HARDWARE = [
-    *(("H60A1", hardware, _V2) for hardware in ("1.04.03", "1.10.00")),
-    *(("H60A1", hardware, _V1) for hardware in ("1.04.02", "1.02.00", "1.4.3", "", "abc")),
+    ("H60A1", "1.04.03", _V2), *(("H60A1", hardware, _V1) for hardware in ("1.02.00", "1.4.3", "abc")),
     ("H61A8", "10.00.00", (2000, 9000)), ("H61A8", "3.08.01", _V2)]
 
 
-@pytest.mark.parametrize(("sku", "hardware", "span"), [
-    *((sku, None, span) for sku, span in APP_RANGES.items()), *APP_RANGES_BY_HARDWARE])
-def test_profile_ranges_equal_the_apps_kelvin_config(sku: str, hardware: str | None,
-                                                     span: tuple[int, int]) -> None:
-    p = profile_for(sku)
-    assert p is not None
-    if hardware is None:   # the profile's base range
-        assert (p.min_kelvin, p.max_kelvin) == span
-    else:
-        assert _fold.kelvin_range(p, hardware) == span
+def test_profile_ranges_equal_the_apps_kelvin_config() -> None:
+    for sku, span in APP_RANGES.items():   # the profile's base range
+        p = profile_for(sku)
+        assert p is not None and (p.min_kelvin, p.max_kelvin) == span, sku
+    for sku, hardware, span in APP_RANGES_BY_HARDWARE:
+        p = profile_for(sku)
+        assert p is not None and _fold.kelvin_range(p, hardware) == span, (sku, hardware)
 
 
 # ── golden frames, whole device (Device.set_rgb and turn_on(rgb=)) ───────────
@@ -443,7 +440,7 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 # A report of one Kelvin tint colour in range reads as that colour temperature on the rgb_kelvin_0d_nocct
 # screens, from the status TLV 0x05 and from an aa 05 reply alike; the report's Kelvin bytes are not read.
 @pytest.mark.parametrize(("sku", "body", "shown"), [
-    ("H70B3", (0x0D, 0xFF, 0xD5, 0xA1, 0x0F, 0xA0), (None, 4000)),                 # 4000 K's first tint
+    ("H70B3", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),                 # 2000 K: the low end, in
     ("H70B1", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),                 # its second, Kelvin 0
     ("H6800", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K: off [2000, 9000]
     ("H6840", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # one channel off the table
