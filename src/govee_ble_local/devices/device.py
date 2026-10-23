@@ -744,8 +744,11 @@ class Device:
         (:func:`.identify._latest_govee_key`), and from that entry alone: when it has no switch byte, the
         advertisement carries no on/off. Until one has changed, or when the advertisement lacks it, it is read
         from the first Govee entry with a switch byte, as from one broadcast. A key new in the advertisement
-        doesn't count as a change. The result is what :meth:`ingest_advertisement` would read from the same
-        advertisement now; only ingesting it moves on the advertisement this one is compared with."""
+        doesn't count as a change, but a foreign one that changes once does, and holds the on/off until the
+        device's own power next changes: unlike the app, which reads each broadcast on its own, the device's
+        identical frames fire no callback here (a known limitation, habluetooth#645). The result is what
+        :meth:`ingest_advertisement` would read from the same advertisement now; only ingesting it moves on
+        the advertisement this one is compared with."""
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return None
