@@ -450,8 +450,9 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 # Segments held from before the read (a write's, an earlier read's) are not tested: d is the report's one
 # colour until the same read's groups replace it (h60a1 Info4Detail.Q:416-420, SubMode4Color.j:113-148).
 # A 0x15 report carries no colour and leaves d to the same read's pieces, so the page shows them there too
-# (h60a1 Info4Detail.Q:399-407, cubelight CubeNewInfo4Detail.U:488-537). The status path is checked where the
-# burst brings the pieces: a polled row's status decode reads no TLV 0xA5.
+# (h60a1 Info4Detail.Q:399-407, cubelight CubeNewInfo4Detail.U:488-537), its Kelvin above 0 held unless their
+# tint replaces it (Q:401-404). The status path is checked where the burst brings the pieces: a polled row's
+# status decode reads no TLV 0xA5.
 _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
 _REPORT_15 = (0x15, 0x01, 0x00, 0x00)   # the bench H60A6 burst's report (test_wire_reassemble._BURST)
 _TINT = (0xFF, 0xD5, 0xA1)
@@ -477,14 +478,19 @@ _NO_PIECES = [
     ("H60A6", (1, 2), "stock", _TINT_4000, (_TINT, None), (_TINT,) * 12 + ((0xFF, 0xD5, 0xA2),)),
     # the 13 pieces all show red, not the report's tint: the page shows red, with no Kelvin remembered
     ("H60A6", (1, 2), "stock", _TINT_4000, ((0xFF, 0x00, 0x00), None), ((0xFF, 0x00, 0x00),) * 13),
-    # a 0x15 report, Kelvin 0, over the burst's 13 pieces, all 4000 K's tint: the page shows 4000 K
-    ("H60A6", (1, 2), "stock", _REPORT_15, (None, 4000), (_TINT,) * 13),
-    # a 0x15 report the Glide's decode reads nothing from, then the walk's 20 pieces, all red: red
-    ("H6061", (1, 1), "stock", _REPORT_15, ((0xFF, 0x00, 0x00), None), ((0xFF, 0x00, 0x00),) * 20),
+    # the bench 0x15 report over 13 pieces, the last a near miss: no one colour, so as decoded (colour kept)
+    ("H60A6", (1, 2), "stock", _REPORT_15, ((9, 9, 9), None), (_TINT,) * 12 + ((0xFF, 0xD5, 0xA2),)),
+    # a 0x15 report at 4000 K over the 13 pieces, all red: red, and the report's Kelvin held
+    ("H60A6", (1, 2), "stock", (0x15, 0x01, 0x0F, 0xA0), ((0xFF, 0x00, 0x00), None, 4000),
+     ((0xFF, 0x00, 0x00),) * 13),
+    # a 0x15 report the Glide's decode reads nothing from, then the walk's 20 pieces, all 4000 K's tint
+    ("H6061", (1, 1), "stock", _REPORT_15, (None, 4000), (_TINT,) * 20),
 ])
 def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     sku: str, pact: tuple[int, int], page: str, body: tuple[int, ...],
-    shown: tuple[tuple[int, int, int] | None, int | None], pieces: tuple[tuple[int, int, int], ...],
+    shown: (tuple[tuple[int, int, int] | None, int | None]
+            | tuple[tuple[int, int, int] | None, int | None, int]),
+    pieces: tuple[tuple[int, int, int], ...],
 ) -> None:
     p = profile_for(sku, pact=pact)      # a pact the row lists
     assert p is not None and p.color_page == page
@@ -501,14 +507,16 @@ def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     asyncio.run(poll._read_mode())
     if pieces:
         poll._apply_segments([Segment(i, rgb, 100) for i, rgb in enumerate(pieces)])
-    # initColor4Device syncs a Kelvin only when every piece is one tint (KelvinConfig.f:144-157)
+    # initColor4Device syncs a Kelvin only when every piece is one tint (KelvinConfig.f:144-157); a third
+    # value in shown is the Kelvin held otherwise
+    want = (*shown[:2], shown[2] if len(shown) == 3 else shown[1])
     for state in (via_status, poll.state) if burst.segments or not pieces else (poll.state,):
-        assert (state.rgb_color, state.color_temp_kelvin, state.last_color_temp_kelvin) == (*shown, shown[1])
+        assert (state.rgb_color, state.color_temp_kelvin, state.last_color_temp_kelvin) == want
     # the next poll's aa 05 goes unanswered: its walk shows no report, not this poll's
     poll._read_reply = AsyncMock(return_value=None)  # type: ignore[method-assign]
     asyncio.run(poll._read_mode())
     poll._apply_segments([Segment(0, (1, 2, 3), 100)])
-    assert (poll.state.rgb_color, poll.state.color_temp_kelvin) == shown
+    assert (poll.state.rgb_color, poll.state.color_temp_kelvin) == shown[:2]
 
 
 def test_h6047_state_tracks_the_kelvin_per_bar() -> None:
