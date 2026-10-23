@@ -9863,15 +9863,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:291-299,431-450
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,402-411,959-963,1482-1484
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-213,252-259
-        "59":   # H6058, the H6058AcNewDetail screen; its 33 b2 check goes out on every connect, empty without a secret
+        "59":   # H6058, the H6058AcNewDetail screen; modelled: the app's no-secret 33 b2 unlock is a library gap (hollowlamp.md)
           models: [H6058]
           pacts: ["1,1"]
-          support: app_traced
+          support: modelled
           color_scheme: h6006
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: true
-          empty_secret_check: true
           scene_dialect: untraced
           mode_color_parse: kelvin_0d_nocct   # split_hollowlamp/com/govee/hollowlamp/newdetails/h6058/H6058InfoDetail.java:258
           kelvin_range: [2200, 6500]
@@ -9885,12 +9884,10 @@ families:
             H6058 (H6058Maker goodsType 59; Model4BleIot.t -> H6058AcNewDetail -> H6058NewDetailVm), pact (1,1) only. Connect
             (T4, then the strategy's aa 05): the 33 b2 secret check first on every connect, then device-info, timer, sleep
             and wake-up reads and the time sync (not listed), aa 04, the aa 16 energy-saving read (ControllerEnergySaving, a
-            setting like the timers: not modelled), aa 01, aa 05. T4 adds Controller4Secret unconditionally (:128-135,
-            first in the list :168), so with no secret code known the app sends 33 b2 with an empty, zero-filled payload
-            (empty_secret_check: Controller4Secret.Companion.a(""), Encode.decryByBase64 of "" is no bytes, BleUtils.p
-            zero-fills) before any control frame, and the library sends the same empty check (the user's decision D4,
-            2026-10-22; it was the row's one gap, held at modelled until now). Whether the firmware needs it is
-            untraced. Heartbeat
+            setting like the timers: not modelled), aa 01, aa 05. Held at modelled: T4 adds Controller4Secret
+            unconditionally, so with no secret code known the app sends 33 b2 with an empty, zero-filled payload (the check
+            frame of an all-zero secret) before any control frame, where the library sends none; whether the firmware needs
+            it is untraced. Every other fact is traced. Heartbeat
             aa 01 (I3 true) as the live power (J3). Colour Config.x[59] = 2 -> Config.bu (h6006). Kelvin: KelvinConfig version
             1 = [2200, 6500], also the view model's colorTemRange (Support.getColorTemRange(59)). Brightness version 1 =
             [1, 100]. The 0x0d report goes through Info4Detail's default SubMode4Color strategy with no Kelvin test
@@ -9907,8 +9904,6 @@ families:
             - base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-38
             - base-classes12/com/govee/gateway/config/bean/controller/Controller.java:53
             - base-classes10/com/govee/base2home/util/Encode.java:29-40
-            - base-classes11/com/govee/base2light/kt/ble/AbsController.java:30-45
-            - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041
             - base-classes11/com/govee/base2light/pact/newdetail/Info4Detail.java:79,523-525
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1362-1364
@@ -11277,8 +11272,10 @@ families:
             Connect (Compose4InfoBleIot with the VM's strategy, in order): the 33 b2 secret (Controller4Secret of the
             account's secretCode: account_lock), sent with no secret test (initControllerNoEventList:126, first at :184),
             so with none known it is the empty check, 33 b2 and 17 zero bytes (DefInfo stores "" for a missing
-            secretCode, Controller4Secret.Companion.a("") decodes it to no bytes: empty_secret_check, the user's
-            decision D4, 2026-10-22), soft and hard versions, the 33 09 sync-time write in its 7-byte clock
+            secretCode, Controller4Secret.Companion.a("") decodes it to no bytes), which the library sends too
+            (empty_secret_check, the user's decision D4, 2026-10-22; read_secret's pairing read sends none, as the
+            pairing screen h6071.add.PairAcV1 reads the secret with no check, AbsPairAc4SecretV1.T1:107-113), soft
+            and hard versions, the 33 09 sync-time write in its 7-byte clock
             form (ControllerSyncTime.b, wire f_09 clock; not listed, as on the other light rows), timers, wake-up,
             sleep, aa 04, aa 01, aa 05 01 (the InfoDetail ctor strategy,
             rgb_kelvin_15). Heartbeat aa 01 (VM4Light.I3 true -> ConnectHeartbeat type 1); its frame[2] == 1 is the
@@ -11300,7 +11297,8 @@ families:
             temperature control: color_temp_control illumination, the kelvin_v9 scheme's 15 04 <K> then 33 04 (the
             server's per-device list, which Y3 prefers, is not in the APK). One piece (Support.a), no colour
             read-back. Not modelled: the 33 09 clock sync and the timer, wake-up and sleep reads. Scenes untraced.
-            Not hardware-verified (no H6071 on the bench; the aa 05 echo after a 15 04 write is unread).
+            Not hardware-verified (no H6071 on the bench; the aa 05 echo after a 15 04 write is unread, and whether
+            the firmware needs the empty check is untraced).
           doc-ref:
             - split_floorlamp/com/govee/h6071/pact/Support.java:35-38,45,57,80-93,106-114,197-212,219-226
             - split_floorlamp/com/govee/h6071/pact/SubLib.java:20-26
@@ -11319,6 +11317,8 @@ families:
             - base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:29-38
             - base-classes11/com/govee/base2light/kt/comm/DefInfo.java:106-110
             - base-classes10/com/govee/base2home/util/Encode.java:29-40
+            - split_floorlamp/com/govee/h6071/add/PairAcV1.java:44
+            - base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:107-113
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-67
             - base-classes11/com/govee/base2light/pact/newdetail/header/DelegateHeader.java:486-506
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,131-151,252-259
@@ -11357,16 +11357,16 @@ families:
           doc: >-
             H6075 (goodsType 67, KmpGoodsType UPGLOW_FLOOR_LAMP_WW; catalogue 67) on the same h6071 AcNewDetail /
             VM4Light screen as 57, pact (1,1) only (Support.addSupportPact, supportPactV1). Everything traced for 57
-            holds: the same connect read set (33 b2 secret first, the empty check with no secret known as on 57, then
-            versions, the clock-form sync time, timers,
-            wake-up, sleep, aa 04, aa 01, aa 05 01, rgb_kelvin_15), aa 01 heartbeat, power 33 01 <on>, header brightness
+            holds: the same connect read set (33 b2 secret first, with no secret known the empty check, which the
+            library sends as on 57, then versions, the clock-form sync time, timers, wake-up, sleep, aa 04, aa 01, aa 05 01, rgb_kelvin_15), aa 01 heartbeat, power 33 01 <on>, header brightness
             33 04 <percent> (version 1 = [1, 100]), and the illumination tab's Kelvin frame + brightness pair, the Kelvin
             frame from Config.x[67] = Qv = 9 -> Config.N[9] = JM -> Bytes.D: 33 05 15 04 <K u16be> over [2200, 6500] in
             100 K steps; no RGB frame. The colour page's Kelvin widget spans KelvinConfig version 0 = [2000, 9000], as
             for 57. Colour-page flags Config.I[67] = aQ: segment brightness and colour temperature on, with no
             relative-brightness builder, so no segments. One piece (Support.a; ColorPieceConfig.n also returns 1 for
             H6075). Bundled mode list [10, 13] (no colour page), so colour temperature is the illumination tab's
-            pair, as 57. Scenes untraced. Not hardware-verified (no H6075 on the bench).
+            pair, as 57. Scenes untraced. Not hardware-verified (no H6075 on the bench; whether the firmware needs
+            the empty check is untraced).
           doc-ref:
             - split_floorlamp/com/govee/h6071/pact/Support.java:35-38,45,57,80-93,106-114,197-212,219-226
             - split_floorlamp/com/govee/h6071/pact/Model.java:28-47

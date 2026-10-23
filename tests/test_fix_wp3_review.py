@@ -249,10 +249,30 @@ def test_unlock_goes_before_a_scene_upload(live: None) -> None:
     assert log[1][0] == "upload" and log[-1] == ("send", build.scene_activate(scene.code))
 
 
-def test_unlock_goes_before_a_read(live: None) -> None:
+@pytest.mark.parametrize(("sku", "empty"), [
+    ("H6050", False),   # H605051NewDetailVm (and the plugs): the check with a known secret only
+    ("H6075", True),    # h6071 67, VM4Light's connect strategy: Controller4Secret.a("") first at connect
+])
+def test_unlock_goes_before_a_read(live: None, sku: str, empty: bool) -> None:
     d, log = _locked("H6008", {0xB1: [_frame(0xAA, 0xB1, 0x01, *_SECRET)]})
     assert run(d.read_secret()) == _SECRET
     assert log == [("send", build.secret_check(_SECRET)), ("query", build.secret_read())]
+    # Decision D4, with no secret: the pairing screen reads alone (AbsPairAc4SecretV1.T1), so neither the
+    # unlock step of the session the read sets up nor the read sends a check; the next operation on that
+    # session sends the control screen's empty check first, and so does every later session.
+    setup: list[bytes] = []
+
+    def pairing_read(_request: bytes) -> list[bytes]:
+        setup.extend(e._unlock_frames())   # the unlock step of the session this read sets up
+        return [_frame(0xAA, 0xB1, 0x01, *_SECRET)]
+
+    e, elog = _dev(sku, {0xB1: pairing_read})
+    assert run(e.read_secret()) == _SECRET and setup == [] and elog == [("query", build.secret_read())]
+    run(e.set_power(True))
+    assert (elog[1] == ("send", build.empty_secret_check())) is empty
+    assert e._unlock_frames() == ([build.empty_secret_check()] if empty else [])
+    e.set_secret(_SECRET)
+    assert e._unlock_frames() == [build.secret_check(_SECRET)]
 
 
 def test_unlock_goes_before_the_segment_count_read(live: None) -> None:

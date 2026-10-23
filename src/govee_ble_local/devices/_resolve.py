@@ -232,8 +232,9 @@ the row lacks fails the build: nothing defaults silently.
   implements; it is never read as a control-time lock (D9: rows carry ``account_lock``).
 - The account lock (``account_lock``, ``DeviceProfile.requires_secret``): the 0xB2 check with a set secret.
   A row whose screen sends it on every connect, an empty one when the account holds no secret
-  (``Controller4Secret.Companion.a("")``: hollowlamp 59, h6071 57 / 67), says ``empty_secret_check``, only
-  with ``account_lock`` (``DeviceProfile.empty_secret_check``).
+  (``Controller4Secret.Companion.a("")``: h6071 57 / 67), says ``empty_secret_check``, only with
+  ``account_lock`` (``DeviceProfile.empty_secret_check``). Hollowlamp 59's screen sends it too; that row
+  is ``modelled`` and its ``doc`` names the gap.
 """
 from __future__ import annotations
 

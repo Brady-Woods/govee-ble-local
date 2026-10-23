@@ -71,16 +71,15 @@ model, from which the shipped readers are generated).
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but three row
   facts, below: segment colour temperature, the segment-brightness groups and a status row's device-info
   reads; the illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9,
-  the segment split that promotes H61D2-H61D6, the empty secret check that promotes H6058, and H6057's
-  light-switch power, below): 106 admitted by default (`app_traced`) and 52 behind `allow_modelled`
-  (`modelled`). The entries below admit 64 more by
+  the segment split that promotes H61D2-H61D6, and H6057's light-switch power, below): 105 admitted by
+  default (`app_traced`) and 53 behind `allow_modelled` (`modelled`). The entries below admit 64 more by
   default (16 through the resolver
   changes; H7004, H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and
   the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the
   device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose
   pairing write is read as an exact-pact condition; and H6057 on its light switch) and 11 more behind
-  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 269 admitted
-  by default and 68 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU now admitted by default:
+  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 268 admitted
+  by default and 69 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU now admitted by default:
   Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -98,9 +97,9 @@ model, from which the shipped readers are generated).
     **H61A9** (204, by the aa 40 section sum, below);
   - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
     **H618G**, **R618D**† (352);
-  - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84), **H6058** (59,
-    with the empty secret check, below); tablelampv1: **H6078** (128); straightfloorlamp: **H6076 / H8076**,
-    **R16D0**† (69), on an advertised pact only (below), **H16C0** (377);
+  - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
+    **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), on an advertised pact only
+    (below), **H16C0** (377);
   - h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162);
   - h6840: **H6840**, **H8840**† (278), **H6841**, **H8841**† (325), **H6842**, **R6842**† (381), **H6843**
     (382);
@@ -120,8 +119,8 @@ model, from which the shipped readers are generated).
   every unit; each row's `doc` names the difference):
   - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H703A / H703B** (263);
-  - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); h7090: **H7090**
-    (44); h1741: **H1741 / R1741** (365);
+  - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
+    (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256),
     each on an advertised pact only (below);
@@ -439,14 +438,14 @@ model, from which the shipped readers are generated).
   secret it sends the secret's check, as before. `Device.read_secret()` is the pairing screen's read, which sends
   the `aa b1` read alone while the account has no secret (`AbsPairAc4SecretV1.T1:107-113`): a session it sets up
   sends no empty check, and the next other operation on that session sends it first. A device that refuses the
-  empty check (a non-zero status) fails
-  the session with GoveeBleAuthError, as the app's connect read fails on it
-  (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`); a
+  empty check (a non-zero status) fails the session with GoveeBleAuthError, as the app's connect read fails on
+  it (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`); a
   missing ack is logged and the session goes on. Screens that test the secret first send none
-  (`H605051NewDetailVm:163-169`: H6050 / H6051), and nor do the plugs. Set on **H6058** (hollowlamp 59), now
-  admitted by default (`app_traced`; it was behind `allow_modelled` for this one gap, the user's decision D4,
-  2026-10-22), and on H6071 / H6075 (Changed). Source-traced, not live-verified: none of the three is on the
-  bench, and whether their firmware needs the empty check is untraced.
+  (`H605051NewDetailVm:163-169`: H6050 / H6051), and nor do the plugs. Set on H6071 / H6075 (h6071 57 / 67,
+  Changed), the user's decision D4 (2026-10-22). H6058 (hollowlamp 59) stays behind `allow_modelled` without
+  it in this release: its screen sends the same empty check, and the row's `doc` names that as its gap.
+  Source-modelled, not live-verified: neither H6071 nor H6075 is on the bench, and whether their firmware needs
+  the empty check is untraced.
 - **A write-only row type: the app's device-list card** (`DeviceProfile.session`, `"held"` by default, or
   `"per_command"`; `GoveeConnection.send_once`). It is for SKUs whose control screen has no BLE control, where
   the user chose to follow the card (DECISIONS.md 6). On a `per_command` profile:
@@ -674,17 +673,19 @@ model, from which the shipped readers are generated).
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
 - **H6071 / H6075 (h6071 57 / 67) send the app's empty `33 b2` check on every connect while no secret is set**
-  (the user's decision D4, 2026-10-22; `DeviceProfile.empty_secret_check`, Added). Their screen puts
-  `Controller4Secret.Companion.a` of the account's `secretCode` first in its connect read with no secret test
-  (`VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.initControllerNoEventList:126`, `:184`), and `""` there
-  (`DefInfo:106-110`) gives `33 b2`, 17 zero bytes and the xor (`Encode.decryByBase64:29-40`,
-  `BleUtils.p:1030-1041`). Every session without a secret sends that frame after the handshake, before any
-  other, where the library's account-locked rows sent no unlock without one. A device that refuses it fails the
+  (the user's decision D4, 2026-10-22, an approved connect-byte change; `DeviceProfile.empty_secret_check`,
+  Added). Their screen puts `Controller4Secret.Companion.a` of the account's `secretCode` first in its connect
+  read with no secret test (`VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.initControllerNoEventList:126`,
+  `:184`), and `""` there (`DefInfo:106-110`) gives `33 b2`, 17 zero bytes and the xor
+  (`Encode.decryByBase64:29-40`, `BleUtils.p:1030-1041`). Every session without a secret sends that frame
+  after the handshake, before any other, where the library's account-locked rows sent no unlock without one. A device that refuses it fails the
   session with GoveeBleAuthError, as the app's connect read fails; with a secret set the bytes are as before.
   `read_secret()`'s pairing read sends none: the app's pairing screen (`h6071.add.PairAcV1`, an
   `AbsPairAc4SecretV1`) reads the secret with no check (`AbsPairAc4SecretV1.T1:107-113`), so a session that
-  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first.
-  Source-traced, not live-verified: no H6071 or H6075 is on the bench.
+  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first. Both
+  SKUs are new in this release (Added), so no released SKU's frames change: every other account-locked row
+  (the plugs, hollowlamp 27 / 37, and H6058 behind `allow_modelled`) still sends no unlock without a secret.
+  Source-modelled (Govee Home 7.7.02), not live-verified: no H6071 or H6075 is on the bench.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
   it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
@@ -1024,8 +1025,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 207 with `support` (66), of them 169
-    `app_traced`, 34 `modelled` and the same 4 `hardware_verified`, and 98 without (118). 66 of the 207 had
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 207 with `support` (66), of them 168
+    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 98 without (118). 66 of the 207 had
     support at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The
     other 54 take it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069
     284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the
@@ -1037,11 +1038,13 @@ model, from which the shipped readers are generated).
     286), h6092 283 (H7070's exact-pact status read), h6071 57 / 67 (the `kelvin_v9` scheme), stringlightv2 40
     / 108 (the exact-pact pairing write) and h6057 104 (the light switch), all `app_traced` but h7072 294, h6119
     44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`). The segment split promoted the trace's
-    h61d3 202, and the empty secret check the trace's hollowlamp 59 (Added), to `app_traced`.
+    h61d3 202 to `app_traced`.
   - **`empty_secret_check`** (clientRow, `const` true, only with `account_lock: true`; devices.schema.json,
     `tools/gen_devices.py` KEEP): the screen sends its 0xB2 check on every connect, empty when the account holds no
-    secret. Set on hollowlamp 59 and h6071 57 / 67, whose docs cite the connect lists; absent on the other
-    `account_lock` rows (hollowlamp 27 / 37, `H605051NewDetailVm:163-169`, and the plugs). `govee_ble_frame`
+    secret. Set on h6071 57 / 67, whose docs cite the connect list and say the library sends the empty check;
+    absent on the other `account_lock` rows (hollowlamp 27 / 37, `H605051NewDetailVm:163-169`, and the plugs).
+    Hollowlamp 59 (H6058) stays `modelled` without it: its screen sends the empty check too
+    (`H6058NewDetailVm.T4:128-135`), and its `doc` names that as the row's gap. `govee_ble_frame`
     `secret_write` documents the empty check (`Controller4Secret.Companion.a("")`, `Encode.decryByBase64`,
     `BleUtils.p`'s zero fill: the 8 secret bytes zero).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
