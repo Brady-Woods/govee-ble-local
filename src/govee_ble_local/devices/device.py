@@ -186,8 +186,10 @@ class Device:
         self._ble_device = ble_device
         self._sku = (sku or profile.skus[0]).upper()
         self._secret = self._checked_secret(secret)
-        # set_secret() changed the secret: send its 33 b2 unlock on the live session (see set_secret).
+        # set_secret() changed the secret: send its 33 b2 unlock on the live session (see set_secret). Also
+        # armed when read_secret's session skipped the empty check (_unlock_frames).
         self._unlock_pending = False
+        self._reading_secret = 0         # read_secret() calls in flight: their reads send no empty check
         self._scenes_warm = False        # bundled scene catalog loaded off the loop (update()), and it worked
         # The last scene catalog load's failure (its message), which the sync scene properties raise with no
         # I/O until update() loads the catalog again off the loop (_scene_lookup).
@@ -642,10 +644,18 @@ class Device:
     def _unlock_frames(self) -> list[bytes]:
         """The unlock each session sends after the handshake on a :attr:`.DeviceProfile.requires_secret`
         profile: the set secret's ``33 b2`` check; with none, the empty check where the screen sends it on
-        every connect (:attr:`.DeviceProfile.empty_secret_check`), else nothing."""
+        every connect (:attr:`.DeviceProfile.empty_secret_check`), else nothing. A session that
+        :meth:`read_secret` sets up skips the empty check, as the pairing screen reads the secret with no
+        check (``AbsPairAc4SecretV1.T1:107-113``); the next other operation on that session sends it first
+        (:meth:`_send_pending_unlock`), as the control screen's connect read does."""
         if self._secret:
             return [build.secret_check(self._secret)]
-        return [build.empty_secret_check()] if self.profile.empty_secret_check else []
+        if not self.profile.empty_secret_check:
+            return []
+        if self._reading_secret:
+            self._unlock_pending = True
+            return []
+        return [build.empty_secret_check()]
 
     @staticmethod
     def _sync_time_frame() -> bytes:
@@ -705,22 +715,25 @@ class Device:
         self, budget: ConnectBudget | None = None, *, ticket: int | None = None,
     ) -> None:
         """Send the ``33 b2`` unlock for a secret set while the session was already up (see
-        :meth:`set_secret`). Without a live session nothing is sent: the next session setup sends
-        it. A rejection is a GoveeBleAuthError, as at session setup; an unacked unlock is only
+        :meth:`set_secret`), or, with none, the empty check a :meth:`read_secret` session skipped
+        (:meth:`_unlock_frames`; never during a read_secret). Without a live session nothing is sent: the
+        next session setup sends it. A rejection is a GoveeBleAuthError, as at session setup; an unacked
+        unlock is only
         logged, as at session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
         out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
         calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
         write retry's reconnect ran out of them) is raised, and the next session setup sends the
         unlock."""
-        if not self._unlock_pending:
-            return
+        if not self._unlock_pending or (self._reading_secret and not self._secret):
+            return   # a pairing read sends no empty check: it stays pending for the next operation
         self._unlock_pending = False   # taken: a concurrent operation doesn't send it twice
         secret = self._secret
-        if not secret or not self._conn.is_connected:
+        unlock = self._unlock_frames() if self._conn.is_connected else []
+        if not unlock:
             return   # the next session setup sends it (or there is none)
         done = False   # the write finished: acked, rejected, or unacked (treated as sent)
         try:
-            await self._conn.send(build.secret_check(secret), **_budget_kw(budget))
+            await self._conn.send(unlock[0], **_budget_kw(budget))
             done = True
         except GoveeBleCommandRejected as err:
             done = True
@@ -2764,10 +2777,16 @@ class Device:
 
         For the SETUP/bootstrap case: an unbound plug returns its secret without one
         being supplied, so call this BEFORE set_secret() (while `_secret` is None the
-        post-handshake unlock step sends nothing on a plug, avoiding the secret chicken-and-egg;
-        only a :attr:`.DeviceProfile.empty_secret_check` light sends the empty check then).
-        The frame builder is build.secret_read()."""
-        reply = await self._read_reply(build.secret_read())
+        post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg). As the
+        pairing screen reads it (``AbsPairAc4SecretV1.T1:107-113``: the read alone with no secret), a
+        :attr:`.DeviceProfile.empty_secret_check` light's session set up for this read sends no empty
+        check either; the next other operation on that session sends it first. On a session already up
+        the read goes on that session. The frame builder is build.secret_read()."""
+        self._reading_secret += 1
+        try:
+            reply = await self._read_reply(build.secret_read())
+        finally:
+            self._reading_secret -= 1
         return parse.parse_secret(reply) if reply else None
 
 
