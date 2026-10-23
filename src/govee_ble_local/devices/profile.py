@@ -481,18 +481,18 @@ class DeviceProfile:
     selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
     only its Part tab's Kelvin item over the selected ones, an item ``DelegateColorV2Part.Z0`` adds only
     where ``LightColorCapabilityCenter.C2`` holds: ``SupportPartColorTemConfig.b``'s goodsTypes (a
-    devices.yaml row's ``segment_color_temp``), but false on the H60A6 and H6047 by the user's decision 24,
-    and on the held H1232 / H1252 by its extension: their Part-tab Kelvin item widens every pick to whole
-    zones (``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``,
-    ``ColorModeH1232.canClickColorTem``, ``ColorModeH1252.canClickColorTem``), so it sends none to part of
-    one. False: ``set_segment_color_temp`` raises GoveeBleNotSupported before any I/O, and the device's
-    colour temperature is :meth:`~.device.Device.set_color_temp`'s. It does not govern
-    :meth:`~.device.Device.set_zone_color_temp`, whose frame masks a zone's pieces: that needs SEGMENTS,
-    COLOR_TEMP and a zone with segments only (and no :attr:`whole_device_kelvin`, which no zoned table
-    profile has). It means nothing without SEGMENTS and COLOR_TEMP in :attr:`capabilities`. True by default,
-    so a profile built by hand keeps 1.x's behaviour; the generated table sets it from the row (the default
-    on a row without both capabilities). An RGB pick that is a Kelvin tint colour still goes to the selected
-    pieces as the Kelvin frame (``Config.Yt``), as the app sends it, whatever this says."""
+    devices.yaml row's ``segment_color_temp``), but false on the four SKUs whose Part-tab Kelvin item widens
+    every pick to whole zones, so it sends none to part of one: H60A6 and H6047 (the user's decision 24;
+    ``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``), and H1232 and H1252
+    (held, behind ``allow_modelled``; decision 25, D11; ``ColorModeH1232.canClickColorTem``,
+    ``ColorModeH1252.canClickColorTem``). False: ``set_segment_color_temp`` raises GoveeBleNotSupported
+    before any I/O, and the device's colour temperature is :meth:`~.device.Device.set_color_temp`'s. It does
+    not govern :meth:`~.device.Device.set_zone_color_temp`, whose frame masks a zone's pieces: that needs
+    SEGMENTS, COLOR_TEMP and a zone with segments only (and no :attr:`whole_device_kelvin`, which no zoned
+    table profile has). It means nothing without SEGMENTS and COLOR_TEMP in :attr:`capabilities`. True by
+    default, so a profile built by hand keeps 1.x's behaviour; the generated table sets it from the row (the
+    default on a row without both capabilities). An RGB pick that is a Kelvin tint colour still goes to the
+    selected pieces as the Kelvin frame (``Config.Yt``), as the app sends it, whatever this says."""
     segment_brightness_groups: tuple[tuple[int, ...], ...] = field(default=(), kw_only=True)
     """Disjoint groups of segment indices that :meth:`~.device.Device.set_segment_brightness` widens a
     selection to: every segment of each group holding a selected one goes into the ``33 05 15 02`` mask and
@@ -782,8 +782,10 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
 
 
 class _Route(NamedTuple):
-    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any), its profile, and whether
-    it is taken only on an advertised pact (``_resolve.Route.needs_pact``)."""
+    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any), its profile, and
+    whether it is taken only on an advertised pact (``_resolve.Route.needs_pact``: the target row of a
+    pact-conditioned reassignment, a route of a SKU a pairing write names at an exact pact, a
+    ``pact_required`` row, or a pact route, H60A6's at (1, 1))."""
     goods_type: int
     pacts: frozenset[tuple[int, int]] | None
     profile: DeviceProfile
@@ -798,8 +800,9 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     each row of a SKU a pairing write names at an exact pact: without the pact the library can't tell the
     row's facts from those the app runs at the write's pact (H615A-E's (65535, 255)). And so does a
     ``pact_required`` row: its goodsType also runs, at pacts the row doesn't list, a path the row doesn't
-    serve (the (1,1) of straightfloorlamp 69 and the h70b3 rows), so a pact-less advert may be one of
-    those."""
+    serve (the (1,1) of straightfloorlamp 69, the h70b3 rows and pact_tvlightv2 24, the (1,2) / (1,3) of
+    h70b6 329), so a pact-less advert may be one of those. A pact route is its pact's alone, so a pact-less
+    advert takes the row's own route (H60A6: the 13 segments)."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -845,13 +848,15 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     served only at its rows' pacts, as the app's scan serves it (``AbsBaseBleModel.e``: ``checkProtocol`` ->
     ``Pact.i`` refuses a pact the goodsType doesn't accept), but for the 1.x pact fallback (decision D3,
     ``_resolve.PACT_FALLBACK_SKUS``): at a pact no row accepts, each of the 18 SKUs 1.4.0 shipped still routes
-    to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted.
+    as a unit advertising no pact does, to its one ``hardware_verified`` / ``app_traced`` profile there, as in
+    1.x, so no released unit is demoted (a pact route, such as H60A6's at (1, 1), is taken at its pact alone).
     A SKU whose routes all need a pact is unsupported without one, whatever the goodsType: one only
     pact-conditioned reassignments' target rows route, as the app keeps a pact-less unit at its source
     goodsType; one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
     that pact, where the app runs other frames than the row's; and one only ``pact_required`` rows route
-    (H6076 / H8076 / R16D0, and the ``modelled`` h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 / H6811 /
-    H8811), whose pact-less advert may carry a pact where the app runs a path the row doesn't serve."""
+    (H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and the ``modelled`` h70b3 rows' H70B3 / H70B4 / H70B5 /
+    H6810 / H6811 / H8811), whose pact-less advert may carry a pact where the app runs a path the row
+    doesn't serve."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -860,7 +865,7 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
             return next(iter(hits.values())) if len(hits) == 1 else None
     if pact is not None and key in _resolve.PACT_FALLBACK_SKUS:   # D3, the 1.x compatibility rule
         loose = {id(r.profile): r.profile for r in _ADMITTED[1].get(key, ())
-                 if goods_type is None or r.goods_type == goods_type}
+                 if _accepts(r, None) and (goods_type is None or r.goods_type == goods_type)}
         if len(loose) == 1:
             return next(iter(loose.values()))
     return None

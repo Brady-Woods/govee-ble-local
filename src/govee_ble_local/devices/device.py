@@ -36,7 +36,7 @@ from ..exceptions import (
     GoveeBleUnknownName,
 )
 from ..identify import GoveeAdvertisement, bound_advertisement, parse_broadcast_onoff
-from ..identify import _pact_encrypt_flags
+from ..identify import _govee_record, _latest_govee_key, _pact_entries
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
@@ -248,7 +248,15 @@ class Device:
         self._pact: tuple[int, int] | None = None
         # Parsed once, used twice; read as a bound device's, whatever its name (bound_advertisement).
         adv = bound_advertisement(advertisement_data, self._sku, fallback_name=ble_device.name)
-        self._learn_pact(adv)
+        self._learn_pact(adv.pact if adv is not None else None)
+        # Whether the last advertisement that said anything about the pact was ambiguous (its WARNING is
+        # logged once per spell; _learn_advertised_pact).
+        self._pact_ambiguous = False
+        # The Govee entries of the last advertisement given (company id -> value), and the company id of the
+        # one whose value last changed, or None until one has: the entry the on/off is read from
+        # (advertised_on).
+        self._govee_last = _govee_record(getattr(advertisement_data, "manufacturer_data", None) or {})
+        self._govee_latest: int | None = None
         enc = self._resolve_encryption(adv)
         # The mode each session starts from: the constructor's, then the last one an advertisement handed to
         # the connection (_learn_cipher); and whether the last advertisement that said anything about it was
@@ -269,12 +277,12 @@ class Device:
             heartbeat_timing=profile.heartbeat_timing,
         )
 
-    def _learn_pact(self, adv: GoveeAdvertisement | None) -> bool:
+    def _learn_pact(self, pact: tuple[int, int] | None) -> bool:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
         (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
         the TLV types the 0xAC status read requests (:meth:`_status_types`), and picks the
         profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
-        without pact info changes nothing. Returns whether :attr:`pact` changed.
+        without pact info (``pact`` None) changes nothing. Returns whether :attr:`pact` changed.
 
         The profile was routed when the device was built (``create_device``). A pact heard later that none
         of its rows accepts, where the app's screen takes another row, re-selects that row's profile when
@@ -282,24 +290,55 @@ class Device:
         range, H6118 / H6194 / H6179 at (10, 1) after an advert without a pact), as the app runs the row the
         unit's pact gives it; :attr:`profile` is then that profile, and the capabilities, zones and the link
         are unchanged. Otherwise (the app's scan would refuse the device, or it runs the device on other
-        facts: another row that differs in more, or a pairing write's pact no row lists, H615A-E's
-        (65535, 255)) the profile is kept and a warning is logged, once per change of pact."""
-        if adv is None or adv.pact is None or adv.pact == self._pact:
+        facts: another row that differs in more, a pact route such as H60A6's at (1, 1) after an advert
+        without a pact, or a pairing write's pact no row lists, H615A-E's (65535, 255)) the profile is kept
+        and a warning is logged, once per change of pact."""
+        if pact is None or pact == self._pact:
             return False
-        self._pact = adv.pact
-        if refuses_pact(self.profile, self._sku, adv.pact):
-            other = reroute(self.profile, self._sku, adv.pact)
+        self._pact = pact
+        if refuses_pact(self.profile, self._sku, pact):
+            other = reroute(self.profile, self._sku, pact)
             if other is not None:
                 _LOGGER.info("%s (%s): advertises pact %d,%d, which routes it to another row; it takes that "
-                             "row's profile", self._ble_device.address, self._sku, *adv.pact)
+                             "row's profile", self._ble_device.address, self._sku, *pact)
                 self.profile = other
                 return True
             _LOGGER.warning(
                 "%s (%s): advertises pact %d,%d, which no row of its profile accepts (the app's scan refuses "
                 "it there, or runs it on other facts); it keeps the profile it was built with",
-                self._ble_device.address, self._sku, *adv.pact,
+                self._ble_device.address, self._sku, *pact,
             )
         return True
+
+    def _learn_advertised_pact(self, entries: dict[int, tuple[bool, tuple[int, int]]]) -> bool:
+        """Learn the pact of an ingested advertisement (:meth:`_learn_pact`) when every Govee pact entry of it
+        (:func:`.identify._pact_entries`) carries the same one, as :meth:`_learn_cipher` learns the flag. The
+        app parses both from one broadcast (``BleUtil.parseBleBroadcastPact:779-803``): the device card keeps
+        the pact (``AbsBaseBleModel.y:383-390``, from ``AbsBleItem.B:107-130``), and the control screen keeps
+        the flag (``AbsViewMode4OpWithOtaCheck.j1:570-591`` -> ``w2:171-178``).
+
+        An advertisement with no pact entry changes nothing, as the app's ``y`` keeps its pact then. One whose
+        entries carry different pacts is a merged record (another header heard earlier, or another device's
+        frame) whose latest broadcast can't be told: the pact stays, with a WARNING once until an
+        advertisement agrees again. A difference in the version or the flag alone doesn't count. Returns
+        whether :attr:`pact` changed."""
+        pacts = {header: pact for header, (_, pact) in entries.items()}
+        heard = set(pacts.values())
+        if len(heard) > 1:
+            if not self._pact_ambiguous:
+                self._pact_ambiguous = True
+                _LOGGER.warning(
+                    "%s (%s): advertises Govee pacts %s (a merged advertisement record: an earlier header, "
+                    "or another device's frame); the pact stays %s",
+                    self.address, self._sku,
+                    ", ".join(f"{t},{c} (header 0x{header:02x})" for header, (t, c) in pacts.items()),
+                    "unknown" if self._pact is None else f"{self._pact[0]},{self._pact[1]}",
+                )
+            return False
+        if not heard:
+            return False
+        self._pact_ambiguous = False
+        return self._learn_pact(heard.pop())
 
     @property
     def pact(self) -> tuple[int, int] | None:
@@ -316,7 +355,7 @@ class Device:
             return self.profile.encryption
         return Encryption.AES_RC4_PSK if adv.encrypted else Encryption.NONE
 
-    def _learn_cipher(self, mfg: dict[int, bytes]) -> None:
+    def _learn_cipher(self, entries: dict[int, tuple[bool, tuple[int, int]]]) -> None:
         """Re-learn the advertised encrypt flag for the next session, as the app overwrites its per-MAC
         flag from each parsed broadcast (``BleBroadVersionCache.d:109-142``, from
         ``AbsViewMode4OpWithOtaCheck.w2``). The app reads that flag on every frame read, written or notified
@@ -327,12 +366,12 @@ class Device:
         (:meth:`.GoveeConnection.set_advertised_encryption`); the INFO line names both.
 
         Learned only when every Govee pact entry of the advertisement carries the same flag
-        (:func:`.identify._pact_encrypt_flags`). An advertisement with none says nothing, as a broadcast
+        (:func:`.identify._pact_entries`). An advertisement with none says nothing, as a broadcast
         without a pact block writes nothing in the app (``GoodsType.parseBleBroadcastPactInfo:1551-1561``).
         One whose entries disagree is a merged record (another header heard earlier, or another device's
         frame) whose latest broadcast can't be told: the cipher stays, with a WARNING once until an
         advertisement agrees again."""
-        flags = _pact_encrypt_flags(mfg)
+        flags = {header: encrypted for header, (encrypted, _) in entries.items()}
         heard = set(flags.values())
         if len(heard) > 1:
             if not self._cipher_ambiguous:
@@ -591,8 +630,8 @@ class Device:
         temperature over the whole device only (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination
         tab, or a colour page whose Kelvin pick sets every piece). On a piece selection (``pieces``,
         :meth:`set_segment_color_temp`) also :attr:`.DeviceProfile.segment_color_temp` (false where the app's
-        Kelvin covers every piece, and on the H60A6 and H6047 by decision 24, whose Part-tab Kelvin covers
-        whole zones). A zone's Kelvin (:meth:`set_zone_color_temp`, ``pieces`` false) doesn't read it."""
+        Kelvin covers every piece, and on the SKUs that field lists, whose Part-tab Kelvin covers whole
+        zones). A zone's Kelvin (:meth:`set_zone_color_temp`, ``pieces`` false) doesn't read it."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         p = self.profile
@@ -738,17 +777,39 @@ class Device:
         from the Govee manufacturer data whatever the advertised name. None also for an advertisement without
         manufacturer data, or whose Govee broadcast has no switch byte (a header below 2, too short).
 
+        The app reads it from each broadcast on its own. A scanner's record may hold several Govee entries
+        (Home Assistant's merges every frame into it, so the header before an OTA, or another device's frame,
+        stays in it, frozen at its last value). The on/off is read from the entry whose value last changed
+        between two advertisements this Device was given, the one the latest broadcast carried
+        (:func:`.identify._latest_govee_key`), and from that entry alone: when it has no switch byte, the
+        advertisement carries no on/off. Until one has changed, or when the advertisement lacks it, it is read
+        from the first Govee entry with a switch byte, as from one broadcast. A key new in the advertisement
+        doesn't count as a change, but a foreign one that changes once does, and holds the on/off until the
+        device's own power next changes: unlike the app, which reads each broadcast on its own, the device's
+        identical frames fire no callback here (a known limitation, habluetooth#645). The result is what
+        :meth:`ingest_advertisement` would read from the same advertisement now; only ingesting it moves on
+        the advertisement this one is compared with.
+
         Always None on a :attr:`.DeviceProfile.light_switch_power` profile (H6057): its power is the light
         switch, which only the ``aa 34`` read reads back. The switch byte is the device-list card's
         (``AbsBaseBleModel.z``), whose toggle writes the ``33 01`` main switch (``AbsLightModel4BleIot.v0`` ->
         ``AbsDeviceModel4BleIot.l:72-88``), and the control screen never reads it, so nothing shows it to be
         the light's state rather than the main switch's (on while white noise plays)."""
-        if self.profile.light_switch_power:
-            return None
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return None
-        return parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
+        return self._read_advertised_on(mfg)[0]
+
+    def _read_advertised_on(self, mfg: dict[int, bytes]) -> tuple[bool | None, dict[int, bytes], int | None]:
+        """:meth:`advertised_on` of ``mfg``, with the Govee entries and the latest key an ingest keeps for the
+        next advertisement (kept on a :attr:`.DeviceProfile.light_switch_power` profile too, whose on/off is
+        None)."""
+        record = _govee_record(mfg)
+        latest = _latest_govee_key(record, self._govee_last, self._govee_latest)
+        if self.profile.light_switch_power:
+            return None, record, latest
+        entry = {latest: record[latest]} if latest in record else record
+        return parse_broadcast_onoff(entry, on_mask=self.profile.advert_on_mask), record, latest
 
     def ingest_advertisement(self, advertisement_data: AdvertisementData) -> bool:
         """Update passive state from a BLE advertisement — no connection needed.
@@ -757,7 +818,10 @@ class Device:
         ``advert_on_mask`` on the plugs; none on the H6057's light switch), the advertised pact (:attr:`pact`)
         and the encrypt flag, all whatever the advertised name. The flag picks the command channel of the
         next session, never of the one that is up, and only when every Govee pact entry agrees on it
-        (:meth:`_learn_cipher`); a BGC version of 1 or 2 still overrides it (:attr:`encryption`).
+        (:meth:`_learn_cipher`); a BGC version of 1 or 2 still overrides it (:attr:`encryption`). The pact
+        too is learned only when every pact entry agrees (:meth:`_learn_advertised_pact`), while the on/off
+        comes from the Govee entry that last changed (:meth:`advertised_on`): a merged record can hold a
+        stale or foreign entry, frozen at its last value.
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
         stored, whether or not the on/off changed with it. A change of the flag fires nothing.
@@ -771,10 +835,10 @@ class Device:
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
-        adv = bound_advertisement(advertisement_data, self._sku, fallback_name=self._ble_device.name)
-        pact_changed = self._learn_pact(adv)
-        self._learn_cipher(mfg)
-        on = self.advertised_on(advertisement_data)
+        entries = _pact_entries(mfg)
+        pact_changed = self._learn_advertised_pact(entries)
+        self._learn_cipher(entries)
+        on, self._govee_last, self._govee_latest = self._read_advertised_on(mfg)
         # Within the suppress window a command/read is fresher than the lagging advertised on/off.
         power_changed = False
         if on is not None and on != self._state.is_on and time.monotonic() >= self._advert_ignore_until:
@@ -1574,13 +1638,12 @@ class Device:
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
-        :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or on the H60A6 and H6047
-        one that widens to whole zones, the user's decision 24), where
-        :attr:`.DeviceProfile.whole_device_kelvin` is set (a table profile with it and SEGMENTS has
-        segment_color_temp false too) or for non-maskable schemes; GoveeBleInvalidValue for a non-int
-        ``kelvin`` or a bad index; GoveeBleError if a hand-built profile with
-        :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile reaches it:
-        H6062, the one row that reads its segment count, has segment_color_temp false)."""
+        :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or one that widens to
+        whole zones, on the SKUs that field lists), where :attr:`.DeviceProfile.whole_device_kelvin` is set (a
+        table profile with it and SEGMENTS has segment_color_temp false too) or for non-maskable schemes;
+        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built profile
+        with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile reaches
+        it: H6062, the one row that reads its segment count, has segment_color_temp false)."""
         self._require_masked_kelvin(pieces=True)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()

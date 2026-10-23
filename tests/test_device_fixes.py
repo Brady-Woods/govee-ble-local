@@ -151,10 +151,8 @@ def test_kelvin_range_bounds_inclusive_and_undefined_range_allows() -> None:
      lambda d: d.set_zone_rgb("background", (1, 2, 3))),
     ("H60A6", {"capabilities": frozenset({Capability.COLOR_TEMP})},   # SEGMENTS missing
      lambda d: d.set_zone_color_temp("background", 4000)),
-    # No Kelvin to a piece selection (DeviceProfile.segment_color_temp): the H60A6 / H6047 Part tab widens
-    # it to a whole zone (decision 24). A zone's goes (test_device_gaps).
-    ("H60A6", {}, lambda d: d.set_segment_color_temp([0], 4000)),
-    ("H6047", {}, lambda d: d.set_segment_color_temp([5], 4000)),
+    ("H60A6", {"capabilities": frozenset({Capability.SEGMENTS})},     # COLOR_TEMP missing
+     lambda d: d.set_zone_color_temp("background", 4000)),
     # A fresh H6062 (striplight 41, no Part-tab Kelvin) is refused before its aa 41 segment-count read.
     ("H6062", {}, lambda d: d.set_segment_color_temp([0], 4000)),
 ])

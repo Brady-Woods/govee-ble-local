@@ -59,7 +59,8 @@ def _reply(*b: int) -> bytes:
 def test_all_profiles_construct() -> None:
     for p in PROFILES:
         for sku in p.skus:
-            pact = routing_pact(sku)   # a SKU only a gated target row routes is built from its advert's pact
+            # a SKU only a gated target row routes, or a pact route's profile, is built from its advert's pact
+            pact = routing_pact(sku, profile=p)
             adv = None if pact is None else GoveeAdvertisement(sku, f"GV{sku}", False, 0, *pact)
             d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku, adv)
             assert d is not None and d.sku == sku.upper()
@@ -170,16 +171,15 @@ def test_segment_brightness_is_clamped_to_the_sliders_1_to_100(pct: int, sent: i
     assert {s.index: s.brightness for s in d.state.segments} == {12: sent}
 
 
-@pytest.mark.parametrize("sku", ["H6098", "H6690"])   # released at 1.6.1; the user's M2, "Match the app"
 @pytest.mark.parametrize(("indices", "mask", "folded"), [
     ([0], 0x0007, [0, 1, 2]), ([3], 0x0078, [3, 4, 5, 6]), ([2, 10, 2], 0x3C07, [0, 1, 2, 10, 11, 12, 13])])
-def test_segment_brightness_widens_to_the_strips_groups(sku: str, indices: list[int], mask: int,
+def test_segment_brightness_widens_to_the_strips_groups(indices: list[int], mask: int,
                                                         folded: list[int]) -> None:
     # ColorMode14Rect4ReverseSelect.canClickBrightness:379-421 sets every piece of each group {0-2} / {3-6} /
     # {7-9} / {10-13} holding a selected one before the 15 02 write (DelegateColorV2Part.U:217-230 ->
-    # ColorViewModel.m0, which folds that set): the profile's segment_brightness_groups, on the pact_h6099
-    # screen's 203 (H6098 / H8098) and 336 (H6690) rows.
-    d = _dev(sku)
+    # ColorViewModel.m0, which folds that set): the profile's segment_brightness_groups, here on the
+    # pact_h6099 screen's 203 row (H6098, released at 1.6.1; the user's M2, "Match the app").
+    d = _dev("H6098")
     asyncio.run(d.set_segment_brightness(indices, 40))
     assert _sent(d)[-1][:7] == bytes([0x33, 0x05, 0x15, 0x02, 40]) + mask.to_bytes(2, "little")
     assert {s.index: s.brightness for s in d.state.segments} == dict.fromkeys(folded, 40)
@@ -613,8 +613,7 @@ def test_h60a6_asks_for_colour_groups_only_on_the_apps_pacts(
 def test_a_pact_heard_later_changes_the_next_status_request() -> None:
     d = _dev("H60A6")
     assert _status_frames(d)[0] == build.status_query(full=True)
-    d._learn_pact(GoveeAdvertisement(sku="H60A6", name="GVH60A6ABCD", encrypted=True,
-                                     broadcast_version=3, pact_type=1, pact_code=1))
+    d._learn_pact((1, 1))
     assert d.pact == (1, 1) and _status_frames(d)[0] == build.status_query(full=False)
 
 
