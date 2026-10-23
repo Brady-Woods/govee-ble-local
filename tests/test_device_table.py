@@ -477,8 +477,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "where power_live [] and the relay take power from the reply to power"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat_power=True),
      "heartbeat_power is served only on an unzoned status row"),
+    ("h7020", "296", lambda f: _row(f, "296").update(heartbeat_power=False),   # every such row says it
+     "no heartbeat_power on an unzoned status row whose power_live has heartbeat_aa01"),
     # the keep-alive re-read (J3 -> Compose4Off2On): with heartbeat_power, its pieces and the wire group size
-    ("h7020", "296", lambda f: _row(f, "296").update(heartbeat_power=False, heartbeat_reread={"pieces": 15}),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat_reread={"pieces": 15}),
      "heartbeat_reread without heartbeat_power"),
     ("rgbiclight", "351", lambda f: _row(f, "351").update(heartbeat_reread={"pieces": 0}),
      "heartbeat_reread pieces 0 (1 or more"),

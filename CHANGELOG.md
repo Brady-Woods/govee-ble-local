@@ -1776,7 +1776,7 @@ model, from which the shipped readers are generated).
 - **`heartbeat_power` and `heartbeat_reread`, a status row's aa 01 keep-alive power and its power-change re-read**:
   devices.schema.json's clientRow takes the boolean and the `{ pieces }` object (and gen_devices keeps both). The
   resolver serves `heartbeat_power` only on an unzoned status row whose `power_live` has `heartbeat_aa01`, and
-  `heartbeat_reread` only with it and with the wire group's `num_per_group` (its aa a5 group size, which becomes
+  refuses such a row without it (every one says it), and `heartbeat_reread` only with it and with the wire group's `num_per_group` (its aa a5 group size, which becomes
   `DeviceProfile.color_readback_per_batch` there). The rows the user's decision 17 named say `heartbeat_power`
   (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313, h3700 383), and so do
   h7020 316 / 318 / 337 / 391 / 411, which run 296's screen (`NewDetailVM.I3:735-742` true, `J3:744-756`; the

@@ -214,8 +214,9 @@ the row lacks fails the build: nothing defaults silently.
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
   ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
   ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
-  ``push_30``-only row may send any. A status row that says ``heartbeat_power`` (an opt-in, served only with
-  ``heartbeat_aa01``, heartbeat ``power`` and no zones: the reply is the one switch) follows the screen: the
+  ``push_30``-only row may send any. A status row that says ``heartbeat_power`` (served only with
+  ``heartbeat_aa01``, heartbeat ``power`` and no zones: the reply is the one switch; and every such row must
+  say it) follows the screen: the
   status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
   ``DeviceProfile.heartbeat_power``): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020
   296, h7076 313, h3700 383 (the user's decision 17), h7020 316 / 318 / 337 / 391 / 411 (decision 26) and
@@ -1459,13 +1460,18 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sent and sent != {heartbeat}:
         fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
              f"power from the reply to {' / '.join(sorted(sent))}")
-    # The row's opt-in: the status read once per link, then the power from each aa 01 keep-alive reply
+    # The row's fact: the status read once per link, then the power from each aa 01 keep-alive reply
     # (DeviceProfile.heartbeat_power), which is the whole device's one switch (ShareVM.N3 -> J3). Its
-    # heartbeat is then power (the check above).
+    # heartbeat is then power (the check above). Every such row says it (the user's decisions 17 and 26), so
+    # one that leaves it out is refused too.
     beat_power = bool(row.get("heartbeat_power", False))
-    if beat_power and not (readback == "status" and "heartbeat_aa01" in lives and not row.get("zones")):
+    beat_row = readback == "status" and "heartbeat_aa01" in lives and not row.get("zones")
+    if beat_power and not beat_row:
         fail("heartbeat_power is served only on an unzoned status row whose power_live has heartbeat_aa01 "
              "(the keep-alive reply is the one switch)")
+    if beat_row and not beat_power:
+        fail("no heartbeat_power on an unzoned status row whose power_live has heartbeat_aa01 (every such "
+             "row's screen sets the switch from each keep-alive reply, ShareVM.N3 -> J3: decisions 17 / 26)")
     # The screen's re-read on a keep-alive power change (J3 -> Compose4Off2On: aa 05, then its aa a5
     # groups): the pieces it walks, in groups of the wire group's num_per_group
     # (DeviceProfile.heartbeat_reread_pieces).
