@@ -271,8 +271,36 @@ def test_unlock_goes_before_a_read(live: None, sku: str, empty: bool) -> None:
     run(e.set_power(True))
     assert (elog[1] == ("send", build.empty_secret_check())) is empty
     assert e._unlock_frames() == ([build.empty_secret_check()] if empty else [])
+    power = elog[-1]
     e.set_secret(_SECRET)
     assert e._unlock_frames() == [build.secret_check(_SECRET)]
+    # Only the read's own session skips the check. A session another operation sets up while the read is on
+    # the link sends it, and a write that overlaps the read (asyncio.gather) waits for it, then sends the
+    # check first; a profile without the check waits for nothing.
+    f, flog = _dev(sku)
+    reply = asyncio.Event()
+
+    async def slow_read(frame: bytes, **_k: object) -> list[bytes]:
+        f._unlock_frames()          # the unlock step of the session this read sets up
+        await reply.wait()          # the read is on the link
+        flog.append(("query", frame))
+        return [_frame(0xAA, 0xB1, 0x01, *_SECRET)]
+
+    f._conn.query = AsyncMock(side_effect=slow_read)  # type: ignore[method-assign]
+
+    async def overlap() -> list[bytes]:
+        read = asyncio.ensure_future(f.read_secret())
+        await asyncio.sleep(0)
+        other = f._unlock_frames()  # the unlock step of a session another operation sets up meanwhile
+        write = asyncio.ensure_future(f.set_power(True))
+        await asyncio.sleep(0)      # the write runs up to its unlock step
+        reply.set()
+        await asyncio.gather(read, write)
+        return other
+
+    assert run(overlap()) == ([build.empty_secret_check()] if empty else [])
+    assert flog == ([("query", build.secret_read()), ("send", build.empty_secret_check()), power] if empty
+                    else [power, ("query", build.secret_read())])
 
 
 def test_unlock_goes_before_the_segment_count_read(live: None) -> None:

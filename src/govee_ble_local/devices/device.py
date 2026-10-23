@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import copy
 import logging
 import time
@@ -63,6 +64,12 @@ _ReadResult = Literal["applied", "stale", "none"]
 # the profile table with one of them; the power-only and power-and-brightness screens (H7004 /
 # H7017, ControllerStrategyConfig.k1) send none. A test pins that each of the others still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
+
+# The Device whose read_secret() runs in this task (Device._pairing_read). The connection sets a session up,
+# and so calls Device._unlock_frames, in the task of the operation that opened it, so only the read's own
+# session setup and unlock step see it: an operation in another task (asyncio.gather) never does.
+_PAIRING_READ: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "govee_ble_local_pairing_read", default=None)
 
 
 class _BudgetKw(TypedDict, total=False):
@@ -187,7 +194,10 @@ class Device:
         # set_secret() changed the secret: send its 33 b2 unlock on the live session (see set_secret). Also
         # armed when read_secret's session skipped the empty check (_unlock_frames).
         self._unlock_pending = False
-        self._reading_secret = 0         # read_secret() calls in flight: their reads send no empty check
+        # Held by read_secret() across its read (_read_reply), inside _read_gate, before the connection lock.
+        # A session that read sets up sends no empty check (_unlock_frames), so an operation that overlaps the
+        # read waits for it before its own unlock step (_send_pending_unlock), which then sends the check.
+        self._pairing_lock = asyncio.Lock()
         self._scenes_warm = False        # bundled scene catalog loaded off the loop (update()), and it worked
         # The last scene catalog load's failure (its message), which the sync scene properties raise with no
         # I/O until update() loads the catalog again off the loop (_scene_lookup).
@@ -238,7 +248,8 @@ class Device:
         self._link_write = (0, -1)
         # Held by a scene write across its upload and activation, and briefly by every read-back
         # (_read_reply, _query_status), so no poll lands between the two (see set_scene_by_name).
-        # Innermost device lock: taken after _scene_lock and _bar_lock, before the connection lock.
+        # Innermost device lock but _pairing_lock: taken after _scene_lock and _bar_lock, before the
+        # connection lock.
         self._read_gate = asyncio.Lock()
         # A session="per_command" profile's writes (the device-list card's taps): held by each of its commits
         # (_commit) and across a _turn_on_taps call's power-on and brightness, so no other write lands between
@@ -652,15 +663,21 @@ class Device:
         every connect (:attr:`.DeviceProfile.empty_secret_check`), else nothing. A session that
         :meth:`read_secret` sets up skips the empty check, as the pairing screen reads the secret with no
         check (``AbsPairAc4SecretV1.T1:107-113``); the next other operation on that session sends it first
-        (:meth:`_send_pending_unlock`), as the control screen's connect read does."""
+        (:meth:`_send_pending_unlock`), as the control screen's connect read does. Only the read's own session
+        skips it (:meth:`_pairing_read`): a session another operation sets up while the read is in flight
+        sends it."""
         if self._secret:
             return [build.secret_check(self._secret)]
         if not self.profile.empty_secret_check:
             return []
-        if self._reading_secret:
+        if self._pairing_read():
             self._unlock_pending = True
             return []
         return [build.empty_secret_check()]
+
+    def _pairing_read(self) -> bool:
+        """True in the task of this Device's :meth:`read_secret`, while it runs (``_PAIRING_READ``)."""
+        return _PAIRING_READ.get() is self
 
     @staticmethod
     def _sync_time_frame() -> bytes:
@@ -721,15 +738,22 @@ class Device:
     ) -> None:
         """Send the ``33 b2`` unlock for a secret set while the session was already up (see
         :meth:`set_secret`), or, with none, the empty check a :meth:`read_secret` session skipped
-        (:meth:`_unlock_frames`; never during a read_secret). Without a live session nothing is sent: the
-        next session setup sends it. A rejection is a GoveeBleAuthError, as at session setup; an unacked
-        unlock is only
-        logged, as at session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
+        (:meth:`_unlock_frames`; never in the read_secret itself). With no secret on an
+        :attr:`.DeviceProfile.empty_secret_check` profile, an operation that overlaps a read_secret waits for
+        it first (``_pairing_lock``), so its frames never go out ahead of the check on a session the read set
+        up. Without a live session nothing is sent: the next session setup sends it. A rejection is a
+        GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at session setup
+        (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
         out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
         calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
         write retry's reconnect ran out of them) is raised, and the next session setup sends the
         unlock."""
-        if not self._unlock_pending or (self._reading_secret and not self._secret):
+        pairing = self._pairing_read()
+        if (not pairing and not self._secret and self.profile.empty_secret_check
+                and self._pairing_lock.locked()):
+            async with self._pairing_lock:   # the read in flight may set a session up without the check
+                pass
+        if not self._unlock_pending or (pairing and not self._secret):
             return   # a pairing read sends no empty check: it stays pending for the next operation
         self._unlock_pending = False   # taken: a concurrent operation doesn't send it twice
         secret = self._secret
@@ -2432,7 +2456,10 @@ class Device:
         if self.profile.session == "per_command":
             raise GoveeBleNotSupported(f"{self._sku}: the device-list card's session reads nothing over GATT")
         command_type = parse.request_command(frame)
-        async with self._read_gate:   # never between a scene's upload and its activation
+        # Never between a scene's upload and its activation (_read_gate). read_secret's read also holds
+        # _pairing_lock, which an overlapping operation waits for.
+        pairing = self._pairing_lock if self._pairing_read() else contextlib.nullcontext()
+        async with self._read_gate, pairing:
             await self._send_pending_unlock(budget)   # a secret set on the live session goes first
             frames = await self._conn.query(
                 frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT,
@@ -2447,13 +2474,15 @@ class Device:
         post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg). As the
         pairing screen reads it (``AbsPairAc4SecretV1.T1:107-113``: the read alone with no secret), a
         :attr:`.DeviceProfile.empty_secret_check` light's session set up for this read sends no empty
-        check either; the next other operation on that session sends it first. On a session already up
-        the read goes on that session. The frame builder is build.secret_read()."""
-        self._reading_secret += 1
+        check either; the next other operation on that session sends it first. That holds for an operation
+        that overlaps the read too (``asyncio.gather``): a session it sets up sends the empty check, and on
+        the read's session it waits for the read, then sends the check before its own frames. On a session
+        already up the read goes on that session. The frame builder is build.secret_read()."""
+        token = _PAIRING_READ.set(self)
         try:
             reply = await self._read_reply(build.secret_read())
         finally:
-            self._reading_secret -= 1
+            _PAIRING_READ.reset(token)
         return parse.parse_secret(reply) if reply else None
 
 

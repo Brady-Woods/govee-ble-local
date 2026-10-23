@@ -437,9 +437,11 @@ model, from which the shipped readers are generated).
   secret set now sends that empty check after the handshake on every session, where it sent no unlock; with a
   secret it sends the secret's check, as before. `Device.read_secret()` is the pairing screen's read, which sends
   the `aa b1` read alone while the account has no secret (`AbsPairAc4SecretV1.T1:107-113`): a session it sets up
-  sends no empty check, and the next other operation on that session sends it first. A device that refuses the
-  empty check (a non-zero status) fails the session with GoveeBleAuthError, as the app's connect read fails on
-  it (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`); a
+  sends no empty check, and the next other operation on that session sends it first. That holds for operations
+  that overlap the read (`asyncio.gather`) too: one waits for the read and then sends the check before its own
+  frames, and a session one sets up while the read is in flight sends the check at setup. A device that refuses
+  the empty check (a non-zero status) fails the session with GoveeBleAuthError, as the app's connect read fails
+  on it (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`); a
   missing ack is logged and the session goes on. Screens that test the secret first send none
   (`H605051NewDetailVm:163-169`: H6050 / H6051), and nor do the plugs. Set on H6071 / H6075 (h6071 57 / 67,
   Changed), the user's decision D4 (2026-10-22). H6058 (hollowlamp 59) stays behind `allow_modelled` without
@@ -689,9 +691,10 @@ model, from which the shipped readers are generated).
   session with GoveeBleAuthError, as the app's connect read fails; with a secret set the bytes are as before.
   `read_secret()`'s pairing read sends none: the app's pairing screen (`h6071.add.PairAcV1`, an
   `AbsPairAc4SecretV1`) reads the secret with no check (`AbsPairAc4SecretV1.T1:107-113`), so a session that
-  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first. Both
-  SKUs are new in this release (Added), so no released SKU's frames change: every other account-locked row
-  (the plugs, hollowlamp 27 / 37, and H6058 behind `allow_modelled`) still sends no unlock without a secret.
+  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first, an
+  operation that overlaps the read included (it waits for the read). Both SKUs are new in this release (Added),
+  so no released SKU's frames change: every other account-locked row (the plugs, hollowlamp 27 / 37, and H6058
+  behind `allow_modelled`) still sends no unlock without a secret.
   Source-modelled (Govee Home 7.7.02), not live-verified: no H6071 or H6075 is on the bench.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
