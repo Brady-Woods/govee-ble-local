@@ -508,8 +508,9 @@ model, from which the shipped readers are generated).
   - **Known limitation:** another device's Govee frame filed under the address twice, with different values,
     does take over. Its entry then changed last, and the device's own identical frames fire no callback, so its
     on/off holds until the device's own power next changes. That needs the proxy-path mis-attribution
-    (habluetooth#645). The frames seen so far were non-Govee, which are ignored. If it happens, the cure is the
-    integration's: clear the address's advertisement history when its record holds more than one Govee key.
+    (habluetooth#645). The frames seen so far were non-Govee, which are ignored. Clearing the address's
+    advertisement history in Home Assistant restores the device's own on/off only until the foreign key is filed
+    again: the Device keeps that key as its latest. A lasting cure also needs the Device rebuilt after the clear.
   - **The pact** is now learned only when every Govee pact entry carries the same one, as the encrypt flag is.
     A record whose entries disagree keeps the pact and logs one WARNING per spell, naming the pacts and the one
     kept. The constructor and `create_device` still route by the first entry's pact.
@@ -519,8 +520,9 @@ model, from which the shipped readers are generated).
     parser takes the first Govee AD of that record. A record of one broadcast has one Govee key on every modelled
     image, so single-key records read as before.
   - **Bench** 2026-10-22: two passive scans from the Mac, with no connection and no writes.
-    - Between them they heard all 14 bench Govee devices: H60A6 x4, H6008 x2, H6006 x2, H6047, H6052, H61A8,
-      H61C3, H6641 and H5083.
+    - Between them they heard 14 Govee devices in the Mac's range: H60A6 x4, H6008 x2, H6006 x2, H6047, H6052,
+      H61A8, H61C3, H6641 and H5083. Neither heard the bench's other plugs (H5080, H5082, H5085, H5089, H5160,
+      H5161). The second run's files replaced the first's.
     - Every record held one Govee key, and every device read its real records as the one-broadcast parsers do.
     - Merged records built from the real entry of each of the 13 whose entry has a switch byte read as designed,
       and nothing warned. The H6052's entry has none.
