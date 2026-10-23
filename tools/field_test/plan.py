@@ -16,9 +16,9 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Awaitable, Callable, Iterable
 from functools import partial
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
-if TYPE_CHECKING:   # typing only: the runner puts the library on sys.path when it is imported
+if TYPE_CHECKING:   # typing only: the runner chooses the library to test after parsing its arguments
     from govee_ble_local import Device
 
 # A read-back snapshot (masking.snapshot): state key -> value, identifying keys already redacted.
@@ -37,9 +37,31 @@ DEFAULT_SNAPSHOT_KEYS: tuple[str, ...] = (
 REDACTED_KEYS: tuple[str, ...] = ("serial_number", "device_id", "wifi_mac", "ble_mac")
 
 
+StepKind: TypeAlias = Literal["read", "write"]
+# What a device is to the runner (generic.device_kind): a held-link light, a plug, or a device-list card
+# row (one session per command, no read-back).
+DeviceKind: TypeAlias = Literal["light", "plug", "card"]
+
+
 @dataclasses.dataclass
 class Step:
-    """One action, then a read-back check (``expect`` gets the redacted snapshot dict), then a question."""
+    """One action, then a read-back check (``expect`` gets the redacted snapshot dict), then a question.
+
+    The keyword fields serve the release-gate pass (``readback.judge``); a hand-written plan can leave
+    them at their defaults:
+
+    * ``kind``: ``"write"`` (the default) changes the device, so the daytime window and ``--read-only``
+      gate it; ``"read"`` only reads (a connect, a poll, an advertisement) and runs at any hour.
+    * ``fields``: the state fields the step is judged on, compared with what the library intended
+      (``Device.snapshot()`` right after the action) wherever the row reads that field back. Empty: the
+      step is judged on ``expect`` (hand-written plans) or the tester's answer.
+    * ``refusal``: the exception the action must raise before any I/O (``GoveeBleNotSupported``); the
+      step passes when it does and the device was sent nothing.
+    * ``touched``: the segment indices a segment step writes (the others are judged unchanged).
+    * ``skip``: a reason to record the step as skipped without running it (e.g. ``"no secret"``).
+    * ``check``: called after the read-back, returns ``(verdict, reason)``: ``"pass"`` / ``"fail"`` decide
+      the step, ``"unverifiable"`` leaves it to the fields and the tester (e.g. the session-setup acks).
+    """
 
     name: str
     action: Action
@@ -47,15 +69,32 @@ class Step:
     question: str
     free_text: bool = False
     note: str = ""
+    kind: StepKind = "write"
+    fields: tuple[str, ...] = ()
+    refusal: type[Exception] | None = None
+    touched: tuple[int, ...] = ()
+    skip: str = ""
+    check: Callable[[], tuple[str, str | None]] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class PlanContext:
-    """What a plan's ``build_steps`` gets: the connected device and the SKU's bundled scene codes."""
+    """What a plan's ``build_steps`` gets: the connected device and the SKU's bundled scene codes.
+
+    The fields after ``scene_codes`` are the release-gate pass's (the generic plan reads them); a
+    hand-written plan may ignore them."""
 
     dev: Device                   # already created (connect happens in the runner)
     sku: str
     scene_codes: dict[str, int]   # {scene name: code} from the bundled catalog ({} if none)
+    kind: DeviceKind = "light"
+    tier: str = "default"         # "default" or "modelled" (survey.classify)
+    adv: Any = None               # the advertisement the device was created from
+    start: Any = None             # restore.StartState, captured after the first update()
+    toggle_ok: bool = False       # a plug whose relay the tester allowed to toggle (--toggle-plugs)
+    has_secret: bool = False      # a secret was given for this device (--secrets-file / prompt)
+    prompts: bool = True          # the tester can be asked (--ask is not "none")
+    watch: Any = None             # readback.FrameWatch on the device's frames (generic session checks)
 
 
 @dataclasses.dataclass(frozen=True)

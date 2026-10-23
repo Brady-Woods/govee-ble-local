@@ -15,6 +15,9 @@ Both output files are meant to be attached to a public GitHub issue, so:
   library passes the address as the name), but other releases within the dependency floor may name
   the device (``<address> - <name> -> <adapter>``).
 * The serial number, device id and MACs are removed from state snapshots (:func:`snapshot`).
+* A plug's secret given to the run is scrubbed as hex in either case wherever it appears
+  (:func:`mask_text`'s ``secrets``); the run's summary, which names many devices, is scrubbed for every
+  one of them (:func:`mask_text_all`).
 * In the frame capture (:func:`redact_frames`) every ``wire`` field is dropped: it holds the
   ciphertext and the ``e7`` handshake, from which the session key can be derived (README, Security
   notes), and the analyzer only reads ``plain``. Device-info (``aa 07``) and status-burst (``ac``)
@@ -25,6 +28,7 @@ Both output files are meant to be attached to a public GitHub issue, so:
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import re
@@ -123,15 +127,28 @@ def _known_forms(address: str | None, names: Iterable[str | None] = ()) -> list[
     return forms
 
 
-def mask_text(text: str, address: str | None = None, names: Iterable[str | None] = ()) -> str:
+def mask_text(text: str, address: str | None = None, names: Iterable[str | None] = (),
+              secrets: Iterable[bytes] = ()) -> str:
     """Scrub free text for the report: ``address`` (any case, any form, and its Wi-Fi MAC) and the
     device's advertised ``names``, then every MAC-shaped token, masked to its vendor prefix like
     :func:`mask_address`, and every Govee-name-shaped token, its MAC digits masked like
-    :func:`mask_name`. Idempotent."""
+    :func:`mask_name`; each of ``secrets`` (a plug's account-lock key) as hex, in either case. Idempotent."""
+    for secret in secrets:
+        if secret:
+            text = re.sub(re.escape(secret.hex()), _REDACTED, text, flags=re.IGNORECASE)
     for exact, masked in _known_forms(address, names):   # a name is literal text: escape any "\"
         text = re.sub(re.escape(exact), masked.replace("\\", r"\\"), text, flags=re.IGNORECASE)
     text = _MAC_TOKEN_RE.sub(_mask_mac_token, text)
     return _NAME_TOKEN_RE.sub(r"\1xxxx", text)
+
+
+def mask_text_all(text: str, devices: Iterable[tuple[str | None, Iterable[str | None]]],
+                  secrets: Iterable[bytes] = ()) -> str:
+    """:func:`mask_text` for every ``(address, names)`` of ``devices`` (a run's summary names many)."""
+    secrets = tuple(secrets)
+    for address, names in devices:
+        text = mask_text(text, address, names, secrets)
+    return mask_text(text, None, (), secrets)
 
 
 def describe_error(err: BaseException, address: str | None = None,
@@ -142,13 +159,28 @@ def describe_error(err: BaseException, address: str | None = None,
     return mask_text(f"{type(err).__name__}: {err}", address, names)
 
 
-def snapshot(state: DeviceState, keys: tuple[str, ...]) -> Snapshot:
-    """Copy ``keys`` off a device state; identifying keys are never written to the report."""
+def snapshot(state: DeviceState, keys: tuple[str, ...], extra: dict[str, Any] | None = None) -> Snapshot:
+    """Copy ``keys`` off a device state, plus ``extra`` (computed values such as the device's
+    ``active_scene`` and ``segment_count``); identifying keys are never written to the report."""
     snap = {k: getattr(state, k, None) for k in keys}
+    snap.update(extra or {})
     for k in REDACTED_KEYS:   # identifying: never written to the report
         if snap.get(k) is not None:
             snap[k] = _REDACTED
     return snap
+
+
+def json_default(obj: object) -> object:
+    """``json.dumps`` default for a report: a ``Segment`` as ``[index, rgb, brightness]``, another dataclass
+    as its fields, a set sorted, else its ``str``."""
+    if all(hasattr(obj, k) for k in ("index", "rgb", "brightness")):   # a Segment, compactly
+        rgb = getattr(obj, "rgb", None)
+        return [obj.index, list(rgb) if rgb is not None else None, obj.brightness]  # type: ignore[attr-defined]
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return dataclasses.asdict(obj)
+    if isinstance(obj, (set, frozenset)):
+        return sorted(obj, key=str)
+    return str(obj)
 
 
 def write_text_atomic(path: Path, text: str) -> None:

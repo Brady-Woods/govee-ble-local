@@ -290,6 +290,48 @@ model, from which the shipped readers are generated).
   library sends none of them, nor the re-read of a version that a firmware-gated fact waits for, and the
   versions and device id come from each status reply's TLV 0x07 alone, as on the app's screen
   (`Compose4BaseInfoSingleRead.w`). True keeps 1.x's reads, so a profile built by hand reads as before.
+- **`tools/field_test`: the release-gate pass over every Govee device in range (dev tool only; nothing under
+  `src/` changes, no new dependency).** `--list` scans and lists every device heard (a keyed 6-digit ref, SKU,
+  tier `default` / `modelled` / `unsupported`, pact, kind, plan), then the plugs with their outlets, and
+  connects to nothing. `--all` tests each supported device (`--allow-modelled`: the opt-in rows too) one at a
+  time over its own connection, lights first, then card rows, then plugs; unsupported devices are listed only.
+  - **Generic plan** (`generic.py`) for every SKU without a hand-written plan, built from its profile and
+    Device API: power, brightness 25 / 100 %, RGB, colour temperature at the range's min, mid and max, an RGB
+    pick of the mid Kelvin's tint, segment colour and brightness on the first and last segment, zone power /
+    colour / Kelvin, the first catalog scene, the gradual flag, and the refusals the library must make before
+    any I/O (`set_segment_color_temp` where `segment_color_temp` is False, among others) as passes when
+    `GoveeBleNotSupported` is raised with nothing sent. Hand-written plans still win for their SKUs
+    (`--generic` forces the generic one).
+  - **Verdicts without false passes** (`readback.py`): each step's fields are compared with what the library
+    intended (`Device.snapshot()` after the action) only where the row reads that field back and a reply
+    carrying it came back in that poll, as seen on the `govee_ble_local.frames` logger (a status burst's TLV
+    tags, the `aa 05` sub-mode under the spec's mode-colour parse). Otherwise the step is `unverifiable`, and
+    `--ask unverifiable` (the `--all` default) asks the tester only there.
+  - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
+    levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
+    `exact`, `close` (what can't be restored exactly is listed, such as a scene re-activated by code), `partial`,
+    `failed`, `unverified` or `not_needed`.
+  - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
+    (what it powers is asked and never stored) and given a secret (`--secrets-file`, mode 0600, or a hidden
+    prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read).
+  - **Daytime guard** (`guard.py`): visible writes only from 07:00 to 22:00 local time (`--day-start`,
+    `--day-end`, `--force-hours`, `--read-only`); listing and read steps run at any hour, and a restore is
+    never gated.
+  - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
+    verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`) beside each device's
+    report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug secrets are scrubbed
+    from every file. `--library checkout` / `installed` and `--expect-version` pick and pin the library under test;
+    `installed` refuses a source tree or an editable install. `TOOL_VERSION` is 3.
+  - **Changes for one device:** with no hand-written plan for the SKU (and none heard without `--sku`), the
+    generic plan runs instead of "no test plan"; `--sku` accepts any SKU; a hand-written plan's restore runs
+    only once a write step was sent, so a run outside the window writes nothing. The exit code stays 0 for a
+    completed run and 1 for one that could not complete; `--all` exits 1 on any failed step, aborted device,
+    or partial or failed restore. Both exit 3 when refused and 130 when interrupted.
+  - The test suite sets `GOVEE_FIELD_TEST_NO_SCAN` (the tool's scans then raise instead of reaching bleak's
+    real scanner) and a session ref key for every test (`tests/conftest.py`).
+  - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
+    rows too) and `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE:
+    an H6047 simulator, the H5083 firmware image, a modelled and an unsupported row).
 
 ### Changed
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
