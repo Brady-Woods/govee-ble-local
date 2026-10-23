@@ -505,6 +505,11 @@ model, from which the shipped readers are generated).
     record brings back, or an OTA's new header, which counts from its first change. On the modelled images the
     switch byte is the only state byte that changes. Before any change is seen, the first Govee entry with a
     switch byte is read, as before.
+  - **Known limitation:** another device's Govee frame filed under the address twice, with different values,
+    does take over. Its entry then changed last, and the device's own identical frames fire no callback, so its
+    on/off holds until the device's own power next changes. That needs the proxy-path mis-attribution
+    (habluetooth#645). The frames seen so far were non-Govee, which are ignored. If it happens, the cure is the
+    integration's: clear the address's advertisement history when its record holds more than one Govee key.
   - **The pact** is now learned only when every Govee pact entry carries the same one, as the encrypt flag is.
     A record whose entries disagree keeps the pact and logs one WARNING per spell, naming the pacts and the one
     kept. The constructor and `create_device` still route by the first entry's pact.

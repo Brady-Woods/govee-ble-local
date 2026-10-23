@@ -195,7 +195,10 @@ def _latest_govee_key(record: dict[int, bytes], previous: dict[int, bytes], late
     latest frame. A key ``previous`` lacks doesn't count: another device's frame merged once, or a key another
     scanner's record brings back, would take over for good. An OTA's new header counts from its first
     change, which on the modelled images is its first power change (the switch byte is the only state byte
-    that moves).
+    that moves). A foreign key that does change (another device's frame filed under the address again, with
+    another value) takes over until the device's own entry next changes, since its identical frames fire no
+    callback. That is a known limitation of the proxy-path mis-attribution (habluetooth#645), kept by
+    decision.
 
     Package-internal: ``Device.advertised_on`` reads the on/off from this entry."""
     for company_id, value in record.items():
