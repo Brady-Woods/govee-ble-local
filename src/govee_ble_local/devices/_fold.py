@@ -401,7 +401,9 @@ def apply_status(
         # the TLVs in reply order (Compose4BaseInfoSingleRead.u:247-345), the reply carries 0x05 before
         # 0xA5 (the real H60A6 bursts in tests/test_wire_reassemble.py), and the groups then replace the
         # report's one colour in SubMode4Color.d (SubMode4Color.j:124-126), which DelegateColorV2.W1 tests
-        # and, where they all show one colour, shows (d[0]).
+        # and, where they all show one colour, shows (d[0]). Those bursts' own report is the 0x15 sub-mode
+        # (15 01 00 00), which carries no colour: it folds as its Kelvin (_apply_mode), and the groups' one
+        # colour, which W1 shows there too, is not yet taken.
         apply_mode(profile, state, st.mode, pieces=st.segments)
         applied = True
     # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
@@ -468,6 +470,14 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any, pieces: Sequ
     the bars' pair sets the per-bar Kelvin; a colour
     layout sets the colour or the colour temperature, as the screen shows it over the same read's ``pieces``
     (:func:`_as_shown`). A sub-mode the SKU's parse ignores leaves the colour as it was.
+
+    Not yet modelled: a 0x15 report over ``pieces``. The segmented stock-page rows write a colour as the
+    0x15 segment frame and then report the 0x15 sub-mode, a Kelvin and no colour (a
+    :class:`parse.KelvinReport`, or nothing on the Glide panels' decode). The app's page shows the pieces'
+    colour there too, when they all agree: h60a1 ``Info4Detail.Q:399-407`` takes only the gradual flag and
+    a Kelvin above 0, and cubelight ``CubeNewInfo4Detail.U:488-537`` nothing, so ``SubMode4Color.d`` is the
+    same read's groups when ``DelegateColorV2.W1`` tests it. Here a Kelvin of 0 leaves ``rgb_color`` as it
+    was.
 
     Sub-mode 0xA1 is not a scene here, matching what the screen shows. Base
     ``OpInfo4Detail.x:786`` (bulbs, H6188, H61A8) hands an 0xA1 report to ``SubMode4Scene`` like 0x04,

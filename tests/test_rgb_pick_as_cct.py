@@ -445,6 +445,8 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 # keep the RGB, and pieces that all show another colour are shown instead (W1 shows d[0], or its Kelvin).
 # Segments held from before the read (a write's, an earlier read's) are not tested: d is the report's one
 # colour until the same read's groups replace it (h60a1 Info4Detail.Q:416-420, SubMode4Color.j:113-148).
+# These are 0x0d reports. The H60A6 at (1,2) itself writes a colour as the 0x15 frame and reports 0x15 after
+# it (15 01 00 00, test_wire_reassemble._BURST), a Kelvin report this fold does not take yet.
 _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
 _TINT = (0xFF, 0xD5, 0xA1)
 _NO_PIECES = [

@@ -1062,6 +1062,16 @@ model, from which the shipped readers are generated).
     keep-alive re-read's `aa 05` (a 0x15 Kelvin of 0) while that re-read's `aa a5` group is read and not
     applied, so the fold goes with the H703A / H703B status read-back step in the next release (decision 27).
     Not live-verified.
+  - Not yet the segments' colour over a 0x15 report, on the 14 segmented rows above. All of the above is a
+    colour report (the 0x0d sub-mode). These rows write a colour as the 0x15 segment frame, so the report after
+    such a write is the 0x15 sub-mode, which carries the gradual flag and a Kelvin and no colour (the bench
+    H60A6 bursts in `tests/test_wire_reassemble.py`: `05 04 15 01 00 00`). The app shows the segments there too:
+    h60a1 `Info4Detail.Q:399-407` (the H60A6's, `VM4LightH60A6:150`) takes only the flag and a Kelvin above 0
+    and leaves `SubMode4Color.d` to the same read's groups, and cubelight `CubeNewInfo4Detail.U:488-537` reads
+    nothing from it (`M:297-305` still shows page 9), so `W1` shows `d[0]` when every piece agrees. The library
+    reads the report as decoded (`_fold.apply_kelvin_report`; the Glide panels' decode reads no 0x15): a Kelvin
+    above 0 as `color_temp_kelvin`, while a Kelvin of 0 leaves `rgb_color` as it was, so a colour set in the
+    Govee app shows in `segments` only. The H60A6 and H6061 read it this way in 1.6.1 too.
   - For example the H6052, whose screen decodes its 0x0d report as `[r, g, b]` only: a report of a tint colour in
     [2000, 9000] now reads as `color_temp_kelvin`, not `rgb_color` (README). The live report of a colour
     temperature set elsewhere, `0d ff ff ff 0a 8c`, is white, no tint, and stays RGB, as the app shows it. On
