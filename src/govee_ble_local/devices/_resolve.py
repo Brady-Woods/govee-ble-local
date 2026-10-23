@@ -53,21 +53,23 @@ the row lacks fails the build: nothing defaults silently.
   ``OldBleModel.itemClickOp``:52-60 copies, the int fields ``Info4BleIotDevice.p`` / ``.v``:90-91), so it
   runs the source goodsType. A target-row route needs an advertised pact too (``Route.needs_pact``), and
   ``profile.profile_for`` takes it only with one. So does each route of a ``pact_required`` row: the app also
-  accepts the row's goodsType at pacts that run a path the row doesn't serve (straightfloorlamp 69's (1,1)),
-  so a unit advertising no pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU's
-  level is its row's, or its ``by_model`` ``support`` (:func:`sku_support`), on a SKU one row of the family
-  lists, where its own fact is inferred and the row's other SKUs' are traced (h6609 260: five SKUs' IC-gated
-  read-back). A pact branch's ``support`` (:func:`pact_support`) is the row's level at that pact alone, where
-  the screen's per-unit gates resolve to the branch the row states only at it (dreamcolorlightv2 21 at (2,1)):
-  the SKU routes at each pact at its level, and without a pact at the row's own level, so a route a branch
-  alone admits needs the pact (``Route.needs_pact``). Such a row lists its pacts (not ``any``), and its SKUs
-  have no ``by_model`` ``support``. A SKU that a ``modelled`` row and an admitted row both list raises too:
-  the spec's routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the
-  admitted routes as they are; one row's pact branches split its pacts, which no two routes share.
+  accepts the row's goodsType at pacts that run a path the row doesn't serve (straightfloorlamp 69's (1,1),
+  the h70b3 rows' (1,1), h70b6 329's (1,2) / (1,3) and pact_tvlightv2 24's (1,1)), so a unit advertising no
+  pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU's level is its row's, or its
+  ``by_model`` ``support`` (:func:`sku_support`), on a SKU one row of the family lists, where its own fact is
+  inferred and the row's other SKUs' are traced (h6609 260: five SKUs' IC-gated read-back). A pact branch's
+  ``support`` (:func:`pact_support`) is the row's level at that pact alone, where the screen's per-unit gates
+  resolve to the branch the row states only at it (dreamcolorlightv2 21 at (2,1)): the SKU routes at each pact
+  at its level, and without a pact at the row's own level, so a route a branch alone admits needs the pact
+  (``Route.needs_pact``). Such a row lists its pacts (not ``any``), and its SKUs have no ``by_model``
+  ``support``. A SKU that a ``modelled`` row and an admitted row both list raises too: the spec's routing
+  (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the admitted routes as
+  they are; one row's pact branches split its pacts, which no two routes share.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
-  (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
-  no released unit is demoted by a pact its row doesn't list. Every other SKU (one a row lists, one only the
+  (:data:`PACT_FALLBACK_SKUS`, those 18) at a pact no row accepts as it routes a unit advertising no pact, to
+  its only admitted profile there (a pact route, below, is not one), and no released unit is demoted by a pact
+  its row doesn't list. Every other SKU (one a row lists, one only the
   catalogue snapshot routes, one of a reassignment) is served only at its rows' pacts, as the app's scan
   serves it: a device whose advertised pact its goodsType doesn't accept is refused
   (``AbsBaseBleModel.e``:158-174, ``checkProtocol`` -> ``Pact.i``), and the accepted pacts compare exactly
@@ -100,34 +102,33 @@ the row lacks fails the build: nothing defaults silently.
   ``canClickBrightness`` groups) becomes ``DeviceProfile.segment_brightness_groups``, which the
   segment-brightness write widens a selection to, on a row with that frame and ``segments`` only, as disjoint
   groups of the row's segments. A row that keeps ``segments`` and ``color_temp`` after those drops says
-  whether its screen sends a Kelvin over a piece selection (``segment_color_temp``, which becomes
-  ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
-  ``LightColorCapabilityCenter.C2``); a row that keeps fewer may not say, and a row with a
-  ``color_temp_control`` (below) says false. ``color_temp`` needs a Kelvin range, and so does ``rgb``
-  under every scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer
-  runs the app's Kelvin-tint test on every pick whatever the screen offers (``Config.Yt`` / ``bu`` / ``Zt`` /
-  ``fu``:
-  ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no Kelvin slider). A row's ``white_type`` (the slot
-  of the h60a6 colour-temperature frame, Bytes.r's white type: ``DeviceProfile.white_type``) other than
-  ``rgb_white``, the default, needs the h60a6 scheme. A row's ``color_temp_control: illumination`` (the screen
-  sets colour temperature on its illumination tab alone, ``View4IlluminationMode.I0``: the Kelvin frame, then
-  ``33 04`` <the current brightness>) becomes ``DeviceProfile.kelvin_with_brightness``. It needs the
-  ``color_temp`` and ``brightness`` capabilities, percent brightness with no pact branch (so the held value
-  round-trips), and the h60a6, h6188 or kelvin_v9 scheme, whose colour-temperature frame is the tab's builder
-  (h60a6 not at ``rgb_self_tem_color``, whose tab slot is ``ff ff ff``); the colour page's
-  ``color_temperature`` flag then doesn't decide ``color_temp`` (``color_functions``).
-  ``color_temp_control: whole_device`` (the
-  colour page's Kelvin pick always writes every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 /
-  246) needs ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of
-  the device. A row's ``kelvin_readback: pieces`` (the colour-temperature state read from the read-back's
-  pieces, goodsType 180's ``VM4Light.g5``) becomes ``DeviceProfile.kelvin_from_pieces``; it needs
-  ``color_temp`` and the direct colour read-back on a polled row, over the static or device-reported pieces
-  (not an IC-sized walk). An ``untraced`` scene dialect drops ``scenes``; ``none`` is
-  activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the
-  scene store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
-  :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
-  An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
-  the screen parses no colour).
+  whether ``set_segment_color_temp`` may send a Kelvin to a piece selection (``segment_color_temp``, which
+  becomes ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
+  ``LightColorCapabilityCenter.C2``, but false where that item widens to whole zones, on the SKUs
+  ``DeviceProfile.segment_color_temp`` lists); a row that keeps fewer may not say, and a row with a
+  ``color_temp_control`` (below) says false. ``color_temp`` needs a Kelvin
+  range, and so does ``rgb`` under every scheme with a colour-temperature mode (all but h61a8,
+  :data:`SCHEME_LACKS`): its RGB writer runs the app's Kelvin-tint test on every pick whatever the screen
+  offers (``Config.Yt`` / ``bu`` / ``Zt`` / ``fu``: ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no
+  Kelvin slider). A row's ``white_type`` (the slot of the h60a6 colour-temperature frame, Bytes.r's white
+  type: ``DeviceProfile.white_type``) other than ``rgb_white``, the default, needs the h60a6 scheme. A row's
+  ``color_temp_control: illumination`` (the screen sets colour temperature on its illumination tab alone,
+  ``View4IlluminationMode.I0``: the Kelvin frame, then ``33 04`` <the current brightness>) becomes
+  ``DeviceProfile.kelvin_with_brightness``. It needs the ``color_temp`` and ``brightness`` capabilities,
+  percent brightness with no pact branch (so the held value round-trips), and the h60a6, h6188 or kelvin_v9
+  scheme, whose colour-temperature frame is the tab's builder (h60a6 not at ``rgb_self_tem_color``, whose tab
+  slot is ``ff ff ff``); the colour page's ``color_temperature`` flag then doesn't decide ``color_temp``
+  (``color_functions``). ``color_temp_control: whole_device`` (the colour page's Kelvin pick always writes
+  every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 / 246) needs ``color_temp``. Either value
+  becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of the device. A row's ``kelvin_readback:
+  pieces`` (the colour-temperature state read from the read-back's pieces, goodsType 180's ``VM4Light.g5``)
+  becomes ``DeviceProfile.kelvin_from_pieces``; it needs ``color_temp`` and the direct colour read-back on a
+  polled row, over the static or device-reported pieces (not an IC-sized walk).
+  An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as
+  every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
+  (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
+  offered no ``scenes``, its row's scene facts still checked. An ``untraced`` colour parse on a row with
+  ``rgb`` or ``color_temp`` raises (``none`` is a traced value: the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
   (``DeviceProfile.status_read``, ``build.status_query(types=)``; ``[]`` is the bare ``ac 03 00``, the h70dx
   screen's, which requests no type), and its reply is read with the row's own wire facts
@@ -237,8 +238,8 @@ the row lacks fails the build: nothing defaults silently.
   on a held row are not served either: the spec keeps the two facts independent (a firmware-confirmed read
   on the card's session is a later item).
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
-  ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
-  1)'s one colour piece: decision D3, the library keeps the row's 13).
+  ``by_firmware`` branch raises, but a ``by_pact`` branch at a pact route's pact (below), which that route's
+  wire takes over its layer (each layer, then its branch) and every other route leaves out.
 - Pact branches are at the row's listed pacts only (a branch elsewhere is reached by no device: it raises),
   and a family with a row with support takes ``by_model`` / ``wire.by_model`` entries only for SKUs one of
   its rows lists or the catalogue snapshot routes to one of them (:func:`sku_entries`). ``status_read``
@@ -248,10 +249,15 @@ the row lacks fails the build: nothing defaults silently.
   ``kelvin_range`` and ``brightness_range`` become
   ``kelvin_by_pact`` / ``brightness_by_pact``, which ``Device`` applies with the advertised pact the same
   way (goodsType 261 at pact (4, 1); a pact Kelvin range needs a base one and no Kelvin firmware branch, a
-  pact brightness range the brightness capability); ``capabilities`` take the row's own values only on the
-  D3 branch, pinned exactly as the wire one is (:data:`_UNREAD_PACT_CAPABILITIES`: H60A6 pact (1, 1) keeps
-  the row's capabilities), and raise elsewhere or when that branch changes; a branch on any other fact
-  raises.
+  pact brightness range the brightness capability). A branch on ``color_scheme``, ``zones`` or
+  ``capabilities`` (:data:`_PACT_ROUTE_FACTS`, the facts a profile is built from) gives its pact a route of
+  its own (:func:`pact_routes`), on a row with listed pacts: the row's facts with the branch's leaves (the
+  spec's ``clientBranch``; ``govee_reference.client_row``), resolved and checked as a row is, at that pact
+  only, and taken only on an advertised pact (``Route.needs_pact``), so a unit advertising none, and the
+  1.x pact fallback, keep the row's own profile. Where the branch's capabilities drop ``segments``, the row's
+  piece-selection facts (:data:`_SELECTION_FACTS`) are left out. The row's route serves its other pacts,
+  with every branch's run-time facts as above. H60A6 at pact (1, 1) is one: the app's colour instruction 2
+  (0x0d), on/off-only zones and no segments. A branch on any other fact raises.
 - Firmware branches resolve after the device-info read (D6): a ``kelvin_range`` item gated on the hardware
   version alone becomes ``kelvin_by_hardware``, and one gated on the soft version alone
   ``kelvin_by_software``, compared as the item's ``compare`` says (``DeviceProfile.kelvin_version_compare``,
@@ -266,13 +272,13 @@ the row lacks fails the build: nothing defaults silently.
   :func:`parse_version` (``BleUtil.parseVersion``). Every gate is a version that parses above 0. Before the
   read, each version not yet read meets its own gates, so the newest firmware's set applies, as 1.x assumed,
   and the Kelvin range is the one valid on every revision. Any other firmware fact or gate raises.
-- Light power read-back: a polled light's aa 01 reply is on at a byte of 1
-  (``ControllerSwitch.Companion.c``), or at any non-zero byte where the row's wire ``power`` says
-  ``light_nonzero`` (the connect read's own decoder: the legacy ``SwitchController``, the H70BX connect
-  read) or ``light_heartbeat_nonzero`` (the aa 01 heartbeat's, where the connect read takes == 1: H1168's
-  ``HeartControllerWithBattery``). Either becomes ``DeviceProfile.light_nonzero``: as for a plug, the
-  heartbeat rule beats the connect read's. On a status or plug row either raises (neither reads a light's
-  aa 01 reply), and ``light_heartbeat_nonzero`` raises without the aa 01 heartbeat (``heartbeat: power``).
+- Light power read-back: a polled light's aa 01 reply is on at a byte of 1 (``ControllerSwitch.Companion.c``),
+  or at any non-zero byte where the row's wire ``power`` says ``light_nonzero`` (the connect read's own
+  decoder: the legacy ``SwitchController``, the H70BX connect read) or ``light_heartbeat_nonzero`` (the aa 01
+  heartbeat's, where the connect read takes == 1: H1168's ``HeartControllerWithBattery``). Either becomes
+  ``DeviceProfile.light_nonzero``: as for a plug, the heartbeat rule beats the connect read's. On a status or
+  plug row either raises (neither reads a light's aa 01 reply), and ``light_heartbeat_nonzero`` raises without
+  the aa 01 heartbeat (``heartbeat: power``).
 - Plug power read-back: the wire's ``relay_heartbeat_on_mask`` beats the row's ``relay_on_mask``, because
   every aa 01 poll the library makes follows the heartbeat rule (``power_state.is_on_heartbeat``). So for
   goodsTypes 50 and 307 the row's 0xFF (the connect read's) is never consumed, and the library uses their
@@ -296,7 +302,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from typing import Any, Final, NamedTuple, NoReturn, NotRequired, Required, TypedDict
+from typing import Any, Final, NamedTuple, NoReturn, NotRequired, Required, TypedDict, cast
 
 
 # ── the projected devices.yaml (devices.schema.json definitions) ────────────────────────────────────
@@ -351,7 +357,9 @@ class Branch(TypedDict, total=False):
     mode_color_parse: str
     mode_color_parse_status: str
     status_read: tuple[str, ...]
+    color_scheme: str
     capabilities: tuple[str, ...]
+    zones: tuple[ZoneRow, ...]
     connect_reads: tuple[str, ...]
     scene_versions: tuple[int, ...]
     kelvin_range: tuple[int, ...]
@@ -632,10 +640,6 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
 # the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for
 # it calls for segments.
 SEGMENT_BRIGHTNESS_SCHEMES: Final = frozenset({"h60a6"})
-# Wire branches the library leaves unread on purpose: (family, layer, branch) -> the branch exactly.
-_UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
-    ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
-}
 # The spec's default mode decode (wireMode), every leaf unset: what a row's wire mode is laid over. A polled
 # row's aa 05 replies take the row's own (DeviceProfile.mode_decode, emitted only where it differs from this),
 # a status row's TLV 0x05 too (DeviceProfile.status_decode).
@@ -657,15 +661,17 @@ _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces", "whole_groups
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41",
                            "special_info", "light_num"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
+# The facts of a pact branch that give its pact a route and profile of its own (module doc, pact_routes): the
+# ones a profile is built from, where Device applies _PACT_FACTS at run time.
+_PACT_ROUTE_FACTS: Final = frozenset({"color_scheme", "zones", "capabilities"})
+# The row's piece-selection facts, which a pact route whose capabilities drop segments leaves out.
+_SELECTION_FACTS: Final = ("segment_color_temp", "segment_brightness_groups")
 # clientRow device_info_reads, a status row's (module doc): the device-info reads are sent but at "none".
 _DEVICE_INFO_READS: Final = ("none", "firmware")
-# Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
-# capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
-_UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
-    ("h60ax", "303", "1,1"): ("power", "brightness", "rgb", "color_temp", "scenes")}
 _AES_FALLBACK_ROWS: Final = frozenset({("h60ax", "303")})   # D4: 1.x's fallback, kept for the unlocked H60A6
-# D3, the 1.x pact fallback (module doc): the 18 SKUs 1.4.0 shipped, frozen. profile.profile_for still routes
-# one of them to its only admitted profile at a pact no row accepts; every other SKU only at its rows' pacts.
+# D3, the 1.x pact fallback (module doc): the 18 SKUs 1.4.0 shipped. At a pact no row accepts,
+# profile.profile_for still routes one of them as it routes a unit advertising no pact, to its only admitted
+# profile there; every other SKU only at its rows' pacts.
 PACT_FALLBACK_SKUS: Final = frozenset({
     "H60A6", "H6047", "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061",
     "H5080", "H5083", "H5085", "H5082", "H5089", "H5160", "H5161"})
@@ -716,12 +722,13 @@ class Route(NamedTuple):
     sku: str
     goods_type: int
     pacts: frozenset[tuple[int, int]] | None
-    """The ``(pactType, pactCode)`` pairs the row accepts; None = any (``pacts: any``)."""
+    """The ``(pactType, pactCode)`` pairs the route accepts: the row's, but those of its pact routes
+    (:func:`pact_routes`), or a pact route's one; None = any (``pacts: any``)."""
     needs_pact: bool
     """The route is taken only on an advertised pact, never without one (the module doc): the row is the
     target goodsType of a pact-conditioned ``assigned_goods_type`` item that names the SKU
-    (:func:`pact_gates`), a pairing item with a pact names the SKU (:func:`bind_skus`), or the row is
-    ``pact_required``."""
+    (:func:`pact_gates`), a pairing item with a pact names the SKU (:func:`bind_skus`), the row is
+    ``pact_required``, or the route is a pact route (:func:`pact_routes`)."""
 
 
 def _layer(*layers: Mapping[str, Any]) -> dict[str, Any]:
@@ -1098,21 +1105,31 @@ def profiles(families: Sequence[Family], parse_names: Mapping[str, ModeColorStra
     identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes
     (``Route.needs_pact`` on a route at a pact-conditioned item's target goodsType, :func:`pact_gates`, on
     each route of a SKU a pairing item with a pact names, :func:`bind_skus`, on a ``pact_required`` row's
-    routes, and on a route that only a pact branch's ``support`` admits, :func:`pact_support`).
-    ``parse_names`` is the mode_color_parse table (name -> its sub-modes' decodes); ``catalogued`` are
-    the SKUs (upper-case) with a bundled scene catalog, the only ones offered scenes (None: no cut).
-    SpecError on a fact missing or not served."""
+    routes, on a route that only a pact branch's ``support`` admits, :func:`pact_support`, and on a pact
+    route). A row's pact routes (:func:`pact_routes`) are routes of their own, each at its one pact and with
+    its own fields, and the row's route takes its other pacts. ``parse_names`` is the mode_color_parse table
+    (name -> its sub-modes' decodes); ``catalogued`` are the SKUs (upper-case) with a bundled scene catalog,
+    the only ones offered scenes (None: no cut). SpecError on a fact missing or not served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
     gates, paired = pact_gates(families), bind_skus(families)
     for fam, gt, row, sku, accepted, pactless in _members(families, admitted):
         needs_pact = (not pactless   # a route only a pact branch's support admits (pact_support)
                       or bool(row.get("pact_required"))   # never with pacts 'any' (routes)
                       or sku.upper() in paired or int(gt) in gates.get(sku.upper(), {}))
-        fields = _fields(fam, gt, sku, parse_names, catalogued)
-        skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
-        if sku not in skus:
-            skus.append(sku)
-        members.append(Route(sku, int(gt), accepted, needs_pact))
+        own = pact_routes(row)   # only on a row with listed pacts (_fields refuses any other)
+        # The row's route takes its admitted pacts but its pact routes' (and a pact-less advert where its own
+        # level is admitted); a pact route is taken at its pact where that pact's level is admitted.
+        rest = None if accepted is None else accepted - {_pact(key) for key in own}
+        variants: list[tuple[str | None, frozenset[tuple[int, int]] | None, bool]] = [
+            *([(None, rest, needs_pact)] if rest is None or rest or not needs_pact else []),
+            *((key, frozenset({_pact(key)}), True) for key in own
+              if accepted is None or _pact(key) in accepted)]
+        for key, accepts, needs in variants:
+            fields = _fields(fam, gt, sku, parse_names, catalogued, key)
+            skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
+            if sku not in skus:
+                skus.append(sku)
+            members.append(Route(sku, int(gt), accepts, needs))
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 
@@ -1121,13 +1138,33 @@ def profiles(families: Sequence[Family], parse_names: Mapping[str, ModeColorStra
 _ROW_OVERRIDES: Final = ("connect_reads", "connect_writes", "ic_pieces", "support")
 
 
+def pact_routes(row: Row) -> tuple[str, ...]:
+    """The keys of ``row``'s pact branches on a fact a profile is built from (:data:`_PACT_ROUTE_FACTS`): each
+    of those pacts is a route with a profile of its own (the module doc)."""
+    return tuple(key for key, branch in (row.get("by_pact") or {}).items() if _PACT_ROUTE_FACTS & set(branch))
+
+
+def _pact_row(row: Row, key: str) -> Row:
+    """The row the pact route ``key`` (:func:`pact_routes`) resolves as: the row's facts with the branch's
+    leaves, at that one pact and without branches, less the piece-selection facts (:data:`_SELECTION_FACTS`)
+    where the branch's capabilities drop segments."""
+    out: dict[str, Any] = {k: v for k, v in row.items() if k != "by_pact"}
+    out.update(row["by_pact"][key])
+    out["pacts"] = (key,)
+    if "segments" not in (out.get("capabilities") or ()):
+        for name in _SELECTION_FACTS:
+            out.pop(name, None)
+    return cast(Row, out)
+
+
 def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorStrategy],
-            catalogued: Collection[str] | None = None) -> dict[str, Any]:
-    """One routed SKU's DeviceProfile field values (see the module doc for the rules)."""
+            catalogued: Collection[str] | None = None, pact: str | None = None) -> dict[str, Any]:
+    """One routed SKU's DeviceProfile field values (see the module doc for the rules): its row's, or with
+    ``pact`` that pact route's (:func:`pact_routes`)."""
     cp = fam.get("client_profile") or {}
     row = (cp.get("by_goods_type") or {})[gt]
     model = (cp.get("by_model") or {}).get(sku) or {}
-    where = f"{fam['id']} goodsType {gt} ({sku})"
+    where = f"{fam['id']} goodsType {gt} ({sku})" + (f" pact {pact}" if pact is not None else "")
 
     def fail(problem: str) -> NoReturn:
         raise SpecError(f"{where}: {problem}")
@@ -1137,7 +1174,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
             fail(f"no {name}")
         return value
 
-    w = _wire(fam, gt, sku, fail)
+    split = pact_routes(row)   # the row's, before a pact route's row replaces it
+    if pact is not None:
+        row = _pact_row(row, pact)
+    w = _wire(fam, gt, sku, fail, split, pact)
     forms, counts, group, power = w["forms"], w["counts"], w["group"], w["power"]
     relay = forms.get("f_01") == "relays"
     if model.get("by_pact") or any(k not in ("kelvin_range", "compare") and not k.startswith("min_")
@@ -1186,10 +1226,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
         fail(f"pact branches {stray} are not among the row's pacts {list(listed_pacts or ())} (no device at "
              "them reaches the row)")
     for key, branch in by_pact.items():
-        pinned = _UNREAD_PACT_CAPABILITIES.get((fam["id"], gt, key))
-        unread = ({"capabilities"} if pinned is not None and tuple(branch.get("capabilities") or ()) == pinned
-                  else set())
-        facts = set(branch) - unread - {"support"}   # a pact's support level routes (_members), no fact
+        # A fact a profile is built from makes the pact a route (pact_routes); a support level routes it
+        # (_members): neither is a run-time fact.
+        facts = set(branch) - _PACT_ROUTE_FACTS - {"support"}
         if facts - _PACT_FACTS:
             fail(f"pact branch {key} on {sorted(facts - _PACT_FACTS)} is not served")
     scenes_by_pact = tuple(sorted((_pact(key), _scene_set(branch["scene_versions"], fail))
@@ -1204,6 +1243,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
     # each.
     status_reads = (tuple(status_read), *(read for _key, read in status_by_pact)) if status_read is not None \
         else ()
+    if split and not isinstance(listed_pacts, tuple):
+        fail(f"a pact branch on {sorted(_PACT_ROUTE_FACTS)} ({list(split)}) needs listed pacts: its pact is "
+             "a route of its own")
 
     row_caps = frozenset(need(row.get("capabilities"), "capabilities"))
     if not row_caps <= {*CAPABILITIES, "gradual"}:
@@ -1667,7 +1709,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
     _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
     if ({"segments", "color_temp"} <= caps) != (part_kelvin is not None):
         fail("segment_color_temp goes with segments and color_temp (the colour scheme's drops applied): "
-             "whether the screen sends a Kelvin over a piece selection")
+             "whether set_segment_color_temp may send a Kelvin to a piece selection")
     if control is not None and part_kelvin:   # whole_device_kelvin: no Kelvin on part of the device
         fail(f"segment_color_temp true with color_temp_control {control} (its Kelvin covers every piece)")
     return out
@@ -1711,23 +1753,27 @@ def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
     return out
 
 
-def _wire(fam: Family, gt: str, sku: str, fail: Fail) -> dict[str, Any]:
+def _wire(fam: Family, gt: str, sku: str, fail: Fail, split: Collection[str] = (),
+          pact: str | None = None) -> dict[str, Any]:
     """The SKU's wire facts: the family ``wire``, its ``by_model.<SKU>`` and ``by_goods_type.<gt>`` merged.
-    A pact or firmware branch in any of them fails (the library reads the wire with both unknown), but for
-    an unread one of :data:`_UNREAD_WIRE_BRANCHES`."""
+    A pact or firmware branch in any of them fails (the library reads the wire with both unknown), but a
+    ``by_pact`` branch at one of the row's pact routes ``split`` (:func:`pact_routes`): the route of that
+    ``pact`` takes it over its layer, and every other route leaves it out."""
     wire = (fam.get("client_profile") or {}).get("wire") or {}
     layers: dict[str, WireLayer] = {
         "": wire, f"by_model {sku}": (wire.get("by_model") or {}).get(sku) or {},
         f"by_goods_type {gt}": (wire.get("by_goods_type") or {}).get(gt) or {}}
+    merged: list[Mapping[str, Any]] = []
     for name, layer in layers.items():
-        branches: list[tuple[str, Mapping[str, Any]]] = [
-            *((f"by_pact {k}", b) for k, b in (layer.get("by_pact") or {}).items()),
-            *((f"by_firmware {i}", b) for i, b in enumerate(layer.get("by_firmware") or ()))]
-        for key, branch in branches:
-            if _UNREAD_WIRE_BRANCHES.get((fam["id"], name, key)) != branch:
-                label = " ".join(filter(None, ("wire", name, key)))
-                fail(f"{label} is not served (the library reads the wire with the pact and firmware unknown)")
-    return _layer(*layers.values())
+        branches = [*(f"by_pact {k}" for k in layer.get("by_pact") or {} if k not in split),
+                    *(f"by_firmware {i}" for i, _b in enumerate(layer.get("by_firmware") or ()))]
+        for key in branches:
+            label = " ".join(filter(None, ("wire", name, key)))
+            fail(f"{label} is not served (the library reads the wire with the pact and firmware unknown)")
+        merged.append(layer)
+        if pact is not None:
+            merged.append((layer.get("by_pact") or {}).get(pact) or {})
+    return _layer(*merged)
 
 
 def _check_mode(w: Mapping[str, Any], readback: str, fail: Fail) -> None:

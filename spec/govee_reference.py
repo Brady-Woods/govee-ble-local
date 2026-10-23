@@ -267,11 +267,11 @@ def make_profile(**facts: Any) -> Any:
 
     Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
     has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero,
-    light_heartbeat_nonzero, advert_on_mask; and the mode decode
-    c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
-    enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
-    Generated parents check a profile param by identity: build one object per set of device facts and
-    reuse it (the library's wire_profile() does this from devices.yaml)."""
+    light_heartbeat_nonzero, advert_on_mask; and the mode decode c02, c0b, c0d, c14, c15, music, empty_fails
+    (one mode_decode object serves both mode and mode_status). An enum-typed fact may be given by its member
+    name, e.g. make_profile(f_15_01="kelvin_tint"). Generated parents check a profile param by identity: build
+    one object per set of device facts and reuse it (the library's wire_profile() does this from
+    devices.yaml)."""
     profile_cls = _module("govee_profile").GoveeProfile
     common = _module("govee_common").GoveeCommon
     unknown = set(facts) - {k for params in _LEAVES.values() for k in params}

@@ -32,6 +32,7 @@ from fake_ble import ble_device, status_burst
 
 from govee_ble_local.devices.device import Device
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.models import Capability
 from govee_ble_local.registry import create_device
 from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
@@ -119,32 +120,44 @@ def test_h6641_whole_device_cct_is_one_frame_with_tint() -> None:
     assert d._conn.query.await_args.args[0] == b.ic_count_query() and d.segment_count == 14
 
 
-def test_h6047_zone_and_segment_cct_carry_tint() -> None:
+def test_zone_and_segment_cct_carry_tint() -> None:
     d = _dev("H6047")
     asyncio.run(d.set_zone_color_temp("left", 2700))
-    asyncio.run(d.set_segment_color_temp([5, 6], 2700))
-    assert [_hex14(f) for f in _sent(d)] == [
+    # No Kelvin to an H6047 piece selection (decision 24); the H6098's strip sends the selection as it is
+    # (ColorMode14Rect4ReverseSelect.canClickColorTem:443 -> canClickColor, w true: h6099 DetailConfig:100).
+    s = _dev("H6098")
+    asyncio.run(s.set_segment_color_temp([5, 6], 2700))
+    assert [_hex14(f) for f in _sent(d) + _sent(s)] == [
         "33051501ffffff0a8cffae541f00",     # left bar = segments 0..4
         "33051501ffffff0a8cffae546000",     # segments 5, 6
     ]
 
 
-# ── H60A6: one all-segments frame, whatever the advertised pact ──────────────
+# ── H60A6: one whole-device frame, in the advertised pact's form ─────────────
 _MAIN_4000 = "33051501ffffff0fa0ffd5a10010"
 _RING_4000 = "33051501ffffff0fa0ffd5a1ff0f"
 _ALL_4000 = "33051501ffffff0fa0ffd5a1ff1f"
+_WHOLE_4000 = "33050dffd5a10fa0ffd5a1000000"   # pact (1, 1): the 0x0d form, no mask
 
 
-@pytest.mark.parametrize("adv", [None, _adv("H60A6", 1, 3), _adv("H60A6", 1, 9),
-                                 _adv("H60A6", 1, 2), _adv("H60A6", 1, 0), _adv("H60A6", 2, 9)])
-def test_h60a6_whole_device_cct_is_one_all_segments_frame(adv: Any) -> None:
-    # DelegateColorV2.G0 / KelvinConfig.b: one 15 01 frame, mask bits 0-12 (ff 1f), whatever the
-    # pact (below code 2 the app sends the 0x0d form, not modelled; unknown pact keeps the 0x15 form).
+@pytest.mark.parametrize(("adv", "frame"), [
+    (None, _ALL_4000), (_adv("H60A6", 1, 3), _ALL_4000), (_adv("H60A6", 1, 9), _ALL_4000),
+    (_adv("H60A6", 1, 2), _ALL_4000), (_adv("H60A6", 1, 0), _ALL_4000), (_adv("H60A6", 2, 9), _ALL_4000),
+    (_adv("H60A6", 1, 1), _WHOLE_4000)])
+def test_h60a6_whole_device_cct_is_one_frame_in_its_pacts_form(adv: Any, frame: str) -> None:
+    # DelegateColorV2.G0 / KelvinConfig.b: one 15 01 frame, mask bits 0-12 (ff 1f), on pact (1, >= 2); a pact
+    # no row lists, or none, keeps the row's 0x15 form (the 1.x pact fallback). At (1, 1) the colour tab's
+    # 0x0d form, colour instruction 2 (Config.x[303] = Config.kw -> Config.bu -> Bytes.p; hass #30).
     d = _dev("H60A6", adv)
     asyncio.run(d.set_color_temp(4000))
-    assert [_hex14(f) for f in _sent(d)] == [_ALL_4000]
+    assert [_hex14(f) for f in _sent(d)] == [frame]
     d._conn.send.assert_awaited_once()  # type: ignore[attr-defined]
     assert d.state.color_temp_kelvin == 4000 and d.state.rgb_color is None
+    # The header's two zones and their 33 30 indexes at every pact (VM4LightH60A6.y5:1373-1383); at (1, 1) one
+    # colour piece (getColorPieceSize(303, 1, 1) = 1), so no segments and on/off-only zones.
+    assert [(z.name, z.power_index) for z in d.zones] == [("main", 0), ("background", 1)]
+    assert (d.segment_count, Capability.SEGMENTS in d.capabilities, any(z.segments for z in d.zones)) == (
+        (0, False, False) if frame == _WHOLE_4000 else (13, True, True))
 
 
 def test_h60a6_pact_is_learned_from_the_advertisement() -> None:
@@ -334,10 +347,10 @@ def test_device_rounds_the_kelvin_it_sends_and_keeps_in_state() -> None:
 
 
 def test_device_rounds_zone_and_segment_cct() -> None:
-    d = _dev("H60A6")
+    d, s = _dev("H60A6"), _dev("H6098")   # no Kelvin to an H60A6 piece selection (decision 24)
     asyncio.run(d.set_zone_color_temp("main", 4049))
-    asyncio.run(d.set_segment_color_temp([0], 4051))
-    assert [f[7:9].hex() for f in _sent(d)] == ["0fa0", "1004"]   # 4000, 4100
+    asyncio.run(s.set_segment_color_temp([0], 4051))
+    assert [f[7:9].hex() for f in _sent(d) + _sent(s)] == ["0fa0", "1004"]   # 4000, 4100
 
 
 # ── read-back of the new write ───────────────────────────────────────────────
