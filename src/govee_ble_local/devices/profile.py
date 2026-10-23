@@ -152,7 +152,8 @@ class DeviceProfile:
     """Highest colour temperature of the SKU's Kelvin range, inclusive (see :attr:`min_kelvin`)."""
     requires_secret: bool = False
     """Account-locked: with a secret set (``Device.set_secret``), every session sends the ``33 b2``
-    unlock right after the handshake."""
+    unlock right after the handshake; with none, the empty check where the screen sends it
+    (:attr:`empty_secret_check`), else nothing."""
     relay: bool = False
     """Plug power: the goodsType's main-switch frame (:attr:`relay_power`); every session sends the
     ``33 b5`` time sync after the unlock (and :attr:`power_resync` re-sends it after a power write)."""
@@ -331,6 +332,18 @@ class DeviceProfile:
     sends it once per screen connect, once its connect reads succeed. The library connects for every poll
     after the idle disconnect and makes those reads on its polls, so it goes out before each poll's reads; it
     only stops a running ``33 24`` effect (the spec's ``light_effect_stop``). Source-modelled, not
+    live-verified."""
+    empty_secret_check: bool = field(default=False, kw_only=True)
+    """With :attr:`requires_secret` (ignored otherwise): the screen sends its ``33 b2`` check on every
+    connect, an empty one while the account holds no secret (a devices.yaml row's
+    ``empty_secret_check``: hollowlamp ``H6058NewDetailVm.T4`` and h6071 ``VM4Light``'s connect strategy
+    put ``Controller4Secret.Companion.a`` of the account's ``secretCode``, ``""`` when it has none, first
+    in the connect read). So with no secret set every session sends the empty check
+    (``wire.build.empty_secret_check``: ``33 b2``, 17 zero bytes and the xor) right after the handshake,
+    where a profile without it sends no unlock. A device that refuses it (a non-zero status) fails the
+    session with GoveeBleAuthError, as the app's connect read fails on it
+    (``AbsControllerNoEvent4Single.onResult`` -> ``AbsComposeControllerWithOpResult.onResult``); a
+    missing ack is logged and the session goes on, as for a set secret's check. Source-traced, not
     live-verified."""
     gradual_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`gradual`. Without it: the screen still reads the ``aa a3`` gradual flag at connect

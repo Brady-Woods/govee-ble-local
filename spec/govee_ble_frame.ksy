@@ -542,15 +542,30 @@ types:
   secret_write:
     doc: |
       33 B2 account-lock secret: the 8 bytes the AA B1 reply carried (not the
-      wire cipher).
+      wire cipher). The empty check: a screen that sends the check on every
+      connect sends it with the account's secretCode, "" when the record has
+      none (DefInfo), and Controller4Secret.Companion.a("") decodes that to no
+      bytes (Encode.decryByBase64), which BleUtils.p zero-fills: secret is 8
+      zero bytes, the frame 33 B2, 17 zero bytes and the xor (hollowlamp
+      H6058NewDetailVm.T4; h6071 VM4Light's connect strategy,
+      initControllerNoEventList). A screen that tests the secret first sends
+      no empty check (H605051NewDetailVm: supportDeviceCheck and a non-empty
+      secret).
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-35,57-78
       - base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-46
       - base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:110-112,204-206
+      - base-classes11/com/govee/base2light/kt/comm/DefInfo.java:106-110
+      - base-classes10/com/govee/base2home/util/Encode.java:29-40
+      - base-classes11/com/govee/base2light/kt/ble/AbsController.java:30-45
+      - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041
+      - split_hollowlamp/com/govee/hollowlamp/newdetails/h6058/H6058NewDetailVm.java:128-135,168
+      - split_floorlamp/com/govee/h6071/newdetail/VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.java:123-126,184
+      - split_hollowlamp/com/govee/hollowlamp/newdetails/h60501/H605051NewDetailVm.java:163-169
     seq:
       - id: secret
         size: 8
-        doc: the AA B1 token, raw (the app stores it as base64)
+        doc: the AA B1 token, raw (the app stores it as base64); 8 zero bytes in the empty check
   mode_write:
     doc: |
       33 05 [sub_mode][params] mode write; untyped sub-modes (05 mic, 13 music,
