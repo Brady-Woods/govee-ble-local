@@ -22,7 +22,6 @@ a hex literal checked against them; none of it is hardware-verified."""
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -440,20 +439,28 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 
 # A report of one Kelvin tint colour in range reads as that colour temperature on the stock colour page,
 # from the status TLV 0x05 and from an aa 05 reply alike, whatever the decode; its Kelvin bytes are not read.
-@pytest.mark.parametrize(("sku", "page", "body", "shown"), [
-    ("H70B3", "stock", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),           # 2000 K: the low end
-    ("H70B1", "stock", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),           # its second, Kelvin 0
-    ("H6800", "stock", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K: off
-    ("H6840", "stock", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # off the table
-    ("H6052", "stock", (0x0D, 0xFF, 0xD5, 0xA1), (None, 4000)),                       # rgb_0d, colour only
-    ("H6063", None, (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00), ((0xFF, 0xD5, 0xA1), None)),   # no stock page
+# A row without a colour page (color_page none) reads it as decoded.
+_TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
+
+
+@pytest.mark.parametrize(("sku", "pact", "page", "body", "shown"), [
+    ("H70B3", (2, 1), "stock", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),     # 2000 K: the low end
+    ("H70B1", (2, 1), "stock", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),     # its second, Kelvin 0
+    ("H6800", (2, 1), "stock", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K
+    ("H6840", (2, 1), "stock", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # no tint
+    ("H6052", (2, 1), "stock", (0x0D, 0xFF, 0xD5, 0xA1), (None, 4000)),                 # rgb_0d, colour only
+    ("H6004", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_tint
+    ("H6061", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_0d
+    ("H60A6", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # kelvin_15_rgb_kelvin_0d
+    ("H6050", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_tint_positive_0d
+    ("H8015", (1, 1), "none", _TINT_4000, ((0xFF, 0xD5, 0xA1), None)),       # no colour page
 ])
 def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
-    sku: str, page: str | None, body: tuple[int, ...], shown: tuple[tuple[int, int, int] | None, int | None],
+    sku: str, pact: tuple[int, int], page: str, body: tuple[int, ...],
+    shown: tuple[tuple[int, int, int] | None, int | None],
 ) -> None:
-    p = profile_for(sku, pact=(2, 1))      # a pact each row lists
-    assert p is not None and p.color_page == "stock"   # every row here; None stands for a screen without it
-    p = replace(p, color_page=page)
+    p = profile_for(sku, pact=pact)      # a pact the row lists
+    assert p is not None and p.color_page == page
     burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body])), decode=wire_profile(p))
     via_status, via_reply = DeviceState(rgb_color=(9, 9, 9)), DeviceState(rgb_color=(9, 9, 9))
     _fold.apply_status(p, via_status, burst)

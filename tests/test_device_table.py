@@ -153,6 +153,9 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert set(_resolve.IC_ROUNDINGS) == set(get_args(IcRounding))
     assert set(_resolve.KELVIN_COMPARES) == set(get_args(KelvinCompare))
     assert set(_resolve.COLOR_PAGES) == set(get_args(ColorPage))
+    # The screens without a colour page (bulblightv3 328's illumination-only list, h6071's bundled [10, 13]);
+    # every other admitted row with color_page is stock, whose fold the Kelvin-tint read test pins per decode.
+    assert {sku for p in PROFILES if p.color_page == "none" for sku in p.skus} == {"H8015", "H6071", "H6075"}
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
