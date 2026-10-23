@@ -57,9 +57,13 @@ the row lacks fails the build: nothing defaults silently.
   so a unit advertising no pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU's
   level is its row's, or its ``by_model`` ``support`` (:func:`sku_support`), on a SKU one row of the family
   lists, where its own fact is inferred and the row's other SKUs' are traced (h6609 260: five SKUs' IC-gated
-  read-back). A SKU that a ``modelled`` row and an admitted row both list raises too: the spec's routing
-  (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the admitted routes as
-  they are.
+  read-back). A pact branch's ``support`` (:func:`pact_support`) is the row's level at that pact alone, where
+  the screen's per-unit gates resolve to the branch the row states only at it (dreamcolorlightv2 21 at (2,1)):
+  the SKU routes at each pact at its level, and without a pact at the row's own level, so a route a branch
+  alone admits needs the pact (``Route.needs_pact``). Such a row lists its pacts (not ``any``), and its SKUs
+  have no ``by_model`` ``support``. A SKU that a ``modelled`` row and an admitted row both list raises too:
+  the spec's routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the
+  admitted routes as they are; one row's pact branches split its pacts, which no two routes share.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
   (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
@@ -337,6 +341,7 @@ class LightNumPieces(TypedDict):
 
 class Branch(TypedDict, total=False):
     """``clientBranch``: a pact branch of a row."""
+    support: str
     mode_color_parse: str
     mode_color_parse_status: str
     status_read: tuple[str, ...]
@@ -714,9 +719,10 @@ def _layer(*layers: Mapping[str, Any]) -> dict[str, Any]:
 def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
     """``{SKU upper-cased: (family, goodsType, SKU)}`` for each SKU that exactly one BLE row with support
     lists, when that row is admitted: the SKUs routed with neither the pact nor the goodsType. SpecError for
-    a row with support (any level) that is no BLE route or is ``pact_required`` with ``pacts: any``, for a
-    SKU that a ``modelled`` row and an admitted row both list (the spec's ``ble_rows`` counts both wherever
-    both accept the pact, so the opt-in would no longer be additive), for a routed SKU that an
+    a row with support (any level) that is no BLE route, is ``pact_required`` with ``pacts: any`` or has a
+    pact branch's support it can't route (:func:`pact_support`), for a SKU that a ``modelled`` row and an
+    admitted row both list (the spec's ``ble_rows`` counts both wherever both accept the pact, so the opt-in
+    would no longer be additive), for a routed SKU that an
     ``assigned_goods_type`` item in any family names (matched as the routes are, case-insensitively) unless
     the item's condition tests the pact alone, and for a row that disagrees with a pact-conditioned item
     (:func:`_reassignments`). The generator runs it over the whole document."""
@@ -734,6 +740,7 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
             if row.get("pact_required") and isinstance(row.get("pacts"), str):
                 raise SpecError(f"{fam['id']} goodsType {gt}: pact_required on a row whose pacts are 'any' "
                                 "(no pact to require)")
+            pact_support(fam, gt, row)   # its pact branches' support routes (SpecError where it can't)
             for sku in row.get("models") or ():
                 admitted = sku_support(fam, row, sku) in ADMITTED
                 hits = listed.setdefault(sku.upper(), [])
@@ -946,6 +953,22 @@ def sku_support(fam: Family, row: Row, sku: str) -> str:
     return model.get("support", row.get("support", ""))
 
 
+def pact_support(fam: Family, gt: str, row: Row) -> dict[str, str]:
+    """``{pact key: support level}`` for each of ``row``'s pact branches that has its own ``support``, the
+    row's level at that pact (module doc). SpecError where the row's pacts are ``any`` (no pact to route a
+    branch at), or where a SKU of the row has a ``by_model`` ``support`` too."""
+    levels = {key: branch["support"] for key, branch in (row.get("by_pact") or {}).items()
+              if "support" in branch}
+    if levels:
+        where = f"{fam['id']} goodsType {gt}"
+        if isinstance(row.get("pacts"), str):
+            raise SpecError(f"{where}: a pact branch's support on a row whose pacts are 'any'")
+        models = (fam.get("client_profile") or {}).get("by_model") or {}
+        if any("support" in (models.get(sku) or {}) for sku in row.get("models") or ()):
+            raise SpecError(f"{where}: a pact branch's support beside a by_model support")
+    return levels
+
+
 def catalogue_support(level: str) -> str:
     """The support level of a SKU only the catalogue snapshot routes to a row at ``level``: the row's, capped
     at ``app_traced``."""
@@ -1020,18 +1043,33 @@ def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalo
     return Catalogue({k: tuple(v) for k, v in added.items()}, frozenset(unrouted), tuple(review))
 
 
-def _members(families: Sequence[Family], admitted: Collection[str]) -> Iterator[tuple[Family, str, Row, str]]:
-    """``(family, goodsType, row, SKU)`` for each SKU a BLE row routes at a support level in ``admitted``, in
-    devices.yaml order: the row's models at its own level, then its catalogue routes at
-    :func:`catalogue_support`."""
+def _members(families: Sequence[Family], admitted: Collection[str]
+             ) -> Iterator[tuple[Family, str, Row, str, frozenset[tuple[int, int]] | None, bool]]:
+    """``(family, goodsType, row, SKU, accepted, pact-less)`` for each SKU a BLE row routes at a support level
+    in ``admitted``, in devices.yaml order: the row's models at their level, then its catalogue routes at
+    :func:`catalogue_support`. ``accepted`` is the row's pacts at a level in ``admitted`` (a pact branch's
+    ``support`` replacing the level at its pact, :func:`pact_support`; None for ``pacts: any``), never empty;
+    ``pact-less``, whether the SKU's own level is in ``admitted``, so that the route serves no pact."""
     for fam in families:
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
             if not _is_route(fam, row):
                 continue
-            own = (sku for sku in row.get("models") or () if sku_support(fam, row, sku) in admitted)
-            via = ((row.get("catalogue_models") or ())
-                   if catalogue_support(row.get("support", "")) in admitted else ())
-            yield from ((fam, gt, row, sku) for sku in (*own, *via))
+            branches = pact_support(fam, gt, row)
+            pacts = row.get("pacts", "any")   # every route has pacts (_is_route); 'any' tests none
+            cap = catalogue_support
+            for sku, via in (*((sku, False) for sku in row.get("models") or ()),
+                             *((sku, True) for sku in row.get("catalogue_models") or ())):
+                level = cap(row.get("support", "")) if via else sku_support(fam, row, sku)
+                own = level in admitted
+                if isinstance(pacts, str):
+                    if own:
+                        yield fam, gt, row, sku, None, True
+                    continue
+                at = frozenset(_pact(p) for p in pacts
+                               if (cap(branches[p]) if via and p in branches else branches.get(p, level))
+                               in admitted)
+                if at:
+                    yield fam, gt, row, sku, at, own
 
 
 def profiles(families: Sequence[Family], parse_names: Collection[str], admitted: Collection[str] = ADMITTED,
@@ -1041,16 +1079,16 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     support level in ``admitted`` (a catalogue route's is :func:`catalogue_support`) whose resolved facts are
     identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes
     (``Route.needs_pact`` on a route at a pact-conditioned item's target goodsType, :func:`pact_gates`, on
-    each route of a SKU a pairing item with a pact names, :func:`bind_skus`, and on a ``pact_required`` row's
-    routes). ``parse_names`` are the mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case)
-    with a bundled scene catalog, the only ones offered scenes (None: no cut). SpecError on a fact missing or
-    not served."""
+    each route of a SKU a pairing item with a pact names, :func:`bind_skus`, on a ``pact_required`` row's
+    routes, and on a route that only a pact branch's ``support`` admits, :func:`pact_support`).
+    ``parse_names`` are the mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case) with a
+    bundled scene catalog, the only ones offered scenes (None: no cut). SpecError on a fact missing or not
+    served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
     gates, paired = pact_gates(families), bind_skus(families)
-    for fam, gt, row, sku in _members(families, admitted):
-        pacts = row.get("pacts", "any")   # every route has pacts (_members); 'any' tests none
-        accepted = None if isinstance(pacts, str) else frozenset(_pact(p) for p in pacts)
-        needs_pact = (bool(row.get("pact_required"))   # never with pacts 'any' (routes)
+    for fam, gt, row, sku, accepted, pactless in _members(families, admitted):
+        needs_pact = (not pactless   # a route only a pact branch's support admits (pact_support)
+                      or bool(row.get("pact_required"))   # never with pacts 'any' (routes)
                       or sku.upper() in paired or int(gt) in gates.get(sku.upper(), {}))
         fields = _fields(fam, gt, sku, parse_names, catalogued)
         skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
@@ -1133,7 +1171,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         pinned = _UNREAD_PACT_CAPABILITIES.get((fam["id"], gt, key))
         unread = ({"capabilities"} if pinned is not None and tuple(branch.get("capabilities") or ()) == pinned
                   else set())
-        facts = set(branch) - unread
+        facts = set(branch) - unread - {"support"}   # a pact's support level routes (_members), no fact
         if facts - _PACT_FACTS:
             fail(f"pact branch {key} on {sorted(facts - _PACT_FACTS)} is not served")
     scenes_by_pact = tuple(sorted((_pact(key), _scene_set(branch["scene_versions"], fail))

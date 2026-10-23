@@ -7958,7 +7958,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           pacts: ["1,1", "1,2", "2,1"]
-          support: modelled
+          support: modelled   # app_traced at pact (2,1) alone (by_pact), where both firmware gates take the row's branch
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           segment_color_temp: false
           zones: []
@@ -7969,6 +7969,8 @@ families:
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
           heartbeat: power
+          by_pact:
+            "2,1": { support: app_traced, doc: "the user's decision D6 (a), 2026-10-22, on the barelightv1 17 inference: (2,1) is the BK protocol for 21 (dreamcolorlightv2 Support.isBKProtocol:375-383 -> e:241-246, pactType >= 2 and pactCode >= 1; the SKUs are in neither OldDreamColorUtil.P nor OldRgbicBkUtil's BK pacts), and a BK unit's hard version is no Telink one (OtaType.parseHardVersion:74-118: Telink is major 1, BK_01 major 2), so Support4DreamColorLightV2.a:66-83 holds once both versions read (> 0), Config.Av:8961-8964 gives colour version 0 and BrightnessConfig.Config.h2:1321-1324 version 1: the row's branch" }
           doc: >-
             H611A / H6143 / H6144 (cloud goodsType 21, spec/govee_catalog.json; the only SKUs the catalogue gives 21) on
             the rgbiclight AcNewDetail. Pacts (1,1) / (1,2) / (2,1) (Support.addSupportPact, the screen's n4 map).
@@ -7981,8 +7983,11 @@ families:
             VM4Light.switchTrigger). Brightness 33 04 from the header slider (DelegateHeader.u0 ->
             BrightnessConfig.Companion.b -> ControllerBrightness.d), the value sent as is over BrightnessConfig.d's
             range. Gradual 33 a3, segment brightness 15 02 (Config.L[0],
-            via VM4Light.configRelativeBrightnessController). MODELLED, held for two firmware gates the library can't
-            follow (the row states the newest-firmware, non-Telink branch). (1) Part brightness,
+            via VM4Light.configRelativeBrightnessController). MODELLED at (1,1) / (1,2) and with no pact, held for two
+            firmware gates the library can't follow (the row states the newest-firmware, non-Telink branch);
+            app_traced at (2,1), the BK pact, where both gates take that branch (by_pact, the user's decision D6 (a),
+            as barelightv1 17 was admitted on the same inference), so the library serves the three SKUs by default
+            only on an advertised (2,1). (1) Part brightness,
             Support4DreamColorLightV2.a: both versions read, and the hard version not Telink (OtaType.isTelinkOta,
             major '1') or hard >= 1.00.01 with soft >= 1.06.00. It selects colour version Config.x[21] = Av: 0 = the
             h60a6 15 01 frames (Bytes.h / Bytes.r), else 3 = the 0x0b frame (Bytes.d, the Kelvin pick sent as its tint
@@ -8036,6 +8041,9 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes9/com/govee/base2home/ota/OtaType.java:69-118
+            - split_rgbiclight/com/govee/dreamcolorlightv2/pact/Support.java:375-383
+            - base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:72-76,147-163
+            - base-classes9/com/govee/base2home/pact/support/OldRgbicBkUtil.java:18-21,59-69
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         doc: "goodsType 21 on the AcNewDetail: 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r), 0x0b = Config.J[3] cu (Bytes.d) below the part-brightness gate; read-back Controller4ColorInfoByGroup over 15 pieces: aa a5 4-byte records 3 a frame (Support.d = 3) with part brightness, else aa a2 3-byte records 4 a frame; aa 14 on this screen is the Wi-Fi MAC read (ControllerWifiMacAddress default 0x14, ControllerStrategyConfig.V1), the 0x14 gradual is the legacy BleProtocol's (split_rgbiclight/com/govee/dreamcolorlightv2/ble/BleProtocol.java:6), which the screen never sends"

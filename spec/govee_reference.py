@@ -465,7 +465,8 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     from the SKU's client_profile.by_model entry before the family specs, and that entry's by_firmware
     items carry it too, ahead of the row's items. The row's own range wins over the model's and its
     branches (the library refuses a by_model range under it). The SKU's connect_reads, connect_writes,
-    ic_pieces and support replace the row's (the screen's split by SKU within one goodsType). Only those:
+    ic_pieces and support replace the row's (the screen's split by SKU within one goodsType), and a pact
+    branch's support the row's at that pact (clientBranch support: dreamcolorlightv2 21 at (2,1)). Only those:
     the by_model colour report is not resolved here. Versions compare as the app's BleUtil.parseVersion
     (_parse_version: 1.6.0 is below 1.06.00), but a kelvin_range item's gate compares as its compare says:
     by default a string compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0),

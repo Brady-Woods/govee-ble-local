@@ -69,8 +69,9 @@ model, from which the shipped readers are generated).
   first walk, H608A-D / H808A, the status rows' IC reads that promote H3401 and H3510 / H3511, the per-SKU support
   level that promotes five h6609 260 SKUs, the colour page's Kelvin-tint read-back that promotes the six h70b3
   SKUs, the user's decision on their 7.5.12 trace that promotes H604B / H604D, the user's decision on parity with
-  H7092 that promotes H7090, the empty secret check that promotes H6058, and H6057's light-switch power, below): 142
-  admitted by default (`app_traced`) and 16 behind `allow_modelled` (`modelled`).
+  H7092 that promotes H7090, the empty secret check that promotes H6058, the per-pact support level that promotes
+  H611A / H6143 / H6144 at pact (2,1), and H6057's light-switch power, below): 145 admitted by default
+  (`app_traced`) and 13 behind `allow_modelled` (`modelled`).
   The entries below admit 126 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
   H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate; the 10 SKUs of the
   `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's
@@ -82,7 +83,7 @@ model, from which the shipped readers are generated).
   segment count; the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads; four Glide panels at
   the layout editor's cap; H60A1 / H80A1 through the numeric Kelvin compare; and H7072 and H61E5 / H61E6 on
   parity with admitted rows that share their one gap) and 8 more behind `allow_modelled` (H6119, the Glide H6063,
-  H6609 and H706A / H706B / H706C / H806A / H806C), for 367 admitted by default and 24 behind `allow_modelled` in
+  H6609 and H706A / H706B / H706C / H806A / H806C), for 370 admitted by default and 21 behind `allow_modelled` in
   all (with H8015, a 1.6.1 SKU
   now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
@@ -106,6 +107,8 @@ model, from which the shipped readers are generated).
     **H16C0** (377);
   - h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162); h7090: **H7090** (44), with the colour
     read-back gap it shares with H7092 (Spec, below);
+  - dreamcolorlightv2: **H611A / H6143 / H6144** (21), at pact (2,1) only, by its per-pact support level (below;
+    at (1,1) / (1,2) and with no pact they stay behind `allow_modelled`);
   - h6840: **H6840**, **H8840**† (278), **H6841**, **H8841**† (325), **H6842**, **R6842**† (381), **H6843**
     (382);
   - h6609: **H70C1 / H70C2 / H70CB** (181), **H70C9 / H7084 / H6871 / R6871**, **H80C5**† (260, by the per-SKU
@@ -134,8 +137,7 @@ model, from which the shipped readers are generated).
   every unit; each row's `doc` names the difference):
   - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H703A / H703B** (263);
-  - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); h1741: **H1741 / R1741**
-    (365);
+  - homelightv1: **H6148** (16); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below).
 - **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
   (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
@@ -182,8 +184,26 @@ model, from which the shipped readers are generated).
   these three without a pact, rather than serve a pact-less record the (2,1) status profile with the plaintext
   cipher fallback. `create_device` with the advertisement still builds them: an encrypted (2,1) advert, as both
   bench units send, gives the status profile and AES (checked offline, not on the bench). They join the
-  pact-gated SKUs above, 19 in all with H6119, and 24 with H615A-E (below; `supported_skus()` lists them; a
-  caller passes the advert's pact), so the integration's setup fix for those covers them too.
+  pact-gated SKUs above, 19 in all with H6119, 24 with H615A-E and 27 with H611A / H6143 / H6144 (below;
+  `supported_skus()` lists them; a caller passes the advert's pact), so the integration's setup fix for those
+  covers them too.
+- **H611A / H6143 / H6144 (dreamcolorlightv2 21) on an advertised pact (2,1) only, by a per-pact support level**
+  (the user's decision D6 (a), 2026-10-22). Their screen, the rgbiclight AcNewDetail, picks its colour frames,
+  read-back and brightness range from per-unit gates the library can't follow: `Support4DreamColorLightV2.a:66-83`
+  (both versions read, and the hard version not a Telink one, or hard >= 1.00.01 with soft >= 1.06.00) gives
+  colour version 0, the h60a6 frames and the aa a5 read-back the row states (`Config.Av:8961-8964`), and
+  `BrightnessConfig.Config.h2:1321-1324` gives percent brightness on non-Telink hardware. At (2,1) both take the
+  row's branch: (2,1) is the BK protocol for goodsType 21 (dreamcolorlightv2 `Support.isBKProtocol:375-383` ->
+  `e:241-246`), and a BK unit's hard version is no Telink one (`OtaType.parseHardVersion:74-118`: Telink is major
+  1, BK major 2). barelightv1 17 (H6145-7) was admitted on the same inference. At (1,1) / (1,2) a unit may be
+  Telink, so those pacts, and a record with no pact, stay `modelled`.
+  - **How:** a devices.yaml pact branch may carry `support` (Spec, below), the row's level at that pact alone.
+    The library routes the SKU at each pact at its level and, without a pact, at the row's own: by default
+    `profile_for`, `is_supported_sku`, `make_device` and `create_device` take these three only with pact (2,1),
+    and `allow_modelled` adds (1,1), (1,2) and no pact, with the same facts. `supported_skus()` lists them.
+  - Their facts are those of the released H617C / H617E / H617F / H6168 / H6169 profile, which they join
+    (`DeviceProfile.skus`, a grouping change; H617C stays first). Not hardware-verified: none is on the bench, and
+    no H611A / H6143 / H6144 hard version has been read.
 - **Brightness on a SKU whose range the pact picks** (`DeviceProfile.brightness_by_pact`: stringlightv2 H6121
   / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G†). These route without a pact, but a `Device` set up
   from a pact-less record (`create_device` with no advertisement, or one without a Govee pact block) refuses
@@ -1006,7 +1026,8 @@ model, from which the shipped readers are generated).
   SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3
   and thirteen dreamcolorlightv1 71 / 123 SKUs (H618C / H619B / H619C / H619D / H619E / H61A3 / H61A5 / H6172 /
   H6173 / H618E / H618F / H61B2 / H80B5) with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1
-  with H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099
+  with H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 and, at pact (2,1), H611A / H6143 /
+  H6144 with H617C / H617E / H617F / H6168. H6099
   and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names itself after
   them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows and on
   straightfloorlamp 69 (Added) is new routing for new SKUs only: no SKU it covers was supported at 1.6.1.
@@ -1378,6 +1399,12 @@ model, from which the shipped readers are generated).
       Kelvin tint colour; the library doesn't gate it, nor on the admitted rows whose strips do the same
       (straightfloorlamp 69 / 377, dreamcolorlightv1 193, h7078 245, h6047 119:
       `ColorMode10Segment.canClickBrightness:570-579`). The gate is the next release (D2 (b)).
+  - **A pact branch's `support`** (clientBranch; devices.schema.json, `tools/gen_devices.py` KEEP,
+    `_resolve.pact_support`): the row's support level at that pact alone, for a row whose per-unit gates take the
+    stated branch only there. The resolver routes each SKU at each pact at its level and, without a pact, at the
+    row's own, so a route only a branch admits needs the advertised pact (`Route.needs_pact`); it refuses one on a
+    row whose pacts are `any` or beside a `by_model` support. dreamcolorlightv2 21 is `modelled` with `app_traced`
+    at (2,1) (Added); the reference resolver's `client_row` gives a branch's support at its pact.
   - **`empty_secret_check`** (clientRow, `const` true, only with `account_lock: true`; devices.schema.json,
     `tools/gen_devices.py` KEEP): the screen sends its 0xB2 check on every connect, empty when the account holds no
     secret. Set on hollowlamp 59 and h6071 57 / 67, whose docs cite the connect lists; absent on the other

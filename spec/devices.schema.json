@@ -541,6 +541,7 @@
       "description": "A pact branch of a client_profile row: applied over the row's own values when the device's pact is the key, its leaves replacing the row's. The pact is the advertised one where the screen scans before connecting, else the record's; with the pact unknown, the row's own values apply. Firmware branches stay on the row (by_firmware), as in wire.",
       "properties": {
         "doc": { "type": "string" },
+        "support": { "$ref": "#/$defs/clientRow/properties/support", "description": "The row's support level at this pact alone, replacing the row's there: a pact at which the screen's per-unit gates (chip, firmware) resolve to the branch the row states, where at its other pacts they may not (dreamcolorlightv2 21 at (2,1); the branch's doc names the inference). The row's own level holds at its other pacts and with no pact, so a client serves a pact the branch alone admits only on that advertised pact. Only on a row that lists its pacts (not 'any') and whose SKUs carry no by_model support." },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "status_read": { "$ref": "#/$defs/clientRow/properties/status_read" },

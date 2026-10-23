@@ -1056,7 +1056,9 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     each row of a SKU a pairing write names at an exact pact: without the pact the library can't tell the
     row's facts from those the app runs at the write's pact (H615A-E's (65535, 255)). And so does a
     ``pact_required`` row: its goodsType also runs, at pacts the row doesn't list, a path the row doesn't
-    serve (straightfloorlamp 69's (1,1)), so a pact-less advert may be one of those."""
+    serve (straightfloorlamp 69's (1,1)), so a pact-less advert may be one of those. So does a route only a
+    pact branch's support admits (dreamcolorlightv2 21 at (2,1), whose row is ``modelled`` at its other
+    pacts): a pact-less advert may be a unit at one of those."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -1106,9 +1108,10 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     A SKU whose routes all need a pact is unsupported without one, whatever the goodsType: one only
     pact-conditioned reassignments' target rows route, as the app keeps a pact-less unit at its source
     goodsType; one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
-    that pact, where the app runs other frames than the row's; and one only ``pact_required`` rows route
+    that pact, where the app runs other frames than the row's; one only ``pact_required`` rows route
     (H6076 / H8076 / R16D0), whose pact-less advert may carry a pact where the app runs a path the row
-    doesn't serve."""
+    doesn't serve; and, without ``allow_modelled``, one a row admits at some pacts alone (a pact branch's
+    ``support``: H611A / H6143 / H6144 at (2,1), ``modelled`` at (1,1) / (1,2) and with no pact)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -1184,8 +1187,8 @@ def supported_skus(*, allow_modelled: bool = False) -> list[str]:
     """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
     ``allow_modelled`` a ``modelled`` one), at one pact at least. A SKU that several rows list needs the pact
     or the goodsType to pick its profile, and one whose routes all need a pact (a pact-conditioned
-    reassignment's target rows, a SKU a pairing write names at an exact pact, or a ``pact_required`` row's)
-    needs its pact (:func:`profile_for`)."""
+    reassignment's target rows, a SKU a pairing write names at an exact pact, a ``pact_required`` row's, or a
+    row's that a pact branch's support alone admits) needs its pact (:func:`profile_for`)."""
     skus = set(_ADMITTED[1])
     if allow_modelled:
         skus |= set(_MODELLED[1])

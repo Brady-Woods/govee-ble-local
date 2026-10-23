@@ -79,9 +79,10 @@ advertisement, build a capability-driven `Device`, then drive it.
   `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
-  rows, H615A-E and H6076 / H8076 / R16D0) needs `pact=`: `supported_skus()` lists it, but without the
-  advertisement's pact (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it
-  (`create_device` with the advertisement, `supported`, `match` and `discover` pass it already).
+  rows, H615A-E, H6076 / H8076 / R16D0, and H611A / H6143 / H6144, admitted by default at pact (2,1) only)
+  needs `pact=`: `supported_skus()` lists it, but without the advertisement's pact
+  (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it (`create_device` with the
+  advertisement, `supported`, `match` and `discover` pass it already).
   `allow_modelled=True` (also on `supported_skus`, `create_device`, `supported`, `match` and
   `discover`) admits the rows the spec marks `modelled`
   (inferred from the app, not traced), which are off by default (`device_profile_for(sku)` is a
