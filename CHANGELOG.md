@@ -71,9 +71,8 @@ model, from which the shipped readers are generated).
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but three row
   facts, below: segment colour temperature, the segment-brightness groups and a status row's device-info
   reads; the illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9,
-  the segment split that promotes H61D2-H61D6, and H6057's light-switch power, below): 105 admitted by
-  default (`app_traced`) and 53 behind `allow_modelled` (`modelled`). The entries below admit 64 more by
-  default (16 through the resolver
+  and the segment split that promotes H61D2-H61D6, below): 105 admitted by default (`app_traced`) and 53
+  behind `allow_modelled` (`modelled`). The entries below admit 64 more by default (16 through the resolver
   changes; H7004, H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and
   the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the
   device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose
