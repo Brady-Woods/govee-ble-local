@@ -13,15 +13,16 @@ full ARGB int is exactly one of the 178 colours of the Kelvin tint table (``Cons
   ``33 05 0d <picked RGB> <K u2be> <first tint of K>``;
 * H6061 is covered in tests/test_h6061.py (``Config.Zt``), including its unchanged [2000, 9000] range.
 
-The read side follows the same rule where the decode never tests a Kelvin (``rgb_kelvin_0d_nocct``): the
-stock colour page shows a one-colour report that is such a tint as its colour temperature
-(``DelegateColorV2.W1`` via ``KelvinConfig.i`` / ``c``).
+The read side follows the same rule on the stock colour page (``DeviceProfile.color_page``), whatever the
+decode: it shows a one-colour report that is such a tint as its colour temperature (``DelegateColorV2.W1``
+via ``KelvinConfig.i`` / ``c``).
 
 Every expected frame is either built by the independent ``_cct15`` / ``_cct0d`` helpers below or is
 a hex literal checked against them; none of it is hardware-verified."""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -437,19 +438,22 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
     assert d.state.last_color_temp_kelvin == kelvin
 
 
-# A report of one Kelvin tint colour in range reads as that colour temperature on the rgb_kelvin_0d_nocct
-# screens, from the status TLV 0x05 and from an aa 05 reply alike; the report's Kelvin bytes are not read.
-@pytest.mark.parametrize(("sku", "body", "shown"), [
-    ("H70B3", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),                 # 2000 K: the low end, in
-    ("H70B1", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),                 # its second, Kelvin 0
-    ("H6800", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K: off [2000, 9000]
-    ("H6840", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # one channel off the table
+# A report of one Kelvin tint colour in range reads as that colour temperature on the stock colour page,
+# from the status TLV 0x05 and from an aa 05 reply alike, whatever the decode; its Kelvin bytes are not read.
+@pytest.mark.parametrize(("sku", "page", "body", "shown"), [
+    ("H70B3", "stock", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),           # 2000 K: the low end
+    ("H70B1", "stock", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),           # its second, Kelvin 0
+    ("H6800", "stock", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K: off
+    ("H6840", "stock", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # off the table
+    ("H6052", "stock", (0x0D, 0xFF, 0xD5, 0xA1), (None, 4000)),                       # rgb_0d, colour only
+    ("H6063", None, (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00), ((0xFF, 0xD5, 0xA1), None)),   # no stock page
 ])
 def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
-    sku: str, body: tuple[int, ...], shown: tuple[tuple[int, int, int] | None, int | None],
+    sku: str, page: str | None, body: tuple[int, ...], shown: tuple[tuple[int, int, int] | None, int | None],
 ) -> None:
     p = profile_for(sku, pact=(2, 1))      # a pact each row lists
-    assert p is not None and p.mode_color_parse == "rgb_kelvin_0d_nocct"
+    assert p is not None and p.color_page == "stock"   # every row here; None stands for a screen without it
+    p = replace(p, color_page=page)
     burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body])), decode=wire_profile(p))
     via_status, via_reply = DeviceState(rgb_color=(9, 9, 9)), DeviceState(rgb_color=(9, 9, 9))
     _fold.apply_status(p, via_status, burst)

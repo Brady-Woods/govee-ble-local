@@ -156,12 +156,15 @@ colour-temperature write `state` keeps the Kelvin that was sent until an RGB or 
 report. Because it reports the same `15 01 00 00` after an RGB write too, a Kelvin the library sent stays in
 `state` across a colour change made in the Govee app.
 
-Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
-H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
-mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
-tint) and no `color_temp_kelvin`. Where a screen's decode never tests the report's Kelvin but its colour page
-shows a reported Kelvin tint colour in range as that colour temperature (H70B1, H70BC, H6800, H6840-H6843,
-H70B6, H70B8, H70B3-H70B5, H6810, H6811), `state` reports it the same way.
+Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU, and reads a
+colour the report carries the way the screen's colour page shows it. On the stock colour page
+(`DeviceProfile.color_page == "stock"`) a report of one colour that is a Kelvin tint in the SKU's range is
+that colour temperature (`color_temp_kelvin`, no `rgb_color`), whatever the decode, as a pick of that colour
+is sent as one. So the H6052, whose screen decodes its colour report as RGB only, reports a tint colour in
+range (the colour of a colour-temperature write, should the lamp echo it) as `color_temp_kelvin`, and any
+other colour (the white `ff ff ff` it reported for a colour temperature set elsewhere, for one) as
+`rgb_color`. H8015, H6071 and H6075 show no colour page (`color_page == "none"`), so their reports read as
+decoded.
 
 H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
 BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of

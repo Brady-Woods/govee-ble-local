@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from typing import Any, Final
+from typing import Any
 
 from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
@@ -458,26 +458,21 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
         state.rgb_color, state.color_temp_kelvin = _as_shown(profile, state, color)
 
 
-# The mode decodes whose colour report the stock colour page shows as a colour temperature when it is one
-# colour that is a Kelvin tint in the device's range, a test the decode itself never makes (devices.yaml
-# mode_color_parse, its cct_rule): the 0x0d strategy of the h70bx, h70b3, h6800, h70b6 and h6840 screens.
-_TINT_SHOWN_AS_KELVIN: Final = frozenset({"rgb_kelvin_0d_nocct"})
-
-
 def _as_shown(profile: DeviceProfile, state: DeviceState, color: parse.ColorReport) -> parse.ColorReport:
-    """A colour report ``(rgb, kelvin)`` as the screen shows it. On a :data:`_TINT_SHOWN_AS_KELVIN` decode, an
-    RGB that is one of the app's tint colours (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin lies in the
-    device's inclusive range (:func:`kelvin_range`) is that colour temperature, with no RGB colour. The
-    report's one colour (``SubMode4Color.d``) reaches ``DelegateColorV2.W1:1105-1123``
+    """A colour report ``(rgb, kelvin)`` as the screen shows it. On the stock colour page
+    (:attr:`~.profile.DeviceProfile.color_page`), an RGB that is one of the app's tint colours
+    (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin lies in the device's inclusive range
+    (:func:`kelvin_range`) is that colour temperature, with no RGB colour, whatever the decode. The report's
+    one colour (``SubMode4Color.d``) reaches ``DelegateColorV2.W1:1105-1123``
     (``DelegateCurMode.createView:185-203`` -> ``ColorViewModel.initColor4Device:1182-1224`` -> ``v1:625-630``
     -> ``w1:666-730``), which shows the Kelvin slider at ``KelvinConfig.c:119-122`` of it when
     ``KelvinConfig.i:193-200`` holds (``ColorUtils.i:261-276``, inclusive), else the colour. The report's own
-    Kelvin bytes are not read, as the app never tests them. The same rule as a write's
-    (:func:`apply_rgb`), so a tint the library sent reads back as the Kelvin it sent. Any other report, and
-    a profile without COLOR_TEMP, stays as decoded."""
+    Kelvin bytes are not read here: a decode that takes a Kelvin above 0 as colour temperature has already
+    reported no colour, and the page never tests the Kelvin of one that doesn't (``rgb_kelvin_0d_nocct``).
+    The same rule as a write's (:func:`apply_rgb`), so a tint the library sent reads back as the Kelvin it
+    sent. Any other report, another page and a profile without COLOR_TEMP stay as decoded."""
     rgb, _kelvin = color
-    if (rgb is None or profile.mode_color_parse not in _TINT_SHOWN_AS_KELVIN
-            or Capability.COLOR_TEMP not in profile.capabilities):
+    if rgb is None or profile.color_page != "stock" or Capability.COLOR_TEMP not in profile.capabilities:
         return color
     span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
     tint = kelvin_for_tint(rgb)
@@ -491,20 +486,16 @@ def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.Hea
     brightness, the two head swatches and their "N%" of ``H7061ColorMode.updateColor`` /
     ``updateBrightness``): head 1 is segment 0 and head 2 segment 1 (the colour page's posSet over its 2
     pieces), each brightness clamped to the 0..100 state holds. The whole device has a colour only while
-    both heads show the same one; when that colour is an in-range Kelvin tint it is that colour temperature,
-    as the colour page maps a one-colour report to its Kelvin (``ColorViewModel.initColor4Device`` ->
-    ``KelvinConfig.f``) and as :func:`apply_rgb` folds the same pick. The report carries no Kelvin field
-    (its default parse's ``s16be(r1, g1)`` is head 1's red and green), so none is read from it."""
+    both heads show the same one, which the stock colour page shows as :func:`_as_shown` reads it: an
+    in-range Kelvin tint as that colour temperature (``DelegateColorV2.W1``, every piece the same colour),
+    as :func:`apply_rgb` folds the same pick. The report carries no Kelvin field (its default parse's
+    ``s16be(r1, g1)`` is head 1's red and green), so none is read from it."""
     (bri_a, rgb_a), (bri_b, rgb_b) = pair.heads
     state.segments = parse.merge_segments(state.segments, [
         Segment(0, rgb_a, max(0, min(100, bri_a))), Segment(1, rgb_b, max(0, min(100, bri_b)))])
     shared = rgb_a if rgb_a == rgb_b else None
-    span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
-    kelvin = None if shared is None else build.rgb_as_kelvin(*shared, profile.color_scheme, span)
-    if kelvin is None:
-        state.rgb_color, state.color_temp_kelvin = shared, None
-    else:
-        state.rgb_color, state.color_temp_kelvin = None, kelvin
+    state.rgb_color, state.color_temp_kelvin = (
+        (None, None) if shared is None else _as_shown(profile, state, (shared, None)))
 
 
 def apply_piece_kelvin(state: DeviceState, pieces: int, color_mode: bool | None) -> None:

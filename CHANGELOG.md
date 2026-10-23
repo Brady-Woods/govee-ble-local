@@ -256,6 +256,12 @@ model, from which the shipped readers are generated).
   follows, the heartbeat's where the row has one. Every other light still reads on only for a byte of 1
   (`ControllerSwitch.Companion.c`), so no admitted SKU's decoded state changes. `parse.parse_light_power`
   takes the profile's `wire_profile` for the rule (default: on at 1).
+- **`DeviceProfile.color_page`** (keyword-only, default None; the spec's clientRow `color_page`): the colour page
+  the SKU's control screen shows a reported colour on. `"stock"` is the newdetail `DelegateColorV2`
+  (`DelegateCurMode.createView:185-203`), which shows a report of one colour that is a Kelvin tint in range as that
+  colour temperature (Changed, below); `"none"` is a screen with no colour page (H8015, H6071, H6075). The
+  generated table sets it on every row with colour temperature whose mode decode reports a colour; a profile
+  built by hand (None) reads its reports as the decode does, as before.
 - **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
   `segment_color_temp`): whether a colour temperature may go to a piece selection, as the app's Part-tab Kelvin
   item sends one (`DelegateColorV2Part.Z0` -> `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`;
@@ -947,6 +953,46 @@ model, from which the shipped readers are generated).
   - State only: no frame changes. Where the firmware echoes the tint of a `Bytes.p` write (a colour-temperature
     write, or an RGB pick of a tint colour) in the report, the device now reads back as the Kelvin that was
     sent; whether it does is not hardware-checked. Not live-verified: none of these SKUs is on the bench.
+  - The next entry extends the fold to every screen with the stock colour page; these keep it.
+- **On every screen with the stock colour page, whatever its decode, a reported colour that is one of the app's
+  Kelvin tint colours inside the device's range now reads as that colour temperature, as the app shows it** (the
+  user's decision 27, "Extend, match the app", 2026-10-22; CLAUDE.md rule 3). The fold above ran on the
+  `rgb_kelvin_0d_nocct` decode alone, but the test is the colour page's, not the decode's: every newdetail screen
+  whose view model is an `IColorModeFuc` gets `DelegateColorV2` from `DelegateCurMode.createView:185-203`, and its
+  `w1:666-730` -> `W1:1105-1123` shows a report of one colour as the colour temperature `KelvinConfig.c:119-122` of
+  it when `KelvinConfig.i:193-200` holds, else as that colour. Only `DeviceDetailParams.Build.U`
+  (`DeviceDetailParams.java:441-445` -> `DeviceDetailConfig.l:614-617` -> `R:275-285`) replaces that page, and in
+  7.7.02 only rgbiclight h6160 `DetailConfig$init$4` sets it, for H6163 / H6117 at goodsType 0 (no row with
+  support), with `DelegateColor4H6163`, a `DelegateColorV2` that keeps `w1` / `W1` (`m:75-82`). The cubelight
+  screen sets its own colour strip (`CubeNewDetailsConfig`: `Build.V`, `CubeColorModeV2`), not its own page. So
+  the library now folds where the row's `color_page` is `stock` (Added; Spec), from an `aa 05` reply and a status
+  TLV 0x05 alike, and H7061's two heads go through the same rule. A decode that takes a Kelvin above 0 as colour
+  temperature already reported none; what changes is a report that decodes to an RGB which is such a tint, as
+  the colour of a `Bytes.p` colour-temperature write is (whether a device echoes it is not hardware-checked). Any
+  other colour, a tint outside the range, and the three rows without a colour page (`color_page: none`: H8015's local mode list is illumination
+  only, `VM4Light.C3:401-407`; H6071 / H6075's bundled one has no colour page) read as before.
+  - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
+    H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
+    **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
+    R14A1 / H14C2 / R14C2 / H14C1 / R14C0 / R14C1** (342), **H1401* / R1401*** (348), **H14B1* / R14B1†*** (408);
+    tablelampv1 **H6052*** (22); h6188 **H6188*** (0); h6061 **H6061*** (51), **H6066** (96), **H6067** (97),
+    **H6065** (121), **H606A** (163), **H6063** (228); h6069 **H6069 / H8069†** (284); h60ax **H60A1 / H80A1**
+    (235), **H60A4 / H80A4** (302), **H60A6*** (303); h7040 **H7040*** (36); h6022 **H6022 / H8022** (249);
+    hollowlamp **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58); carlightv1 **H6118 / H6194** (6,
+    39); tvlightv1 **H6179** (12, 39); h6114 **H6114** (39); h613839 **H6138 / H6139** (39); h6181 **H6181**
+    (39); h6159 **H6159 / H6110 / H6109 / H614B / H614E** (40); h6160 **H6160** (40); h6182 **H6182** (40);
+    stringlightv2 **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196 / H613G†** (2), **H615A /
+    H615B / H615C / H615D** (40), **H616B** (68), **H6178** (78), **H615E** (108), **H6192** (143). 86 SKUs, 31
+    of them released in 1.6.1.
+  - Behind `allow_modelled`: h60ax **H1270** (346), **H1232** (356), **H1252** (373); homelightv1 **H6148** (16).
+  - For example the H6052, whose screen decodes its 0x0d report as `[r, g, b]` only: a report of a tint colour in
+    [2000, 9000] now reads as `color_temp_kelvin`, not `rgb_color` (README). The live report of a colour
+    temperature set elsewhere, `0d ff ff ff 0a 8c`, is white, no tint, and stays RGB, as the app shows it. On
+    the H60A6 it is a 0x0d report (pact (1,1)); its 0x15 reports carry the Kelvin and are unchanged.
+  - State only: no frame, refusal or profile change but the new field (checked against fd770ff over every SKU
+    either tree routes, with and without `allow_modelled`, with no pact, an unknown one and each listed pact, and
+    crafted `aa 05` / TLV 0x05 reports at tint colours). Not live-verified: no read-back of a tint report was
+    made on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
@@ -1764,6 +1810,18 @@ model, from which the shipped readers are generated).
   bound (the segment-settings page's most). devices.schema.json's `ic_pieces: fixed` (and
   `DeviceProfile.ic_num_read_only`) now says what it means on that row too: the aa 40 count does not size the
   pieces, which are the row's static count or, with the `special_info` read, the device-reported one.
+- **`color_page`, a clientRow fact** (devices.schema.json; `tools/gen_devices.py` KEEP; the resolver): the colour
+  page the screen's `DelegateCurMode.createView:185-203` builds, `stock` (`DelegateColorV2`, whose `W1` shows a
+  one-colour Kelvin tint in range as its colour temperature) or `none` (the screen's mode list has no colour
+  page), as `DeviceProfile.color_page`. The resolver requires it, and allows it only, on a row with `color_temp`
+  whose mode decode (`mode_color_parse` or `mode_color_parse_status`) reports a colour (`COLOR_REPORT_DECODES`:
+  `rgb_kelvin_tint`, `rgb_kelvin_tint_positive`, `rgb_kelvin_0d`, `rgb_kelvin_0d_nocct`, `rgb`, `bri_rgb_pair`),
+  so the read-side Kelvin-tint fold is a traced fact of each row, not of its decode (Changed). 63 rows say it: 60
+  `stock`, each citing its screen's detail config (the `DeviceDetailConfig.l` registration, which sets no
+  `Build.U`) and `DelegateCurMode.createView` in its `doc-ref`, and 3 `none` (bulblightv3 328, h6071 57 / 67). The
+  schema's description holds the trace, the one `Build.U` override (rgbiclight h6160 `DetailConfig$init$4`) among
+  it. The `mode_color_decode` header says a `cct_rule` is the decode's own test and the row's `color_page` how a
+  reported colour is shown; `rgb_kelvin_0d_nocct`'s `cct_rule` no longer states the page's rule as the decode's.
 - **`clientRow.kelvin_readback`** (`pieces`; absent = the mode report's Kelvin): the screen reads its
   colour-temperature state from the read-back's pieces (goodsType 180's `VM4Light.g5` -> `ColorUtils.r`); the
   resolver takes it with `color_temp` and the direct colour read-back only, on a polled row whose walk is not

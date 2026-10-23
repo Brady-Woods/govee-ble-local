@@ -52,6 +52,10 @@ KelvinCompare = Literal["string", "numeric"]
 # any non-zero Kelvin = CCT, read unsigned: wire.parse.mode_color unsigned_kelvin), which no app screen uses.
 ModeColorParse = str
 _DEFAULT_PARSE: Final = "rgb_kelvin"
+# The colour page the SKU's control screen shows a reported colour on (DeviceProfile.color_page; devices.yaml
+# clientRow color_page): "stock" = the newdetail DelegateColorV2, whose W1 shows a one-colour report that is a
+# Kelvin tint in range as its colour temperature; "none" = the screen shows no colour page.
+ColorPage = Literal["stock", "none"]
 
 # How a plug's whole-device power is written (its main switch on the app's detail screen):
 # "outlet0"     = 33 01 11 / 10, the relay-0 encoding (goodsType 43: H5080 / H5083 / H5085, one outlet;
@@ -289,6 +293,17 @@ class DeviceProfile:
     mode_color_parse_status: ModeColorParse | None = field(default=None, kw_only=True)
     """Decoding of the 0xAC status read's TLV 0x05 where it differs from the aa 05 reply's (devices.yaml
     ``mode_color_parse_status``); None = :attr:`mode_color_parse`."""
+    color_page: ColorPage | None = field(default=None, kw_only=True)
+    """How the control screen shows a colour its mode report carries (a devices.yaml row's ``color_page``,
+    set on every row with COLOR_TEMP whose decode reports a colour). ``"stock"``: the screen's newdetail
+    ``DelegateCurMode.createView`` builds ``DelegateColorV2``, whose ``W1`` shows a report of one colour that
+    is a Kelvin tint in the device's range (``KelvinConfig.i``, inclusive) as the colour temperature
+    ``KelvinConfig.c`` of it, else as the colour; so on such a profile, with COLOR_TEMP, a reported RGB that
+    is one of the app's tint colours in :func:`~._fold.kelvin_range` reads as that Kelvin
+    (``color_temp_kelvin``, no ``rgb_color``), whatever the decode, from an ``aa 05`` reply and a status
+    TLV 0x05 alike, as a pick of that colour does (:func:`~._fold.apply_rgb`). ``"none"`` (the screen shows
+    no colour page: H8015's illumination-only list) and None (a profile built by hand, or a decode that
+    reports no colour) read the report as the decode does. Source-traced, not live-verified."""
     scene_versions_by_firmware: tuple[tuple[str, str, tuple[int, ...]], ...] = field(
         default=(), kw_only=True)
     """Scene sets that replace :attr:`scene_versions` from a firmware version up: ``(min_soft_version,
@@ -742,6 +757,9 @@ class DeviceProfile:
         if self.kelvin_with_brightness and not self.whole_device_kelvin:
             raise GoveeBleInvalidValue(f"{where}: kelvin_with_brightness without whole_device_kelvin (the "
                                        "illumination tab writes every piece)")
+        if self.color_page is not None and self.color_page not in get_args(ColorPage):
+            raise GoveeBleInvalidValue(f"{where}: color_page={self.color_page!r} not in {get_args(ColorPage)}"
+                                       " or None")
         for name in ("mode_color_parse", "mode_color_parse_status"):
             value = getattr(self, name)
             if value not in _DECODES and not (value is None and name == "mode_color_parse_status"):

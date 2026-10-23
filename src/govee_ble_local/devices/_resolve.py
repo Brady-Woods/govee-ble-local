@@ -286,6 +286,11 @@ the row lacks fails the build: nothing defaults silently.
   A row whose screen sends it on every connect, an empty one when the account holds no secret
   (``Controller4Secret.Companion.a("")``: hollowlamp 59, h6071 57 / 67), says ``empty_secret_check``, only
   with ``account_lock`` (``DeviceProfile.empty_secret_check``).
+- The colour page (``color_page``, ``DeviceProfile.color_page``): how the screen shows a reported colour. A
+  row with ``color_temp`` whose mode decode reports a colour (:data:`COLOR_REPORT_DECODES`, in
+  ``mode_color_parse`` or ``mode_color_parse_status``) must say it, and no other row may: ``stock`` (the
+  DelegateColorV2 that ``DelegateCurMode.createView`` builds, which shows a one-colour report that is a Kelvin
+  tint in range as that colour temperature) or ``none`` (the screen shows no colour page).
 """
 from __future__ import annotations
 
@@ -385,6 +390,7 @@ class Row(TypedDict, total=False):
     heartbeat_reread: HeartbeatReread
     mode_color_parse: str
     mode_color_parse_status: str
+    color_page: str
     relay_power: str
     relay_on_mask: int
     advert_on_mask: int
@@ -575,6 +581,16 @@ COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
 # clientRow kelvin_readback: where the read-back's colour temperature comes from where not the mode report's
 # Kelvin (absent). pieces gives DeviceProfile.kelvin_from_pieces.
 KELVIN_READBACKS: Final = ("pieces",)
+# clientRow color_page: the colour page the screen's DelegateCurMode builds (devices.profile.ColorPage).
+# stock = DelegateColorV2, whose W1 shows a one-colour report that is a Kelvin tint in range as its colour
+# temperature; none = no colour page shown. Required with color_temp where the decode reports a colour.
+COLOR_PAGES: Final = ("stock", "none")
+# The mode_color_decode kinds whose report carries a colour (wire.parse.mode_color: an rgb_kelvin_tint,
+# rgb_kelvin or rgb_only layout, or H7061's two heads): the reports a colour page shows (clientRow
+# color_page).
+COLOR_REPORT_DECODES: Final = frozenset({
+    "rgb_kelvin_tint", "rgb_kelvin_tint_positive", "rgb_kelvin_0d", "rgb_kelvin_0d_nocct", "rgb",
+    "bri_rgb_pair"})
 
 # clientRow power_write: the whole-device power write where it isn't the 33 01 main switch (absent):
 # light_switch = the H6057 light switch, 33 30 <1 / 0> (DeviceProfile.light_switch_power).
@@ -1073,7 +1089,8 @@ def _members(families: Sequence[Family], admitted: Collection[str]
                     yield fam, gt, row, sku, at, own
 
 
-def profiles(families: Sequence[Family], parse_names: Collection[str], admitted: Collection[str] = ADMITTED,
+def profiles(families: Sequence[Family], parse_names: Mapping[str, ModeColorStrategy],
+             admitted: Collection[str] = ADMITTED,
              catalogued: Collection[str] | None = None
              ) -> list[tuple[tuple[str, ...], dict[str, Any], tuple[Route, ...]]]:
     """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes at a
@@ -1082,9 +1099,9 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     (``Route.needs_pact`` on a route at a pact-conditioned item's target goodsType, :func:`pact_gates`, on
     each route of a SKU a pairing item with a pact names, :func:`bind_skus`, on a ``pact_required`` row's
     routes, and on a route that only a pact branch's ``support`` admits, :func:`pact_support`).
-    ``parse_names`` are the mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case) with a
-    bundled scene catalog, the only ones offered scenes (None: no cut). SpecError on a fact missing or not
-    served."""
+    ``parse_names`` is the mode_color_parse table (name -> its sub-modes' decodes); ``catalogued`` are
+    the SKUs (upper-case) with a bundled scene catalog, the only ones offered scenes (None: no cut).
+    SpecError on a fact missing or not served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
     gates, paired = pact_gates(families), bind_skus(families)
     for fam, gt, row, sku, accepted, pactless in _members(families, admitted):
@@ -1104,7 +1121,7 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
 _ROW_OVERRIDES: Final = ("connect_reads", "connect_writes", "ic_pieces", "support")
 
 
-def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
+def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorStrategy],
             catalogued: Collection[str] | None = None) -> dict[str, Any]:
     """One routed SKU's DeviceProfile field values (see the module doc for the rules)."""
     cp = fam.get("client_profile") or {}
@@ -1637,6 +1654,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         unknown = {out["mode_color_parse"], status or out["mode_color_parse"]} - set(parse_names)
         if unknown:
             fail(f"mode_color_parse {sorted(unknown)} not in the mode_color_parse table")
+        page = row.get("color_page")
+        reports = any(decode in COLOR_REPORT_DECODES for name in {out["mode_color_parse"], status} - {None}
+                      for decode in parse_names[name]["sub_modes"].values())
+        if page is not None and page not in COLOR_PAGES:
+            fail(f"color_page {page!r} (one of {list(COLOR_PAGES)})")
+        if (reports and "color_temp" in caps) != (page is not None):
+            fail("color_page goes with color_temp and a mode decode that reports a colour: how the screen "
+                 "shows that colour (devices.schema.json clientRow color_page)")
+        if page is not None:
+            out["color_page"] = page
     _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
     if ({"segments", "color_temp"} <= caps) != (part_kelvin is not None):
         fail("segment_color_temp goes with segments and color_temp (the colour scheme's drops applied): "

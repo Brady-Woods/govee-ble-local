@@ -21,7 +21,8 @@ from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
 from govee_ble_local.devices.profile import (
-    PROFILES, DeviceProfile, IcRounding, KelvinCompare, RelayPower, SessionMode, profile_for, wire_profile)
+    PROFILES, ColorPage, DeviceProfile, IcRounding, KelvinCompare, RelayPower, SessionMode, profile_for,
+    wire_profile)
 from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
@@ -113,6 +114,10 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # 1.9.0: a full layout is the layout editor's cap, Constants.o(0) = 20 hexagons (decision D1 (a)), not the
     # read-back default with no layout, Support.getBulbStringMaxNum(51) = 23.
     ("H6061", "segments"): (23, 20),
+    # 1.9.0: the stock colour page (DelegateColorV2.W1) shows a one-colour report that is a Kelvin tint in
+    # range as that colour temperature, whatever the decode (decision 27): a read-side fold, no frame change.
+    **{(sku, "color_page"): (None, "stock") for sku in (
+        "H60A6", "H6004", "H6006", "H6008", "H6052", "H6188", "H6061")},
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
@@ -147,6 +152,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert set(_resolve.SESSIONS) == set(get_args(SessionMode))
     assert set(_resolve.IC_ROUNDINGS) == set(get_args(IcRounding))
     assert set(_resolve.KELVIN_COMPARES) == set(get_args(KelvinCompare))
+    assert set(_resolve.COLOR_PAGES) == set(get_args(ColorPage))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")

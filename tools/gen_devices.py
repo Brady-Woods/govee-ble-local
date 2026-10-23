@@ -76,8 +76,8 @@ KEEP: dict[str, tuple[str, ...]] = {
         "by_goods_type", "wire"),
     "#/$defs/clientRow": (
         "models", "connectivity", "pacts", "pact_required", "support", "session", "power_read",
-        "power_write", "power_live", "mode_color_parse", "mode_color_parse_status", "relay_power",
-        "relay_on_mask", "advert_on_mask", "color_scheme", "white_type", "color_temp_control",
+        "power_write", "power_live", "mode_color_parse", "mode_color_parse_status", "color_page",
+        "relay_power", "relay_on_mask", "advert_on_mask", "color_scheme", "white_type", "color_temp_control",
         "color_functions", "capabilities", "segment_color_temp", "zones", "segment_brightness_groups",
         "account_lock", "empty_secret_check", "scene_dialect", *_ROW_FACTS, "mode_reports_kelvin",
         "kelvin_readback", "status_read", "device_info_reads", "connect_reads", "connect_writes", "heartbeat",
