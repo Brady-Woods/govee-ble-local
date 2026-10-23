@@ -301,7 +301,9 @@ class DeviceProfile:
     ``KelvinConfig.c`` of it, else as the colour; so on such a profile, with COLOR_TEMP, a reported RGB that
     is one of the app's tint colours in :func:`~._fold.kelvin_range` reads as that Kelvin
     (``color_temp_kelvin``, no ``rgb_color``), whatever the decode, from an ``aa 05`` reply and a status
-    TLV 0x05 alike, as a pick of that colour does (:func:`~._fold.apply_rgb`). ``"none"`` (the screen shows
+    TLV 0x05 alike, as a pick of that colour does (:func:`~._fold.apply_rgb`), while every segment the same
+    read brought (the burst's TLV 0xA5 groups, the poll's ``aa a5`` walk) shows that colour, as ``W1`` tests
+    the pieces (:func:`~._fold._as_shown`). ``"none"`` (the screen shows
     no colour page: H8015's illumination-only list) and None (a profile built by hand, or a decode that
     reports no colour) read the report as the decode does. Source-traced, not live-verified."""
     scene_versions_by_firmware: tuple[tuple[str, str, tuple[int, ...]], ...] = field(

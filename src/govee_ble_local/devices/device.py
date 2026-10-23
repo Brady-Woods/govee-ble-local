@@ -199,6 +199,10 @@ class Device:
         # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
         # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
         self._polled_color_mode: bool | None = None
+        # This poll's aa 05 report, as (the _mutation_seq it was applied at, the report, the
+        # last_color_temp_kelvin from before it), None until it answers (_read_mode): shown again over the
+        # walk's pieces once they are in, as the app's colour page shows it (_fold.apply_mode_over_pieces).
+        self._polled_report: tuple[int, Any, int | None] | None = None
         # A live-IC status profile's read-back pieces, the count its status read places the TLV 0xA5 groups
         # over (_adopt_ic: the IC rule's pieces, or the IC itself under color_readback_ic_raw), uncapped;
         # None until a count is known: segment_count stands in.
@@ -2289,8 +2293,12 @@ class Device:
             self._apply_segments)
 
     def _apply_segments(self, segments: list[Segment]) -> None:
-        """Fold a whole segment-colour read-back into state."""
+        """Fold a whole segment-colour read-back into state, and show the poll's ``aa 05`` report over it
+        (:func:`._fold.apply_mode_over_pieces`) unless a setter applied state since that report."""
         self._state.segments = segments
+        polled = self._polled_report
+        if polled is not None and polled[0] == self._mutation_seq:
+            _fold.apply_mode_over_pieces(self.profile, self._state, polled[1], segments, polled[2])
 
     async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
@@ -2572,14 +2580,16 @@ class Device:
     async def _read_mode(self, budget: ConnectBudget | None = None, *,
                          on_link: int | None = None) -> _ReadResult:
         """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`), and keep whether it showed the
-        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) for the poll's walk. ``on_link``:
-        on that link only (:meth:`_read_reply`)."""
+        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) and the report itself for the
+        poll's walk (:meth:`_apply_segments`). ``on_link``: on that link only (:meth:`_read_reply`)."""
         prof = wire_profile(self.profile)
-        self._polled_color_mode = None
+        self._polled_color_mode = self._polled_report = None
 
         def apply(m: Any) -> None:
+            remembered = self._state.last_color_temp_kelvin
             _fold.apply_mode(self.profile, self._state, m)
             self._polled_color_mode = parse.mode_color(m) is not None
+            self._polled_report = (self._mutation_seq, m, remembered)
 
         return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
                                         apply, budget, on_link=on_link)

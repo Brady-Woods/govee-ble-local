@@ -32,7 +32,7 @@ from govee_ble_local.devices import _fold
 from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import profile_for, wire_profile
 from govee_ble_local.exceptions import GoveeBleInvalidValue
-from govee_ble_local.models import DeviceState
+from govee_ble_local.models import DeviceState, Segment
 from govee_ble_local.registry import create_device
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire import reassemble
@@ -439,11 +439,12 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 
 # A report of one Kelvin tint colour in range reads as that colour temperature on the stock colour page,
 # from the status TLV 0x05 and from an aa 05 reply alike, whatever the decode; its Kelvin bytes are not read.
-# A row without a colour page (color_page none) reads it as decoded.
+# A row without a colour page (color_page none) reads it as decoded. Where the same read brings the segments
+# (the burst's TLV 0xA5 groups; the poll's aa a5 walk, after its aa 05) it folds only when every segment
+# shows that colour, as DelegateColorV2.W1 tests SubMode4Color.d, which those pieces fill; else the RGB stays.
 _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
-
-
-@pytest.mark.parametrize(("sku", "pact", "page", "body", "shown"), [
+_TINT = (0xFF, 0xD5, 0xA1)
+_NO_PIECES = [
     ("H70B3", (2, 1), "stock", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),     # 2000 K: the low end
     ("H70B1", (2, 1), "stock", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),     # its second, Kelvin 0
     ("H6800", (2, 1), "stock", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K
@@ -454,19 +455,37 @@ _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's
     ("H60A6", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # kelvin_15_rgb_kelvin_0d
     ("H6050", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_tint_positive_0d
     ("H8015", (1, 1), "none", _TINT_4000, ((0xFF, 0xD5, 0xA1), None)),       # no colour page
+]
+
+
+@pytest.mark.parametrize(("sku", "pact", "page", "body", "shown", "pieces"), [
+    *((*case, ()) for case in _NO_PIECES),
+    # the walk's 14 pieces all the tint (its status decode reads no TLV 0xA5)
+    ("H60A1", (1, 1), "stock", _TINT_4000, (None, 4000), (_TINT,) * 14),
+    # the burst's 13 group pieces and the walk's alike, the last a near miss
+    ("H60A6", (1, 2), "stock", _TINT_4000, (_TINT, None), (_TINT,) * 12 + ((0xFF, 0xD5, 0xA2),)),
 ])
 def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     sku: str, pact: tuple[int, int], page: str, body: tuple[int, ...],
-    shown: tuple[tuple[int, int, int] | None, int | None],
+    shown: tuple[tuple[int, int, int] | None, int | None], pieces: tuple[tuple[int, int, int], ...],
 ) -> None:
     p = profile_for(sku, pact=pact)      # a pact the row lists
     assert p is not None and p.color_page == page
-    burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body])), decode=wire_profile(p))
-    via_status, via_reply = DeviceState(rgb_color=(9, 9, 9)), DeviceState(rgb_color=(9, 9, 9))
+    groups = b"".join(bytes([0xA5, 1 + 4 * len(rec), 1 + g // 4, *(v for rgb in rec for v in (100, *rgb))])
+                      for g in range(0, len(pieces), 4) for rec in [pieces[g:g + 4]])
+    burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body]) + groups),
+                                    decode=wire_profile(p))
+    via_status = DeviceState(rgb_color=(9, 9, 9))
     _fold.apply_status(p, via_status, burst)
-    _fold.apply_mode_reply(p, via_reply, _frame(0xAA, 0x05, *body))
-    for state in (via_status, via_reply):
-        assert (state.rgb_color, state.color_temp_kelvin) == shown
+    poll = Device(p, ble_device("AA:BB:CC:DD:EE:98", sku), sku=sku)   # its aa 05 read, then the walk's pieces
+    poll._state.rgb_color = (9, 9, 9)
+    poll._read_reply = AsyncMock(return_value=_frame(0xAA, 0x05, *body))  # type: ignore[method-assign]
+    asyncio.run(poll._read_mode())
+    if pieces:
+        poll._apply_segments([Segment(i, rgb, 100) for i, rgb in enumerate(pieces)])
+    # initColor4Device syncs a Kelvin only when every piece is one tint (KelvinConfig.f:144-157)
+    for state in (via_status, poll.state):
+        assert (state.rgb_color, state.color_temp_kelvin, state.last_color_temp_kelvin) == (*shown, shown[1])
 
 
 def test_h6047_state_tracks_the_kelvin_per_bar() -> None:
