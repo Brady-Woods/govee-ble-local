@@ -407,6 +407,9 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
     after = (None, kelvin) if kelvin is not None else (_rgb(colour), None)
     asyncio.run(d.set_rgb(_rgb(colour)))
     assert (d.state.rgb_color, d.state.color_temp_kelvin) == after
+    if sku == "H7318":   # no COLOR_TEMP, yet the frame is the tint form (Config.fu:14090 -> Bytes.o:423-428)
+        assert _sent(d) == b.color_rgb_frames(*_rgb(colour), "legacy_02",
+                                              kelvin_range=(d.min_kelvin, d.max_kelvin))
     assert d.state.scene_code is None
     asyncio.run(d.set_rgb((1, 2, 3)))
     assert d.state.rgb_color == (1, 2, 3) and d.state.color_temp_kelvin is None

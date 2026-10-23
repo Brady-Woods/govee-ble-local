@@ -232,12 +232,20 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
 
     async def race() -> None:
         await asyncio.gather(d.set_brightness(80), d.set_color_temp(4000))
+        await asyncio.gather(d.set_brightness(30), d.turn_on(kelvin=4000))   # turn_on's pair waits too
+        await asyncio.gather(d.set_color_temp(4000), d.release())   # and release() lands after a pair
+
+    async def disconnect(**_k: object) -> bool:
+        _sent(d).append(b"release")
+        return False
 
     wire = asyncio.Lock()
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=acked)  # type: ignore[method-assign]
+    d._conn.disconnect = AsyncMock(side_effect=disconnect)  # type: ignore[method-assign]
     asyncio.run(race())
-    assert _sent(d) == [b.brightness(80), kelvin, b.brightness(80)] and d.state.brightness == 80
+    assert _sent(d) == [b.brightness(80), kelvin, b.brightness(80), b.brightness(30), b.switch(True), kelvin,
+                        b.brightness(30), kelvin, b.brightness(30), b"release"] and d.state.brightness == 30
     # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments); nor on H61E5, whose
     # colour page's Kelvin pick is whole-strip (color_temp_control whole_device). Both rows say so with
     # segment_color_temp false, the one fact an integrator gates on.

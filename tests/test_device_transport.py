@@ -213,12 +213,18 @@ async def test_a_per_command_profile_sends_each_write_on_its_own_session(
         await dev.connect()
         with pytest.raises(GoveeBleNotSupported):
             await dev.read_secret()
-        assert starts == [] and st.optimistic and st.is_on is None
+        for colour in ({"rgb": (1, 2, 3)}, {"kelvin": 4000}):   # the card sends no colour: refused first
+            with pytest.raises(GoveeBleNotSupported):
+                await dev.turn_on(**colour)  # type: ignore[arg-type]
+        assert starts == [] and fake.received == [] and st.optimistic and st.is_on is None
         # A brightness on a light not known to be on: the card's switch, then its slider.
         await dev.set_brightness(50)
         assert [f.hex() for f in fake.received] == [build.switch(True).hex(), build.brightness(50).hex()]
         assert len(fake.clients) == 2 and not any(c.is_connected for c in fake.clients)
         assert dev.state.is_on is True and dev.state.brightness == 50 and dev.state.optimistic
+        # The tap is fresher than an advert still carrying the old switch byte (ADVERT_SUPPRESS_SECONDS).
+        off = SimpleNamespace(manufacturer_data={0x8802: bytes([0xEC, 0, 0, 0, 0])})
+        assert dev.ingest_advertisement(off) is False and dev.state.is_on is True  # type: ignore[arg-type]
         assert dev._conn._idle_timer is None and dev._conn._heartbeat_timer is None
         await dev.turn_on(power=False, brightness=60)   # known on: the slider alone
         fake.no_ack_cmds = {0x01}   # no reply: the write is the success, sent once
@@ -236,7 +242,11 @@ async def test_a_per_command_profile_sends_each_write_on_its_own_session(
         # The link lost while the reply is awaited: the write went out, which is the card's success.
         fake.on_write = lambda client, _plain: asyncio.get_running_loop().call_later(0.005, client.drop)
         await dev.set_power(False)
-    assert dev.state.is_on is False and len(fake.clients) == len(starts) == 8
+        # _tap_lock: a turn_off called while a brightness's two taps run lands after both, not between.
+        fake.on_write, sent = None, len(fake.received)
+        await asyncio.gather(dev.set_brightness(30), dev.turn_off())
+        assert fake.received[sent:] == [build.switch(True), build.brightness(30), build.switch(False)]
+    assert dev.state.is_on is False and len(fake.clients) == len(starts) == 11
     assert all(c.writes and not c.is_connected for c in fake.clients)
     assert all(start >= released + conn_mod.PER_COMMAND_SESSION_GAP
                for start, released in starts[1:] if released is not None)
