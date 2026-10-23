@@ -362,8 +362,9 @@ class DeviceProfile:
     (``wire.build.empty_secret_check``: ``33 b2``, 17 zero bytes and the xor) right after the handshake,
     where a profile without it sends no unlock; but one that ``Device.read_secret`` sets up does not, as the
     pairing screen reads the secret with no check (``AbsPairAc4SecretV1.T1:107-113``), and the next other
-    operation on it sends the empty check first. A device that refuses it (a non-zero status) fails the
-    session with GoveeBleAuthError, as the app's connect read fails on it
+    operation on it sends the empty check first (one that overlaps the read waits for it; a session another
+    operation sets up meanwhile sends the check at setup). A device that refuses it (a non-zero status)
+    fails the session with GoveeBleAuthError, as the app's connect read fails on it
     (``AbsControllerNoEvent4Single.onResult`` -> ``AbsComposeControllerWithOpResult.onResult``); a
     missing ack is logged and the session goes on, as for a set secret's check. Source-traced, not
     live-verified."""

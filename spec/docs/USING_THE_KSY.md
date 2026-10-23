@@ -125,9 +125,9 @@ devices. Both facts come in as **params**:
 
 ```
 govee_profile(forms, counts, group, power, mode, mode_status)
-  forms   command_forms: one selector per overloaded byte (f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_36,
-          f_40, f_41, f_a2, f_a3, f_a5, f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40); each is a
-          govee_common form_* enum
+  forms   command_forms: one selector per overloaded byte (f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_34,
+          f_36, f_40, f_41, f_a2, f_a3, f_a5, f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40); each
+          is a govee_common form_* enum
   counts  device_counts(num_segments, num_levels): the segment-mask width of a colour / brightness write,
           the level count of a 33 05 15 03 write
   group   color_group_form(rule, num_per_group, has_brightness, num_pieces): how an aa a5 / aa a2 reply

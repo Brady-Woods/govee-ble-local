@@ -288,7 +288,15 @@ def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.Monke
     for pact, raw in (((10, 1), None), ((1, 1), (20, 254))):
         bk._learn_pact(pact)
         assert bk.profile is profile_for("H6118", pact=pact) and bk.profile.brightness_range == raw, pact
-    assert len(caplog.records) == 1   # neither re-selection warns
+    # The keep-alive opt-out (heartbeat=None) is kept across the re-selection, and doesn't block it.
+    base = profile_for("H6118")
+    assert base is not None and base.heartbeat is not None
+    quiet = Device(dataclasses.replace(base, heartbeat=None), ble_device("AA:BB:CC:DD:EE:3F", "GVH6118"),
+                   sku="H6118")
+    quiet._learn_pact((10, 1))
+    bk_pact = profile_for("H6118", pact=(10, 1))
+    assert bk_pact is not None and quiet.profile == dataclasses.replace(bk_pact, heartbeat=None)
+    assert len(caplog.records) == 1   # no re-selection warns
 
 
 def test_a_modelled_row_needs_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:

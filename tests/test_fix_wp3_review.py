@@ -249,10 +249,59 @@ def test_unlock_goes_before_a_scene_upload(live: None) -> None:
     assert log[1][0] == "upload" and log[-1] == ("send", build.scene_activate(scene.code))
 
 
-def test_unlock_goes_before_a_read(live: None) -> None:
+@pytest.mark.parametrize(("sku", "empty"), [
+    ("H6050", False),   # H605051NewDetailVm (and the plugs): the check with a known secret only
+    ("H6058", True),    # hollowlamp 59, H6058NewDetailVm.T4: Controller4Secret.a("") first at connect
+    ("H6075", True),    # h6071 67, VM4Light's connect strategy: the same
+])
+def test_unlock_goes_before_a_read(live: None, sku: str, empty: bool) -> None:
     d, log = _locked("H6008", {0xB1: [_frame(0xAA, 0xB1, 0x01, *_SECRET)]})
     assert run(d.read_secret()) == _SECRET
     assert log == [("send", build.secret_check(_SECRET)), ("query", build.secret_read())]
+    # Decision D4, with no secret: the pairing screen reads alone (AbsPairAc4SecretV1.T1), so neither the
+    # unlock step of the session the read sets up nor the read sends a check; the next operation on that
+    # session sends the control screen's empty check first, and so does every later session.
+    setup: list[bytes] = []
+
+    def pairing_read(_request: bytes) -> list[bytes]:
+        setup.extend(e._unlock_frames())   # the unlock step of the session this read sets up
+        return [_frame(0xAA, 0xB1, 0x01, *_SECRET)]
+
+    e, elog = _dev(sku, {0xB1: pairing_read})
+    assert run(e.read_secret()) == _SECRET and setup == [] and elog == [("query", build.secret_read())]
+    run(e.set_power(True))
+    assert (elog[1] == ("send", build.empty_secret_check())) is empty
+    assert e._unlock_frames() == ([build.empty_secret_check()] if empty else [])
+    power = elog[-1]
+    e.set_secret(_SECRET)
+    assert e._unlock_frames() == [build.secret_check(_SECRET)]
+    # Only the read's own session skips the check. A session another operation sets up while the read is on
+    # the link sends it, and a write that overlaps the read (asyncio.gather) waits for it, then sends the
+    # check first; a profile without the check waits for nothing.
+    f, flog = _dev(sku)
+    reply = asyncio.Event()
+
+    async def slow_read(frame: bytes, **_k: object) -> list[bytes]:
+        f._unlock_frames()          # the unlock step of the session this read sets up
+        await reply.wait()          # the read is on the link
+        flog.append(("query", frame))
+        return [_frame(0xAA, 0xB1, 0x01, *_SECRET)]
+
+    f._conn.query = AsyncMock(side_effect=slow_read)  # type: ignore[method-assign]
+
+    async def overlap() -> list[bytes]:
+        read = asyncio.ensure_future(f.read_secret())
+        await asyncio.sleep(0)
+        other = f._unlock_frames()  # the unlock step of a session another operation sets up meanwhile
+        write = asyncio.ensure_future(f.set_power(True))
+        await asyncio.sleep(0)      # the write runs up to its unlock step
+        reply.set()
+        await asyncio.gather(read, write)
+        return other
+
+    assert run(overlap()) == ([build.empty_secret_check()] if empty else [])
+    assert flog == ([("query", build.secret_read()), ("send", build.empty_secret_check()), power] if empty
+                    else [power, ("query", build.secret_read())])
 
 
 def test_unlock_goes_before_the_segment_count_read(live: None) -> None:
