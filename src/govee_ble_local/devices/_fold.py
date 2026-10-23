@@ -658,12 +658,17 @@ def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.Hea
     pieces), each brightness clamped to the 0..100 state holds. The whole device has a colour only while
     both heads show the same one, which the stock colour page shows as :func:`_as_shown` reads it: an
     in-range Kelvin tint as that colour temperature (``DelegateColorV2.W1``, every piece the same colour),
-    as :func:`apply_rgb` folds the same pick. The report carries no Kelvin field (its default parse's
-    ``s16be(r1, g1)`` is head 1's red and green), so none is read from it."""
+    as :func:`apply_rgb` folds the same pick. The heads are that page's pieces: ``I:247-261`` sets
+    ``SubMode4Color.d`` to the two colours (``SubMode4Color.p:233-236``), and the page starts from that
+    ``SubMode4Color`` (``H70606162DetailVM.getInitColorData:589-591``, ``A1.t()``), so it tests them as
+    it tests segments, in its copy with a black head as (1, 1, 1) (:func:`_one_colour`,
+    ``ColorViewModel.initColor4Device:1194-1202``); ``state.segments`` keep the black. The report carries
+    no Kelvin field (its default parse's ``s16be(r1, g1)`` is head 1's red and green), so none is read
+    from it."""
     (bri_a, rgb_a), (bri_b, rgb_b) = pair.heads
-    state.segments = parse.merge_segments(state.segments, [
-        Segment(0, rgb_a, max(0, min(100, bri_a))), Segment(1, rgb_b, max(0, min(100, bri_b)))])
-    shared = rgb_a if rgb_a == rgb_b else None
+    heads = [Segment(0, rgb_a, max(0, min(100, bri_a))), Segment(1, rgb_b, max(0, min(100, bri_b)))]
+    state.segments = parse.merge_segments(state.segments, heads)
+    shared = _one_colour(heads) if _stock_page(profile) else (rgb_a if rgb_a == rgb_b else None)
     state.rgb_color, state.color_temp_kelvin = (
         (None, None) if shared is None else _as_shown(profile, state, (shared, None)))
 

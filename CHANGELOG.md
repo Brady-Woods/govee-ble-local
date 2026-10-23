@@ -1075,9 +1075,12 @@ model, from which the shipped readers are generated).
   as on the page (CLAUDE.md rule 3): `ColorViewModel.initColor4Device:1192-1210` posts a copy of
   `SubMode4Color.d` with `ColorUtils.N` (1, 1, 1) in each black piece's place, and that copy is what `W1` tests
   and shows. So segments that are all black show `rgb_color` (1, 1, 1), not (0, 0, 0), and black and (1, 1, 1)
-  segments together count as one colour, (1, 1, 1), where they read as differing until now. `segments` keep the
-  black the device reported, and `last_color_temp_kelvin` is as before (the Kelvin sync, `:1211`, tests the
-  original `d`, where neither colour is a tint).
+  segments together count as one colour, (1, 1, 1), where they read as differing until now. H7061's two heads
+  are such pieces: `H70606162Info4Detail.I:247-261` puts them in `d` (`SubMode4Color.p`), and its page starts
+  from that `SubMode4Color` (`H70606162DetailVM.getInitColorData:589-591`), so two black heads show (1, 1, 1),
+  and so do a black and a (1, 1, 1) head, where they showed no colour. `segments` keep the black the device
+  reported, and `last_color_temp_kelvin` is as before (the Kelvin sync, `:1211`, tests the original `d`, where
+  neither colour is a tint).
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
@@ -1130,7 +1133,10 @@ model, from which the shipped readers are generated).
     segment sets all black and black with (1, 1, 1): no frame, refusal or profile change, and the state changes
     only in `rgb_color` / `color_temp_kelvin` where the same read's segments are all black (now (1, 1, 1)) or
     black and (1, 1, 1) (now (1, 1, 1), no Kelvin), on the same 14 rows; `segments` and `last_color_temp_kelvin`
-    don't change. Not live-verified: no read-back of a tint report was made on the bench.
+    don't change. H7061's heads were then checked the same way against that change, adding head pairs of black,
+    (1, 1, 1), red and two tints: no frame, refusal or profile change, and the state changes only on H7061, in
+    `rgb_color`, for two black heads ((0, 0, 0), now (1, 1, 1)) and a black with a (1, 1, 1) head (no colour,
+    now (1, 1, 1)). Not live-verified: no read-back of a tint report was made on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
