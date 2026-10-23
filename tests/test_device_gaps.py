@@ -329,24 +329,25 @@ def test_a_key_new_in_the_record_does_not_take_over() -> None:
 
 
 def test_a_merged_record_keeps_the_pact_unless_its_entries_agree(caplog: pytest.LogCaptureFixture) -> None:
-    mixed = {_NEW: _entry(1), _OLD: _entry(1, pact_code=3)}
-    assert _bound("H60A6", _adv(_RENAMED, mixed)).pact == (1, 1)   # the constructor reads the first entry
-    d = _bound("H60A6", _adv(_RENAMED, {_NEW: _entry(1)}))
-    d.ingest_advertisement(_adv(_RENAMED, {_NEW: _entry(1)}))      # its on/off, before the callback
+    # Pacts 1,3 and 1,2, which the pact-less H60A6 profile accepts (1,1 has a pact route of its own).
+    mixed = {_NEW: _entry(1, pact_code=3), _OLD: _entry(1, pact_code=2)}
+    assert _bound("H60A6", _adv(_RENAMED, mixed)).pact == (1, 3)   # the constructor reads the first entry
+    d = _bound("H60A6", _adv(_RENAMED, {_NEW: _entry(1, pact_code=3)}))
+    d.ingest_advertisement(_adv(_RENAMED, {_NEW: _entry(1, pact_code=3)}))   # its on/off, before the callback
     calls: list[object] = []
     d.register_callback(calls.append)
     with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
         d.ingest_advertisement(_adv(_RENAMED, mixed))
         d.ingest_advertisement(_adv(_RENAMED, mixed))   # still mixed: warned once
-    assert d.pact == (1, 1) and calls == []
+    assert d.pact == (1, 3) and calls == []
     assert [r.getMessage().split(": ", 1)[1] for r in caplog.records] == [
-        "advertises Govee pacts 1,1 (header 0x43), 1,3 (header 0x42) (a merged advertisement record: an "
-        "earlier header, or another device's frame); the pact stays 1,1"]
+        "advertises Govee pacts 1,3 (header 0x43), 1,2 (header 0x42) (a merged advertisement record: an "
+        "earlier header, or another device's frame); the pact stays 1,3"]
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
-        d.ingest_advertisement(_adv(_RENAMED, {_NEW: _entry(1, pact_code=3), _OLD: _entry(1, pact_code=3)}))
+        d.ingest_advertisement(_adv(_RENAMED, {_NEW: _entry(1, pact_code=2), _OLD: _entry(1, pact_code=2)}))
         d.ingest_advertisement(_adv(_RENAMED, mixed))   # they agreed, so the pact moved; a new spell warns
-    assert d.pact == (1, 3) and len(calls) == 1 and len(caplog.records) == 1
+    assert d.pact == (1, 2) and len(calls) == 1 and len(caplog.records) == 1
 
 
 def test_encryption_constructor_uses_advertisement() -> None:
