@@ -280,6 +280,7 @@ def test_plug_and_secret_writes() -> None:
         assert b.plug_sync_time(ts, hh, mm) == C.build_plug_sync_time(ts, hh, mm)
         secret = bytes(r.randrange(256) for _ in range(b.SECRET_LEN))
         assert b.secret_check(secret) == C.build_secret_write(secret)
+    assert b.empty_secret_check() == C.build_secret_write(b"")   # the app's no-secret check
     assert b.light_effect_stop() == C.build_set_light_end()
 
 

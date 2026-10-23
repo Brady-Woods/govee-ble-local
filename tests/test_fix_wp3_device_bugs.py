@@ -158,6 +158,20 @@ def test_bytes_like_secret_is_normalised_to_bytes(raw: Any) -> None:
     assert d._unlock_frames() == [build.secret_check(b"12345678")]
 
 
+# ── Decision D4: the empty 33 b2 check, where the screen sends the check on every connect ──────
+@pytest.mark.parametrize(("empty", "secret", "want"), [
+    (False, None, []),                              # the plugs, H605051NewDetailVm: a known secret only
+    (True, None, [build.empty_secret_check()]),     # H6058NewDetailVm.T4 / h6071: Controller4Secret.a("")
+    (True, b"12345678", [build.secret_check(b"12345678")]),
+])
+def test_unlock_without_a_secret_follows_the_screen(empty: bool, secret: bytes | None,
+                                                    want: list[bytes]) -> None:
+    d = _dev("H5083", empty_secret_check=empty)
+    if secret is not None:
+        d.set_secret(secret)
+    assert d._unlock_frames() == want
+
+
 # ── WP3-021: an advertised power change keeps the zones consistent ────────────────────────
 def test_h6047_advert_off_marks_both_bars_off() -> None:
     d = _dev("H6047")

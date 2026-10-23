@@ -952,6 +952,13 @@ def secret_check(secret: bytes) -> bytes:
     return _write_frame(_PLAIN, _C.Command.secret_write, _params(_F.SecretWrite, secret=bytes(secret)))
 
 
+def empty_secret_check() -> bytes:
+    """33 B2 with no secret: the check a screen that sends it on every connect sends while the account holds
+    no secret (``secret_write``'s empty check: ``Controller4Secret.Companion.a("")`` decodes to no bytes and
+    ``BleUtils.p`` zero-fills, so the 8 secret bytes are zero). See ``DeviceProfile.empty_secret_check``."""
+    return _write_frame(_PLAIN, _C.Command.secret_write, _params(_F.SecretWrite, secret=bytes(SECRET_LEN)))
+
+
 # ── read requests (0xAA / 0xAC) ──────────────────────────────────────────────
 def power_query() -> bytes:
     """aa 01: read the power / relay state (reply: parse_light_power on lights, parse_power's relay byte on

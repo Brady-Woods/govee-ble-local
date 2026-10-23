@@ -170,12 +170,14 @@ class Device:
         re-learn it for the next session (:meth:`ingest_advertisement`). ``sku`` names the
         device (default: the profile's first SKU). ``secret`` is the 8-byte account-lock key, sent
         after every handshake on a profile that requires one (:meth:`set_secret` can supply it
-        later). ``frame_log=<path>`` persists a JSONL session capture. ``idle_disconnect`` is the
-        seconds of inactivity after which the link is dropped: None uses the library default
-        (``const.IDLE_DISCONNECT_DELAY``), 0 or less keeps the link up. While the link is up the device sends
-        its profile's keep-alive read (:attr:`.DeviceProfile.heartbeat`), which never keeps it up longer. A
-        profile with ``heartbeat=None`` sends none, whatever its ``heartbeat_timing``: to turn it off on a
-        SKU whose profile has one, ``Device(dataclasses.replace(profile, heartbeat=None), ...)``.
+        later; without one, a profile whose screen sends the empty check sends that,
+        :attr:`.DeviceProfile.empty_secret_check`). ``frame_log=<path>`` persists a JSONL session
+        capture. ``idle_disconnect`` is the seconds of inactivity after which the link is dropped: None
+        uses the library default (``const.IDLE_DISCONNECT_DELAY``), 0 or less keeps the link up. While the
+        link is up the device sends its profile's keep-alive read (:attr:`.DeviceProfile.heartbeat`), which
+        never keeps it up longer. A profile with ``heartbeat=None`` sends none, whatever its
+        ``heartbeat_timing``: to turn it off on a SKU whose profile has one,
+        ``Device(dataclasses.replace(profile, heartbeat=None), ...)``.
 
         Raises GoveeBleInvalidValue if ``secret`` is not exactly 8 bytes."""
         self.profile = profile
@@ -643,7 +645,12 @@ class Device:
                                        f"sends it over every piece: set_color_temp{zones})")
 
     def _unlock_frames(self) -> list[bytes]:
-        return [build.secret_check(self._secret)] if self._secret else []
+        """The unlock each session sends after the handshake on a :attr:`.DeviceProfile.requires_secret`
+        profile: the set secret's ``33 b2`` check; with none, the empty check where the screen sends it on
+        every connect (:attr:`.DeviceProfile.empty_secret_check`), else nothing."""
+        if self._secret:
+            return [build.secret_check(self._secret)]
+        return [build.empty_secret_check()] if self.profile.empty_secret_check else []
 
     @staticmethod
     def _sync_time_frame() -> bytes:
@@ -2424,7 +2431,8 @@ class Device:
 
         For the SETUP/bootstrap case: an unbound plug returns its secret without one
         being supplied, so call this BEFORE set_secret() (while `_secret` is None the
-        post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg).
+        post-handshake unlock step sends nothing on a plug, avoiding the secret chicken-and-egg;
+        only a :attr:`.DeviceProfile.empty_secret_check` light sends the empty check then).
         The frame builder is build.secret_read()."""
         reply = await self._read_reply(build.secret_read())
         return parse.parse_secret(reply) if reply else None

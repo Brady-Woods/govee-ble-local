@@ -230,6 +230,10 @@ the row lacks fails the build: nothing defaults silently.
   (:data:`_AES_FALLBACK_ROWS`: its firmware encrypts, and the spec records no cipher per row,
   ``wire_cipher: runtime``); none on every other row. The family ``encryption`` must be a cipher the library
   implements; it is never read as a control-time lock (D9: rows carry ``account_lock``).
+- The account lock (``account_lock``, ``DeviceProfile.requires_secret``): the 0xB2 check with a set secret.
+  A row whose screen sends it on every connect, an empty one when the account holds no secret
+  (``Controller4Secret.Companion.a("")``: hollowlamp 59, h6071 57 / 67), says ``empty_secret_check``, only
+  with ``account_lock`` (``DeviceProfile.empty_secret_check``).
 """
 from __future__ import annotations
 
@@ -308,6 +312,7 @@ class Row(TypedDict, total=False):
     zones: tuple[ZoneRow, ...]
     segment_brightness_groups: tuple[tuple[int, ...], ...]
     account_lock: bool
+    empty_secret_check: bool
     scene_dialect: str
     scene_versions: tuple[int, ...]
     kelvin_range: tuple[int, ...]
@@ -1268,6 +1273,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"power_write {power_write} on a zoned row (it is the whole-device frame, no zone's)")
     groups = tuple(tuple(g) for g in row.get("segment_brightness_groups") or ())
     lock = bool(need(row.get("account_lock"), "account_lock"))
+    empty_check = bool(row.get("empty_secret_check", False))
+    if empty_check and not lock:
+        fail("empty_secret_check without account_lock (the empty check is the account lock's 33 b2)")
     out: dict[str, Any] = {
         "capabilities": tuple(c for c in CAPABILITIES if c in caps),
         "segment_color_temp": part_kelvin is not False,   # True, the default, where it means nothing
@@ -1336,6 +1344,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["segment_brightness"] = False
     if control == "illumination":
         out["kelvin_with_brightness"] = True
+    if empty_check:
+        out["empty_secret_check"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         if status_by_pact:
