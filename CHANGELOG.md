@@ -1206,20 +1206,21 @@ model, from which the shipped readers are generated).
   it.
 - Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1), the
   segment brightness of H6098 / H8098 / H6690 and the h61d3 IC-sized rows' live mask, decision 2, are under Fixed,
-  and the 42 SKUs without segment colour temperature, the device-info reads of H60B1 / H7056 / H1630 / R1630 and
-  H8015's colour-temperature pair are in this section; H61B8 / H61B9 / H61F2 / H61F5 / H61F6, behind
-  `allow_modelled` at 1.6.1, take the live mask and are admitted by default, Added). Each other SKU of the 104
-  admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its rows
-  list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new
-  SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005,
-  H6099 with H6098 / H8098 / H6690, H70A1-3 and thirteen dreamcolorlightv1 71 / 123 SKUs (H618C / H619B / H619C /
-  H619D / H619E / H61A3 / H61A5 / H6172 / H6173 / H618E / H618F / H61B2 / H80B5) with H6176 / H61BC, H61B0 with
-  H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 / H6013 / H800B (H600A stays first),
-  H6145-7 and, at pact (2,1), H611A / H6143 / H6144 with H617C / H617E / H617F / H6168. H6099 and H61B0 come
-  first in theirs, so a `Device` built from one of those profiles without `sku=` names itself after them
-  (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows, on straightfloorlamp 69,
-  on the h70b3 rows, on h70b6 329 and on pact_tvlightv2 24 (Added) is new routing for new SKUs only: no SKU it
-  covers was supported at 1.6.1.
+  and the 42 SKUs without segment colour temperature, the device-info reads of H60B1 / H7056 / H1630 / R1630,
+  H8015's colour-temperature pair and a reported tint colour, which now reads as colour temperature on the stock
+  colour page (31 of these SKUs, starred in the stock colour page entry), are in this section; H61B8 / H61B9 /
+  H61F2 / H61F5 / H61F6, behind `allow_modelled` at 1.6.1, take the live mask and are admitted by default, Added).
+  Each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same
+  profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames and decoded
+  state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`):
+  H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3 and thirteen dreamcolorlightv1 71 /
+  123 SKUs (H618C / H619B / H619C / H619D / H619E / H61A3 / H61A5 / H6172 / H6173 / H618E / H618F / H61B2 / H80B5)
+  with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 / H6013 /
+  H800B (H600A stays first), H6145-7 and, at pact (2,1), H611A / H6143 / H6144 with H617C / H617E / H617F / H6168.
+  H6099 and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names itself
+  after them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows, on
+  straightfloorlamp 69, on the h70b3 rows, on h70b6 329 and on pact_tvlightv2 24 (Added) is new routing for new
+  SKUs only: no SKU it covers was supported at 1.6.1.
 - `wire.build` drops the h6061 group-frame constants `H6061_GROUP_SIZE`, `H6061_MASK_BYTES` and
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
