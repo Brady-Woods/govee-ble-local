@@ -478,13 +478,20 @@ model, from which the shipped readers are generated).
   (the app's IoT poll, which corrects it, has no library counterpart, so the state is assumed), the BGC
   version (an AES-GCM unit gets `GoveeBleNotSupported` on every command), and whether a write needs the
   `33 b2` unlock (a refusal raises `GoveeBleCommandRejected`). The row type changes no other SKU (Changed).
-  - **Home Assistant:** the integration's support for these rows (two calls for power and brightness, assumed
-    state, availability from the advertisement) needs this release, and its own release sets the `>=1.8.0`
-    floor. An integration from before it also accepts this release (`>=1.2.1,<2`) and gets the four SKUs, but
-    sends a power-on with every brightness change (their state stays `optimistic`): its one
-    `turn_on(power=True, brightness=x)` call is then two sessions inside its 60 s command timeout, so a slow
-    link can time out the brightness after the power-on landed and report the command failed. Release the two
-    together.
+  - **Home Assistant, release order** (the user's decision, DECISIONS.md 16: "Integration support first"):
+    - first, an integration release that handles these rows, keyed on `profile.readback == "none"` (power and
+      brightness as two calls, assumed state, availability from the advertisement). It ships dormant on its
+      current library floor: no library released before this one has a `readback "none"` profile, and it reads
+      the attributes new here (`session`, `whole_device_kelvin`, `supports_segment_brightness`) with
+      fallbacks, so it runs on those libraries unchanged;
+    - then the library release that admits H70B2, H6630, H8630 and H6631 (this one);
+    - then an integration release that raises its floor to that library release.
+
+    The order closes a window: an integration without that handling also accepts this release (`>=1.2.1,<2`)
+    and gets the four SKUs, but sends a power-on with every brightness change (their state stays
+    `optimistic`), so its one `turn_on(power=True, brightness=x)` call is two sessions inside its 60 s command
+    timeout, and a slow link can time out the brightness after the power-on landed and report the command
+    failed.
 - **A status read per advertised pact** (`DeviceProfile.status_read_by_pact`, keyword-only, default empty): where
   a row's pact branch asks for other TLV types than the row's read without its colour groups, that branch is the
   pact's exact read, `((pact_type, pact_code), types)`, which `Device` requests at that advertised pact; the
@@ -762,7 +769,7 @@ model, from which the shipped readers are generated).
     where device info comes from: the aa 06 / aa 07 03 / aa 07 02 reads, or on a status row the status
     reply's TLV 0x07, by the row's `device_info_reads`.
 
-- The `legacy_02` scheme changes no other SKU: each of the 308 the table admitted before it (234 by default,
+- The `legacy_02` scheme changes no other SKU: each of the 309 the table admitted before it (235 by default,
   74 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at
   (99, 99) and at none, with and without `allow_modelled`; the 10 `legacy_02` SKUs (Added) are the only new
   routes. One state rule it adds is not scheme-bound: a profile without `COLOR_TEMP` keeps an RGB pick that is a
@@ -771,22 +778,23 @@ model, from which the shipped readers are generated).
   (rgblight `VM4Light.syncKelvin`). Of the SKUs admitted before, only H6113 at its BK pacts (h6113 39, the h6006
   frames without colour temperature, the rgblight screen) has such a profile: after a pick of a tint colour in
   [2000, 9000] its state now holds that colour where it held the Kelvin. Its frames are unchanged.
-- The colour-temperature work changes no other SKU: each of the 318 the table admitted before it (244 by
-  default, 74 behind `allow_modelled`) but H60A4 / H80A4 resolves to the same profile, field by field, at every
-  pact its rows list, at (99, 99) and at none, with and without `allow_modelled` (`white_type="rgb_white"`,
-  whose frames are as before byte for byte, `whole_device_kelvin` and `kelvin_with_brightness` False, and an
-  empty `mode_decode`). H60A4 / H80A4, behind `allow_modelled` before, take the pair (Added).
+- The colour-temperature work changes no other SKU: each of the 319 the table admitted before it (245 by
+  default, 74 behind `allow_modelled`) but H60A4 / H80A4 and H8015 (Changed, below) resolves to the same
+  profile, field by field, at every pact its rows list, at (99, 99) and at none, with and without
+  `allow_modelled` (`white_type="rgb_white"`, whose frames are as before byte for byte, `whole_device_kelvin`
+  and `kelvin_with_brightness` False, and an empty `mode_decode`). H60A4 / H80A4, behind `allow_modelled`
+  before, take the pair (Added), and so does H8015 (Changed, below).
 - For integrators: `Capability.SEGMENTS` with `Capability.COLOR_TEMP` no longer means the segment and zone Kelvin
-  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4 and H61D2-H61D6 by default;
-  H61E5 / H61E6 and H60A1 / H80A1 behind `allow_modelled`) `set_segment_color_temp` and `set_zone_color_temp`
-  raise GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Every such profile with
-  segments also has `segment_color_temp=False` (its row says false, and the resolver refuses true beside a
-  `color_temp_control`), so a per-segment control gated on `profile.segment_color_temp` (the integrator note
-  under Added) offers none there, and none of them has zones, so a per-zone one (COLOR_TEMP and the
-  profile's zones) offers none either; hass-govee-ble-local's segment lights need that follow-up (they offer
-  colour temperature whenever the device has `COLOR_TEMP`). A profile built by hand with
-  `whole_device_kelvin=True` is refused too, whatever its `segment_color_temp`. Every SKU of 1.6.1 has
-  `whole_device_kelvin=False`.
+  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4, H8015, H6071 / H6075 and
+  H61D2-H61D6 by default; H61E5 / H61E6 and H60A1 / H80A1 behind `allow_modelled`) `set_segment_color_temp` and
+  `set_zone_color_temp` raise GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Every
+  such profile with segments also has `segment_color_temp=False` (its row says false, and the resolver refuses true
+  beside a `color_temp_control`), so a per-segment control gated on `profile.segment_color_temp` (the integrator
+  note under Added) offers none there, and none of them has zones, so a per-zone one (COLOR_TEMP and the profile's
+  zones) offers none either; hass-govee-ble-local's segment lights need that follow-up (they offer colour
+  temperature whenever the device has `COLOR_TEMP`). A profile built by hand with `whole_device_kelvin=True` is
+  refused too, whatever its `segment_color_temp`. Of the 1.6.1 SKUs only H8015 (no segments or zones, so nothing
+  else is refused: Changed, below) has `whole_device_kelvin=True`.
 - **H8015 (bulblightv3 328) sends the app's colour-temperature pair and is admitted by default
   (`app_traced`)**, on the user's sign-off (2026-10-22: "Approve"). Since 1.6.1 it was served behind
   `allow_modelled` with the Kelvin frame alone. Its screen's only colour-temperature control is the
@@ -804,7 +812,7 @@ model, from which the shipped readers are generated).
   Every other frame, read and decode is as before. Source-traced (Govee Home 7.7.02), not live-verified: there
   is no H8015 on the bench. Every other SKU of 1.6.1 keeps `kelvin_with_brightness=False` and its one-frame
   colour-temperature write.
-- The read-back work changes no other SKU: each of the 322 the table admitted before it (246 by default, 76
+- The read-back work changes no other SKU: each of the 323 the table admitted before it (247 by default, 76
   behind `allow_modelled`) but H61A9 and H61C2 / H61C3 / H61C5 (Added) resolves to the same profile, field by
   field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`
   (`color_readback_ic_sections` and `detail_power_read` False). H7061 is a new route.
@@ -813,21 +821,21 @@ model, from which the shipped readers are generated).
   `send_many` and `send_once` check each frame with it before any I/O, and the ack-verified write takes its
   command from it. A `33` frame of 2 bytes (the proType and the checksum: no command) now raises
   `GoveeBleInvalidValue` before any I/O instead of being sent. No frame the library builds changes.
-- The device-list card's row type changes no other SKU: each of the 323 the table admitted before it (248 by
+- The device-list card's row type changes no other SKU: each of the 324 the table admitted before it (249 by
   default, 75 behind `allow_modelled`) resolves to the same profile, field by field (`session="held"`), at every
   pact its rows list, at (99, 99) and at none, with and without `allow_modelled`. `identify.parse_broadcast_onoff`
   now reads the advert's switch byte through the spec (`power_state`, source `advert`) and gives the same on/off
   as before for every SKU. H70B2, H6630, H8630 and H6631 are new routes.
-- The status read per pact changes no other SKU: each of the 327 the table admitted before it (252 by default,
+- The status read per pact changes no other SKU: each of the 328 the table admitted before it (253 by default,
   75 behind `allow_modelled`) resolves to the same profile, field by field (`status_read_by_pact` empty), at
   every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`, so its request is as
   before. H7070 is a new route.
-- `kelvin_v9` changes no other SKU: each of the 328 the table admitted before it (253 by default, 75 behind
+- `kelvin_v9` changes no other SKU: each of the 329 the table admitted before it (254 by default, 75 behind
   `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and
   at none, with and without `allow_modelled`, and every builder's frames on the six schemes before it are as
   before. `ColorScheme` (and `DeviceProfile.color_scheme`) gains the member, an additive change. H6071 and
   H6075 are new routes.
-- The exact-pact pairing write changes no other SKU: each of the 330 the table admitted before it (255 by
+- The exact-pact pairing write changes no other SKU: each of the 331 the table admitted before it (256 by
   default, 75 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows
   list, at (99, 99) and at none, with and without `allow_modelled`; the routes read the pairing items only to
   refuse H615A-E without a pact (no SKU a pairing item names was supported before). H615A-E join the profile
@@ -842,7 +850,7 @@ model, from which the shipped readers are generated).
   `device.supports_segment_brightness` before offering brightness on a segment or zone entity:
   hass-govee-ble-local's segment and zone lights call `set_segment_brightness` for their brightness, and need
   that follow-up before H61D2-H61D6 are set up. Every SKU admitted before has `segment_brightness=True`, and
-  each of the 335 the table admitted before the split (260 by default, 75 behind `allow_modelled`) but
+  each of the 336 the table admitted before the split (261 by default, 75 behind `allow_modelled`) but
   H61D2-H61D6 resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at
   none, with and without `allow_modelled`. H61D2-H61D6 change: `SEGMENTS`, `whole_device_kelvin`,
   `segment_brightness=False`, and admitted by default; their whole-device frames are as before.
