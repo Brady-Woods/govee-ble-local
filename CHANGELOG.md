@@ -947,7 +947,7 @@ model, from which the shipped readers are generated).
   where `supportIcFresh` does (H61B5 at every pact; 123's others only at (2,2) / (3,x)); `VM4Light.N5` then
   walks the reply's section sum. A SKU's `by_model` `connect_reads` replaces its row's, on a SKU one row of the
   family lists (as `connect_writes`, `ic_pieces` and `support` do), and `govee_reference.client_row` applies it.
-  The 1.7.0 row narrowing was skipped because a narrowed row would have served those SKUs without their read.
+  PR #45 left these two rows un-narrowed because a narrowed row would have served those SKUs without their read.
   - **dreamcolorlightv1 71, narrowed to pact (3,2)**: **H618C / H619B / H619C / H619D / H619E / H61A3 / H61A5**,
     **H61A0 / H61A1 / H61A2** (their aa 40 and section-sum walk, as H61A9's) and **H6172**† / **H6173**† /
     **H618E**† / **H618F**† / **H61B2**†. At (3,2) the read-back groups are 4 (`supportRgbWithBrightnessOnePkg4Colors`)
@@ -1253,8 +1253,8 @@ model, from which the shipped readers are generated).
 - **The released status rows on the aa 01 keep-alive follow it, as their screens do** (the user's decision 17,
   "Match the app"; `heartbeat_power`, Added). **H6076 / H8076 / R16D0** (straightfloorlamp 69), **H6069 / H8069**
   (h6069 284), **H617G / R617G** (rgbiclight 351), **H618G / R618D** (352), **H7086** (h7086 293), **H7025 / H8025**
-  (h7020 296), **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default in 1.7.0, read the status on
-  every poll until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out:
+  (h7020 296), **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default since PR #45, read the status
+  on every poll until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out:
   the power there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On
   69, 284, 351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then
   the `aa a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read and not
@@ -1485,8 +1485,16 @@ model, from which the shipped readers are generated).
   entity per `profile.segments`; it needs to size them from `device.segment_count` after the first refresh
   (and reload when the count changes): until then a strip shorter than the profile's count shows entities
   whose writes raise GoveeBleInvalidValue, and H6641's `segment_14` / `segment_15` entities (its count is now
-  at most 14) need removing. Release the two together. Every other SKU resolves to the same profile, field by field, at
-  every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`.
+  at most 14) need removing. Release order, as for the card rows (DECISIONS.md 16, "Integration support first"):
+  - first, an integration release that sizes the segment entities from `device.segment_count` after the first
+    refresh, reloads when it changes and removes the entities past it. It ships dormant for these profiles on its
+    current library floor, where their `segment_count` is the static count (`profile.segments` as the fallback on
+    a library without `segment_count`), so it builds the same entities there;
+  - then the library release that makes these profiles' `segment_count` follow the device (this one);
+  - then an integration release that raises its floor to that library release.
+
+  Every other SKU resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at
+  none, with and without `allow_modelled`.
 
 ### Fixed
 - **A scene firmware gate (`DeviceProfile.scene_versions_by_firmware`) compares versions as the app's
@@ -2193,8 +2201,8 @@ model, from which the shipped readers are generated).
   TLV and its empty-value failure. govee_state's `ic_count.segment_signed` doc names the screen's use of TLV
   0x40's segment byte (the IC-pair reader's second value), which sizes the page where the IC changed and no
   0xA1 follows (`H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l` -> `n6`).
-- **The rows 1.9.0 adds or promotes carry the user's decisions 11, 12 and 13, each re-traced and cited in its `doc`
-  and `doc-ref`.** `segment_color_temp` by `SupportPartColorTemConfig.d` (the Part tab's Kelvin item,
+- **More rows carry the user's decisions 11, 12 and 13, each re-traced and cited in its `doc` and `doc-ref`.**
+  `segment_color_temp` by `SupportPartColorTemConfig.d` (the Part tab's Kelvin item,
   `DelegateColorV2Part.Z0` -> `LightColorCapabilityCenter.C2`): true on h61d3 375 / 261, h705a 125 / 180 / 394,
   h707a 326, h6609 260 and h7057 349, whose strips' `canClickColorTem` tint the selected pieces, and false on
   dreamcolorlightv1 71 / 123, h61d3 299 and h705a 240 / 250. No `segment_brightness_groups`: each of their strips'
@@ -2205,7 +2213,7 @@ model, from which the shipped readers are generated).
   07 read (316 / 391 / 411 pass the one `Controller4IcNumber` aa 40 read) and their success callbacks take the
   versions from TLV 0x07 (`NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o` and `...4702ABC$1.o`,
   `H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.n`, each through `k2(e(), d())`); h705a 394 and h7057 349
-  took it on 1.8.0. The values came in with the merge of 1.8.0 (the resolver requires them); this adds the traces,
+  already had it. The values came in with an earlier merge (the resolver requires them); this adds the traces,
   and no profile, frame or read changes.
 
 ## [1.6.1] — 2026-10-21
