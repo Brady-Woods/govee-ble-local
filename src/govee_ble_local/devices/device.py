@@ -200,6 +200,11 @@ class Device:
         # A session that read sets up sends no empty check (_unlock_frames), so an operation that overlaps the
         # read waits for it before its own unlock step (_send_pending_unlock), which then sends the check.
         self._pairing_lock = asyncio.Lock()
+        # Held by _send_pending_unlock while it sends a pending 33 b2 check, so an operation that overlaps it
+        # waits for its outcome before going on: a refusal ends the session, and a frame queued on the
+        # connection meanwhile would go out on that link unchecked. The innermost device lock: taken after
+        # every other (_pairing_lock included), before the connection lock, and no device lock under it.
+        self._unlock_lock = asyncio.Lock()
         self._scenes_warm = False        # bundled scene catalog loaded off the loop (update()), and it worked
         # The last scene catalog load's failure (its message), which the sync scene properties raise with no
         # I/O until update() loads the catalog again off the loop (_scene_lookup).
@@ -265,8 +270,8 @@ class Device:
         self._link_write = (0, -1)
         # Held by a scene write across its upload and activation, and briefly by every read-back
         # (_read_reply, _query_status), so no poll lands between the two (see set_scene_by_name).
-        # Innermost device lock but _pairing_lock: taken after _scene_lock and _bar_lock, before the
-        # connection lock.
+        # Innermost device lock but _pairing_lock and _unlock_lock: taken after _scene_lock and _bar_lock,
+        # before the connection lock.
         self._read_gate = asyncio.Lock()
         # A session="per_command" profile's writes (the device-list card's taps): held by each of its commits
         # (_commit) and across a _turn_on_taps call's power-on and brightness, so no other write lands between
@@ -786,49 +791,55 @@ class Device:
         it first (``_pairing_lock``), so its frames never go out ahead of the check on a session the read set
         up. Without a live session nothing is sent: the next session setup sends it. A rejection ends the
         session and is a GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at
-        session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
-        out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
-        calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
-        write retry's reconnect ran out of them) is raised, and the next session setup sends the
-        unlock."""
+        session setup (``GoveeConnection._prepare_session``). An operation that overlaps a check in flight
+        waits for its outcome (``_unlock_lock``) rather than skipping it, so none of its frames goes out on a
+        link whose check is then refused: after a refusal the session is gone and its own setup sends the
+        check again. ``ticket``: the write call it goes out for (:meth:`_commit`), recorded once it went out
+        (:meth:`_wrote`). ``budget``: the calling poll's connect limits (:meth:`update`); a timeout that
+        leaves the session down (the write retry's reconnect ran out of them) is raised, and the next session
+        setup sends the unlock."""
         pairing = self._pairing_read()
         if (not pairing and not self._secret and self.profile.empty_secret_check
                 and self._pairing_lock.locked()):
             async with self._pairing_lock:   # the read in flight may set a session up without the check
                 pass
-        if not self._unlock_pending or (pairing and not self._secret):
-            return   # a pairing read sends no empty check: it stays pending for the next operation
-        self._unlock_pending = False   # taken: a concurrent operation doesn't send it twice
-        secret = self._secret
-        unlock = self._unlock_frames() if self._conn.is_connected else []
-        if not unlock:
-            return   # the next session setup sends it (or there is none)
-        done = False   # the write finished: acked, rejected, or unacked (treated as sent)
-        try:
-            await self._conn.send(unlock[0], **_budget_kw(budget))
-            done = True
-        except GoveeBleCommandRejected as err:
-            done = True
-            # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end the
-            # session, so the next operation's setup sends the check again and is refused the same way: no
-            # later frame goes out on this link unchecked, as the app's compose stops at its failed check.
-            await self._conn.disconnect()
-            raise GoveeBleAuthError(
-                f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
-            ) from err
-        except GoveeBleTimeout:
-            if budget is not None and not self._conn.is_connected:
-                raise   # the poll's connect limit ran out on the write retry's reconnect: nothing sent
-            done = True
-            _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
-        finally:
-            # A cancelled or failed write on a session that is still up never reached the device:
-            # pending again, so the next operation sends it first. Once the session is gone the next
-            # setup sends it anyway, and a set_secret() during the write has re-armed it itself.
-            if not done and self._conn.is_connected and self._secret == secret:
-                self._unlock_pending = True
-            if done and ticket is not None:
-                self._wrote(ticket)
+        # One check at a time: an operation that overlaps one in flight waits here for its outcome, where
+        # it skipped it as taken and so could queue a frame on the link before a refusal ended the session.
+        async with self._unlock_lock:
+            if not self._unlock_pending or (pairing and not self._secret):
+                return   # a pairing read sends no empty check: it stays pending for the next operation
+            self._unlock_pending = False   # taken: an operation waiting on _unlock_lock doesn't resend it
+            secret = self._secret
+            unlock = self._unlock_frames() if self._conn.is_connected else []
+            if not unlock:
+                return   # the next session setup sends it (or there is none)
+            done = False   # the write finished: acked, rejected, or unacked (treated as sent)
+            try:
+                await self._conn.send(unlock[0], **_budget_kw(budget))
+                done = True
+            except GoveeBleCommandRejected as err:
+                done = True
+                # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end
+                # the session, so the next operation's setup sends the check again and is refused the same
+                # way: no later frame goes out on this link unchecked (an overlapping operation waits on
+                # _unlock_lock until it is gone), as the app's compose stops at its failed check.
+                await self._conn.disconnect()
+                raise GoveeBleAuthError(
+                    f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
+                ) from err
+            except GoveeBleTimeout:
+                if budget is not None and not self._conn.is_connected:
+                    raise   # the poll's connect limit ran out on the write retry's reconnect: nothing sent
+                done = True
+                _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
+            finally:
+                # A cancelled or failed write on a session that is still up never reached the device:
+                # pending again, so the next operation sends it first. Once the session is gone the next
+                # setup sends it anyway, and a set_secret() during the write has re-armed it itself.
+                if not done and self._conn.is_connected and self._secret == secret:
+                    self._unlock_pending = True
+                if done and ticket is not None:
+                    self._wrote(ticket)
 
     def _check_kelvin(self, kelvin: int) -> int:
         """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the

@@ -511,8 +511,9 @@ model, from which the shipped readers are generated).
   the empty check (a non-zero status) fails the session with GoveeBleAuthError, as the app's connect read fails
   on it (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`),
   at session setup and when the next operation after a `read_secret()` sends it: either way the session ends,
-  so no later frame goes out on that link unchecked and the next setup sends the check again (source-modelled);
-  a missing ack is logged and the session goes on. Screens that test the secret first send none
+  so no later frame goes out on that link unchecked and the next setup sends the check again (source-modelled).
+  An operation that overlaps that check waits for its outcome (Fixed, below). A missing ack is logged and the
+  session goes on. Screens that test the secret first send none
   (`H605051NewDetailVm:163-169`: H6050 / H6051), and nor do the plugs. Set on **H6058** (hollowlamp 59), now
   admitted by default (`app_traced`; it was behind `allow_modelled` for this one gap, the user's decision D4,
   2026-10-22), and on H6071 / H6075 (h6071 57 / 67, Changed). Source-modelled, not live-verified: none of the
@@ -1665,6 +1666,18 @@ model, from which the shipped readers are generated).
   `ColorMode14Rect4ReverseSelect.canClickBrightness:380-383` via `e0:480-482`,
   `H605CColorMode.canClickBrightness:497-500`, and the H60A6's `ColorModeH60A6.canClickBrightness:484-487` via
   `X:399-401`).
+- **A refused `33 b2` check sent on a live session ends that session, and an operation that overlaps the check
+  waits for its outcome.** On an account-locked profile, a secret that `set_secret()` changes while a session is
+  up goes out before the next operation's own frames (`_send_pending_unlock`). When the device refused it, that
+  operation raised GoveeBleAuthError, but the link stayed up with the check already taken, so the next
+  operation's frames went out on it unchecked; and an operation started while the check was on the link skipped
+  it as taken and queued its frames behind it, so they went out too before anything ended. Now the refusal ends
+  the session first, as a refusal at session setup does (`GoveeConnection._connect_locked`), and an operation
+  that overlaps a check in flight waits for its outcome (`asyncio.gather` included): after a refusal it connects
+  again, and its own setup sends the check and is refused the same way, so no frame goes out on a link whose
+  check failed. The empty check after `read_secret()` (Added) goes the same way. With an accepted check, the
+  overlapping operations' frames follow it in the order they were called, where a later one could go first.
+  No frame changes for an operation that overlaps nothing. Source-modelled, not live-verified.
 
 ### Spec
 - **A pact branch can give its pact a profile of its own (h60ax 303 at (1,1), hass #30).** `clientBranch` takes
