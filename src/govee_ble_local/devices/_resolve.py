@@ -218,14 +218,14 @@ the row lacks fails the build: nothing defaults silently.
   ``heartbeat_aa01``, heartbeat ``power`` and no zones: the reply is the one switch) follows the screen: the
   status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
   ``DeviceProfile.heartbeat_power``): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020
-  296, h7076 313, h3700 383 (the user's decision 17) and h61d3 263. Such a row's ``heartbeat_reread`` (only
-  with ``heartbeat_power``, and with the wire group's ``num_per_group``, the re-read's group size: it becomes
-  ``DeviceProfile.color_readback_per_batch``) is the screen's re-read on a power change (``J3`` ->
-  ``Compose4Off2On``: aa 05, then the screen's aa a5 groups over its ``pieces``,
-  ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. The library folds no
-  other keep-alive reply and no ee 30 push into state: the poll's own power read stands in for them, aa 01 on
-  a polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on either), the aa 36 bar
-  read for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``.
+  296, h7076 313, h3700 383 (the user's decision 17), h7020 316 / 318 / 337 / 391 / 411 (decision 26) and
+  h61d3 263. Such a row's ``heartbeat_reread`` (only with ``heartbeat_power``, and with the wire group's
+  ``num_per_group``, the re-read's group size: it becomes ``DeviceProfile.color_readback_per_batch``) is the
+  screen's re-read on a power change (``J3`` -> ``Compose4Off2On``: aa 05, then the screen's aa a5 groups over
+  its ``pieces``, ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. The
+  library folds no other keep-alive reply and no ee 30 push into state: the poll's own power read stands in
+  for them, aa 01 on a polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on
+  either), the aa 36 bar read for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``.
 - The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes

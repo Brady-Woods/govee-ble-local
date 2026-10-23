@@ -594,11 +594,10 @@ class DeviceProfile:
     profile with :attr:`heartbeat_reread_pieces`; elsewhere the mode and colour on a link that stays up are
     the status read's and the library's own writes, as the screen's (it sets the switch alone). Set by a
     devices.yaml status row's ``heartbeat_power: true``: straightfloorlamp 69, h6069 284, rgbiclight 351 /
-    352, h7086 293, h7020 296, h7076 313 and h3700 383 (the user's decision 17), and h61d3 263 (behind
-    ``allow_modelled``). False (the default: every other profile, among them the status rows on the aa 00
-    keep-alive, H60A6's, whose reply carries no switch, and h7020 316 / 318 / 337 / 391 / 411, whose screen is
-    296's and follows the reply too, until the user decides whether decision 17 covers them): the status read
-    each poll, the reply left unread."""
+    352, h7086 293, h7020 296, h7076 313 and h3700 383 (the user's decision 17), h7020 316 / 318 / 337 / 391 /
+    411, on 296's screen (the user's decision 26), and h61d3 263 (behind ``allow_modelled``). False (the
+    default: every other profile, among them the status rows on the aa 00 keep-alive, H60A6's, whose reply
+    carries no switch): the status read each poll, the reply left unread."""
     heartbeat_reread_pieces: int = field(default=0, kw_only=True)
     """With :attr:`heartbeat_power`: the re-read the screen makes when a keep-alive reply changes the switch
     (``J3`` -> ``Compose4Off2On``), over this many pieces; 0 (the default): none, the screen sets the switch

@@ -156,10 +156,10 @@ timing:
         takes the switch from each aa 01 reply (ShareVM.N3 -> J3); on straightfloorlamp 69, h6069 284, rgbiclight 351 /
         352 and h61d3 263, J3 also re-reads on each change (Compose4Off2On: the timer, sleep and wake reads and aa 05,
         then the screen's aa a5 groups), while on h7086 293, h7020 296, h7076 313 and h3700 383 it sets the switch
-        alone, as on h7020 316 / 318 / 337 / 391 / 411 (296's NewDetailVM: I3 true, J3 with no compose). The rows the
-        user's decision 17 named say heartbeat_power (69, 284, 351 / 352, 293, 296, 313, 383), and so does h61d3 263
-        (behind allow_modelled); h7020 316 / 318 / 337 / 391 / 411 don't, and read the status on every poll until the
-        user decides whether the decision covers them. The four re-reading screens say heartbeat_reread. On a row that
+        alone, as on h7020 316 / 318 / 337 / 391 / 411 (296's NewDetailVM: I3 true, J3 with no compose). Every one of
+        them says heartbeat_power: the rows the user's decision 17 named (69, 284, 351 / 352, 293, 296, 313, 383), the
+        h7020 siblings 316 / 318 / 337 / 391 / 411 (the user's decision 26, which extends it to them), and h61d3 263
+        (behind allow_modelled). The four re-reading screens say heartbeat_reread. On a row that
         says heartbeat_power the library makes the status read once per link (a poll on a link it was made on reads
         nothing more) and folds each reply's byte 2 == 1 into the power, a read that stamps
         Device.power_read_at with the drop count taken when its beat went out, but only a reply that arrives with no
@@ -18970,6 +18970,7 @@ families:
           ic_pieces: { min_ic: 0, max_ic: 65535, ic_per_piece: 1 }
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H7026 (KmpGoodsType 318; Support.isGoodsTypeH7026) and H8026 (Support.r, catalogue 318: the same BLE path and
             pieces, as ColorPieceConfig names no SKU; only Support.getBulbStringMaxNum = 23, the Wi-Fi colour parse and the
@@ -19002,9 +19003,10 @@ families:
             (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the reply's TLV
             0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
             and device id from TLV 0x07 alone.
-            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
-            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
-            library reads the status on every poll.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
+            sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
+            2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, its TLV 0x40 IC
+            count with it, then each reply's switch; the ee 30 push is not read.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19049,6 +19051,7 @@ families:
           ic_pieces: { min_ic: 0, max_ic: 65535, ic_per_piece: 1 }
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H7027 (KmpGoodsType 337; Support.isGoodsTypeH7027) on the h7020 NewDetailVM screen, as 318: the 0xAC status read
             ac 03 03 40 41 a5 alone, the TLV 0x40 IC count (unsigned, f_40 one_count_u16, stored unclamped) sizing the 0xA5
@@ -19063,9 +19066,10 @@ families:
             (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the reply's TLV
             0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
             and device id from TLV 0x07 alone.
-            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
-            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
-            library reads the status on every poll.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
+            sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
+            2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, its TLV 0x40 IC
+            count with it, then each reply's switch; the ee 30 push is not read.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19111,6 +19115,7 @@ families:
           ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 1 }
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H702A / H702B / H702C (KmpGoodsType 316; Support.isGoodsTypeH702ABC) on the h7020 NewDetailVM screen, as 296, with
             the 4702ABC connect (NewDetailVM.d0 -> h5 -> afterConnectedSingleReadDeviceInfo4702ABC$1): one connect read that
@@ -19142,9 +19147,10 @@ families:
             soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
             s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
             and folds the versions and device id from TLV 0x07 alone.
-            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
-            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
-            library reads the status on every poll.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
+            sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
+            2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, with the aa 40
+            reads the row makes around it, then each reply's switch; the ee 30 push is not read.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19192,6 +19198,7 @@ families:
           readback_pieces: ic_count
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H30D0 (KmpGoodsType 391; Support.isGoodsTypeH30D01; H30D1, catalogue 391, named nowhere in the app, routes here by
             its goodsType alone) on the h7020 NewDetailVM screen with the 4702ABC connect, as 316: aa 40 (a mandatory step;
@@ -19211,9 +19218,10 @@ families:
             soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
             s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
             and folds the versions and device id from TLV 0x07 alone.
-            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
-            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
-            library reads the status on every poll.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
+            sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
+            2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, with the aa 40
+            reads the row makes around it, then each reply's switch; the ee 30 push is not read.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19260,6 +19268,7 @@ families:
           readback_pieces: ic_count
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H3010 / H3011 / H3012 / H3013 (Support.t / u / v / w; Support.isGoodsTypeH3010123; H3010 is catalogue 411 and
             the default of getBulbStringMaxNum, H3011-H3013 its 30 / 45 / 60) on the h7020 NewDetailVM screen with the
@@ -19291,9 +19300,10 @@ families:
             soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
             s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
             and folds the versions and device id from TLV 0x07 alone.
-            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
-            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
-            library reads the status on every poll.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
+            sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
+            2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, with the aa 40
+            reads the row makes around it, then each reply's switch; the ee 30 push is not read.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:62-65,96-166,313-362,383-385,477-479,595-597,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31

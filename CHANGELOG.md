@@ -677,10 +677,12 @@ model, from which the shipped readers are generated).
   (`afterConnectedSingleReadDeviceInfo`, from `d0`) and then sets its switch from byte 2 == 1 of every keep-alive
   reply (`BleComm.G` -> `ShareVM.N3` -> `J3`, ConnectHeartbeat type 1); on a change, four of the screens also
   re-read the mode and colour (`J3` -> `Compose4Off2On`). The user's decision 17 ("Match the app") turns it on for
-  the rows it named, and h61d3 263 has it too; the library now does the same on those rows. h7020 316 / 318 / 337 /
-  391 / 411 (H702A-C, H7026 / H8026, H7027, H30D0, H3010-H3013), admitted after the decision, run 296's screen
-  (`NewDetailVM.I3` true, `J3` sets the switch from each reply) but don't say it, so they read the status on every
-  poll until the user decides whether the decision covers them:
+  the rows it named, and the user's decision 26 (2026-10-22) for the h7020 rows on 296's screen admitted after it:
+  316 / 318 / 337 / 391 / 411 (H702A-C, H7026 / H8026, H7027, H30D0 / H30D1, H3010-H3013), whose screen takes the
+  switch from each reply with no re-read (`NewDetailVM.I3:735-742` true, `J3:744-756`), as H7025's does. h61d3
+  263 has it too. The library now does the same on every status row on the aa 01 keep-alive; on the h7020 rows
+  whose connect read also reads aa 40 around the status read (316 / 391 / 411), those reads go with it, once per
+  link:
   - **The status read once per link.** `Device.update` makes it on the first poll of a link and reads nothing more
     on that link (so nothing is read back after a write there); a poll on a fresh link returns its status read's
     state.
@@ -1769,9 +1771,9 @@ model, from which the shipped readers are generated).
   resolver serves `heartbeat_power` only on an unzoned status row whose `power_live` has `heartbeat_aa01`, and
   `heartbeat_reread` only with it and with the wire group's `num_per_group` (its aa a5 group size, which becomes
   `DeviceProfile.color_readback_per_batch` there). The rows the user's decision 17 named say `heartbeat_power`
-  (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313, h3700 383), and so does
-  h61d3 263, each `J3` re-traced (`I3` true, then `ShareVM.N3` -> `J3`). h7020 316 / 318 / 337 / 391 / 411 run 296's
-  screen (`NewDetailVM.I3:735-742` true, `J3:744-756`) and don't say it, pending the user's decision; the schema's
+  (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313, h3700 383), and so do
+  h7020 316 / 318 / 337 / 391 / 411, which run 296's screen (`NewDetailVM.I3:735-742` true, `J3:744-756`; the
+  user's decision 26), and h61d3 263, each `J3` re-traced (`I3` true, then `ShareVM.N3` -> `J3`); the schema's
   description and `timing.heartbeat.deviations` name them. The four whose `J3` re-reads
   say `heartbeat_reread`, with the pieces the screen's walk takes: 7 on 69 (straightfloorlamp `VM4Light.p5` -> `t5`,
   `Support.getBulbStringMaxNum(69)` / `getOneGroupColorSize(69)` = 4), 140 on 284 (`CubeVM4Light.h5` -> `l5`:
