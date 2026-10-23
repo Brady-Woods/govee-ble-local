@@ -294,7 +294,8 @@ def test_the_0x0d_report_is_the_bulb_layout_not_the_rgblight_one() -> None:
 
 # CubeNewInfo4Detail.U (7.7.02 split_h6061) decodes mode bytes 13 (colour), 4, 10 and 19 only and
 # logs anything else as "is not support!", so a 0x15 report leaves the app's colour as it was, even
-# though the H6061 itself writes 0x15 frames (33 05 15 01 RGB and CCT).
+# though the H6061 itself writes 0x15 frames (33 05 15 01 RGB and CCT); the same poll's aa a5 walk then
+# fills it (_fold._shown_over_pieces).
 def _h6061() -> DeviceProfile:
     p = profile_for("H6061")
     assert p is not None

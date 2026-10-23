@@ -166,25 +166,22 @@ colour the report carries the way the screen's colour page shows it. On the stoc
 (`DeviceProfile.color_page == "stock"`) a report of one colour that is a Kelvin tint in the SKU's range is
 that colour temperature (`color_temp_kelvin`, no `rgb_color`), whatever the decode, as a pick of that colour
 is sent as one. Where the same read brings the segments (a status burst's TLV 0xA5 groups on the H60A6 at
-pact (1,2) / (1,3), or a poll's `aa a5` walk after its `aa 05` on the H60A1 and the Glide panels), that holds
-only when every segment shows that colour, as the page tests the pieces; segments that differ keep the
-`rgb_color`, and segments that all show another colour are what the page shows (their colour, or its colour
-temperature if it is a tint in range). So the H6052, whose screen decodes its colour report as RGB only,
-reports a tint colour in range (the colour of a colour-temperature write, should the lamp echo it) as
-`color_temp_kelvin`, and any other colour (the white `ff ff ff` it reported for a colour temperature set
-elsewhere, for one) as `rgb_color`. H8015, H6071 and H6075 show no colour page (`color_page == "none"`), so
-their reports read as decoded.
-
-Two cases don't follow the page yet. The H703A / H703B (behind `allow_modelled`) show the stock page too, but
-their colour comes from the status read's one-record TLV 0xA5, not a mode report, and a tint there still
-reads as `rgb_color` where the app shows its Kelvin (their profile has no `color_page`). And the segmented
-devices above (the H60A6 at pact (1,2) / (1,3), H60A1, H60A4, the Glide panels, and H1270 / H1232 / H1252
-behind `allow_modelled`) write a colour as the 0x15 segment frame, so the report after such a write is the
-0x15 sub-mode (the bench H60A6's status burst carries `15 01 00 00`): a Kelvin and no colour, not a report of
-one colour. It reads as decoded: a Kelvin above 0 as `color_temp_kelvin`, while a Kelvin of 0 leaves
-`rgb_color` as it was (the Glide panels' decode reads nothing from it). The app's page shows the segments'
-colour there too, when they all show one, so a colour set in the Govee app shows in `state.segments` and
-not yet in `rgb_color`.
+pact (1,2) / (1,3) and the H60A4, or a poll's `aa a5` walk after its `aa 05` on the H60A1 and the Glide
+panels), that holds only when every segment shows that colour, as the page tests the pieces; segments that
+differ keep the `rgb_color`, and segments that all show another colour are what the page shows (their colour,
+or its colour temperature if it is a tint in range). These segmented devices write a colour as the 0x15
+segment frame, and the report after such a write can be the 0x15 sub-mode (the bench H60A6's status burst
+carries `15 01 00 00`), a Kelvin and no colour. There too, when the same read's segments all show one
+colour, the page shows it, read the same way, whatever the report's Kelvin; with segments that differ, or
+none, the report reads as decoded (a Kelvin above 0 as `color_temp_kelvin`; a Kelvin of 0, or the Glide panels'
+decode, which reads nothing from 0x15, leaves `rgb_color` as it was). So the H6052, whose screen decodes its
+colour report as RGB only, reports a tint colour in range (the colour of a colour-temperature write, should
+the lamp echo it) as `color_temp_kelvin`, and any other colour (the white `ff ff ff` it reported for a colour
+temperature set elsewhere, for one) as `rgb_color`. H8015, H6071 and H6075 show no colour page
+(`color_page == "none"`), so their reports read as decoded. The H703A / H703B (behind `allow_modelled`) are
+the one exception for now: their screen shows the stock page too, but their colour comes from the status
+read's one-record TLV 0xA5, not a mode report, and a tint there still reads as `rgb_color` where the app
+shows its Kelvin (their profile has no `color_page`).
 
 H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
 BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of

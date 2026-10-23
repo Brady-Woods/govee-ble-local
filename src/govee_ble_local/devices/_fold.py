@@ -402,8 +402,8 @@ def apply_status(
         # 0xA5 (the real H60A6 bursts in tests/test_wire_reassemble.py), and the groups then replace the
         # report's one colour in SubMode4Color.d (SubMode4Color.j:124-126), which DelegateColorV2.W1 tests
         # and, where they all show one colour, shows (d[0]). Those bursts' own report is the 0x15 sub-mode
-        # (15 01 00 00), which carries no colour: it folds as its Kelvin (_apply_mode), and the groups' one
-        # colour, which W1 shows there too, is not yet taken.
+        # (15 01 00 00), which carries no colour and leaves d to the groups, so W1 shows their one colour
+        # there too (_shown_over_pieces).
         apply_mode(profile, state, st.mode, pieces=st.segments)
         applied = True
     # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
@@ -426,14 +426,15 @@ def apply_mode_reply(profile: DeviceProfile, state: DeviceState, reply: bytes) -
 def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any,
                pieces: Sequence[Segment] = ()) -> None:
     """:func:`_apply_mode`, then :func:`_remember_kelvin`: a report's Kelvin (> 0) is remembered. ``pieces``:
-    the segments the same read brought, which a colour report is shown over (:func:`_as_shown`)."""
+    the segments the same read brought, which a colour-mode report is shown over (:func:`_as_shown`,
+    :func:`_shown_over_pieces`)."""
     _apply_mode(profile, state, m, pieces)
     _remember_kelvin(state)
 
 
 def apply_mode_over_pieces(profile: DeviceProfile, state: DeviceState, m: Any, pieces: Sequence[Segment],
                            remembered: int | None) -> None:
-    """Show a polled ``aa 05`` report of one colour again once the same poll's ``aa a5`` walk has read
+    """Show a polled ``aa 05`` colour-mode report again once the same poll's ``aa a5`` walk has read
     ``pieces``: as :func:`apply_mode` would have folded it had the pieces been in when it came, ``remembered``
     being the ``last_color_temp_kelvin`` from before it. The app shows the colour page once its connect read
     is done, and the walk is part of that read, after the ``aa 05`` reply: the mode callback's group reads
@@ -441,18 +442,25 @@ def apply_mode_over_pieces(profile: DeviceProfile, state: DeviceState, m: Any, p
     ``VM4Light.h5:327-340`` -> ``Y4:153-179`` -> ``Z4:181-185``, then ``i5:342-358``; cubelight
     ``CubeVM4Light$connectBleSuc$2.l:47-60`` -> ``CubeVM4Light.l5:386-421`` -> ``m5:424-438``). So
     ``DelegateColorV2.W1`` tests the walk's pieces, which replace the report's one colour in
-    ``SubMode4Color.d`` (:func:`_as_shown`): their one colour, where they all show the same, whatever the
-    report's was. The Kelvin is remembered only where that colour reads as one, as the app syncs a Kelvin
-    only when every piece is one tint in range (``initColor4Device:1211-1222``: ``KelvinConfig.f:144-157``
-    -> ``syncKelvin``), else ``remembered`` stays. Any other report already left state as the page shows
-    it."""
+    ``SubMode4Color.d`` (:func:`_as_shown`), or fill it after a 0x15 report, which carries none
+    (:func:`_shown_over_pieces`): their one colour, where they all show the same, whatever the report's was.
+    The Kelvin is remembered only where that colour reads as one, as the app syncs a Kelvin only when every
+    piece is one tint in range (``initColor4Device:1211-1222``: ``KelvinConfig.f:144-157`` -> ``syncKelvin``),
+    else ``remembered`` stays, or a 0x15 report's Kelvin above 0, which its parse holds
+    (:func:`_held_kelvin`). Any other report already left state as the page shows it."""
     if parse.scene_of(m) is not None:
         return
     color = parse.mode_color(m, unsigned_kelvin=profile.mode_color_parse == "rgb_kelvin")
     if isinstance(color, tuple):
-        state.rgb_color, state.color_temp_kelvin = _as_shown(profile, state, color, pieces)
-        state.last_color_temp_kelvin = remembered
-        _remember_kelvin(state)
+        shown = _as_shown(profile, state, color, pieces)
+    else:
+        over = _shown_over_pieces(profile, state, m, color, pieces)
+        if over is None:
+            return
+        shown, remembered = over, _held_kelvin(color) or remembered
+    state.rgb_color, state.color_temp_kelvin = shown
+    state.last_color_temp_kelvin = remembered
+    _remember_kelvin(state)
 
 
 def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any, pieces: Sequence[Segment] = ()) -> None:
@@ -469,15 +477,10 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any, pieces: Sequ
     ``DeviceProfile.mode_reports_kelvin`` False: the H61A8, whose 0 leaves the Kelvin the library sent);
     the bars' pair sets the per-bar Kelvin; a colour
     layout sets the colour or the colour temperature, as the screen shows it over the same read's ``pieces``
-    (:func:`_as_shown`). A sub-mode the SKU's parse ignores leaves the colour as it was.
-
-    Not yet modelled: a 0x15 report over ``pieces``. The segmented stock-page rows write a colour as the
-    0x15 segment frame and then report the 0x15 sub-mode, a Kelvin and no colour (a
-    :class:`parse.KelvinReport`, or nothing on the Glide panels' decode). The app's page shows the pieces'
-    colour there too, when they all agree: h60a1 ``Info4Detail.Q:399-407`` takes only the gradual flag and
-    a Kelvin above 0, and cubelight ``CubeNewInfo4Detail.U:488-537`` nothing, so ``SubMode4Color.d`` is the
-    same read's groups when ``DelegateColorV2.W1`` tests it. Here a Kelvin of 0 leaves ``rgb_color`` as it
-    was.
+    (:func:`_as_shown`). A sub-mode the SKU's parse ignores leaves the colour as it was. A 0x15 report, which
+    carries no colour, is shown as the same read's ``pieces`` where they all show one colour, as the stock
+    page shows it, its Kelvin above 0 held (:func:`_shown_over_pieces`, :func:`_held_kelvin`); with no
+    pieces, or pieces that differ, it folds as above.
 
     Sub-mode 0xA1 is not a scene here, matching what the screen shows. Base
     ``OpInfo4Detail.x:786`` (bulbs, H6188, H61A8) hands an 0xA1 report to ``SubMode4Scene`` like 0x04,
@@ -491,7 +494,13 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any, pieces: Sequ
         apply_zone_kelvin(profile, state, {0: None, 1: None})
         return
     color = parse.mode_color(m, unsigned_kelvin=profile.mode_color_parse == "rgb_kelvin")
-    if isinstance(color, parse.BarKelvin):
+    over = _shown_over_pieces(profile, state, m, color, pieces)
+    if over is not None:
+        held = _held_kelvin(color)
+        if held is not None:
+            state.last_color_temp_kelvin = held
+        state.rgb_color, state.color_temp_kelvin = over
+    elif isinstance(color, parse.BarKelvin):
         apply_zone_kelvin(profile, state, {0: color.left, 1: color.right})
     elif isinstance(color, parse.KelvinReport):
         if color.kelvin > 0 or profile.mode_reports_kelvin:   # else the report can't say: keep what was sent
@@ -526,13 +535,73 @@ def _as_shown(profile: DeviceProfile, state: DeviceState, color: parse.ColorRepo
     write's (:func:`apply_rgb`), so a tint the library sent reads back as the Kelvin it sent. Any other
     report, another page and a profile without COLOR_TEMP stay as decoded."""
     rgb, _kelvin = color
-    if rgb is None or profile.color_page != "stock" or Capability.COLOR_TEMP not in profile.capabilities:
+    if rgb is None or not _stock_page(profile):
         return color
     if pieces:
-        shown = pieces[0].rgb
-        if shown is None or any(seg.rgb != shown for seg in pieces):
+        shown = _one_colour(pieces)
+        if shown is None:
             return color
         rgb = shown   # W1 shows d[0]: the pieces' one colour, which replaced the report's in SubMode4Color.d
+    return _page_colour(profile, state, rgb)
+
+
+def _shown_over_pieces(profile: DeviceProfile, state: DeviceState, m: Any, color: parse.ModeColor | None,
+                       pieces: Sequence[Segment]) -> parse.ColorReport | None:
+    """A 0x15 report as the stock colour page shows it over ``pieces``, the segments the same read brought
+    (a status burst's TLV 0xA5 groups, a poll's ``aa a5`` walk: :func:`apply_mode_over_pieces`), or None
+    where the page shows no one colour of theirs. The 0x15 sub-mode carries the gradual flag and a Kelvin and
+    no colour (a :class:`parse.KelvinReport`; the Glide panels' decode reads nothing from it), and the screen
+    shows it on the colour page (h60a1 ``Info4Detail.K:215-224``, cubelight ``CubeNewInfo4Detail.M:297-306``:
+    mode 9). Its parse leaves ``SubMode4Color.d`` as it was: h60a1 ``Info4Detail.Q:399-407`` (the
+    ``Info4Detail`` of the H60A1 / H60A4's ``VM4Light:104``, the H60A6 / H1232 / H1252's
+    ``VM4LightH60A6:150`` and the H1270's ``VM4LightH1270:145``) takes only the flag and the Kelvin (the
+    ``SubMode4Color`` default parse, ``:42-49``), and cubelight ``CubeNewInfo4Detail.U:488-537`` takes
+    nothing. The same read's groups then fill ``d`` at the piece count (``SubMode4Color.j:113-148``): the
+    burst's (h60a1 ``VM4Light$afterConnectedSingleReadDeviceInfo$1.n:65-95`` -> ``o:97-106``,
+    ``VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:94-124`` -> ``p:126-142``,
+    ``VM4LightH1270$afterConnectedSingleReadDeviceInfo$1.n:70-97`` -> ``o:99-108``) or the walk's (h60a1
+    ``VM4Light.Z4:181-185``, cubelight ``CubeVM4Light.m5:424-438``, which keeps ``d`` only while
+    ``SubMode4Color.b`` holds a Kelvin above 0, which only the screen's 0x0d parse sets,
+    ``CubeNewInfo4Detail:143-153``). So ``DelegateColorV2.W1:1105-1123`` tests the pieces whatever the
+    report's Kelvin: where every piece shows one colour it shows that colour, read as :func:`_page_colour`
+    reads it; where they differ it sets neither, and the report folds as decoded (None here), a library
+    choice, as :func:`_as_shown` keeps a colour report's RGB over pieces that differ. None too with no
+    pieces, on another sub-mode or a 0x15 decode that reads a colour, the bars' pair or the heads, on another
+    page and on a profile without COLOR_TEMP."""
+    if (not pieces or parse.sub_mode(m) != build.SUB_COLOR_15 or not _stock_page(profile)
+            or not (color is None or isinstance(color, parse.KelvinReport))):
+        return None
+    rgb = _one_colour(pieces)
+    return None if rgb is None else _page_colour(profile, state, rgb)
+
+
+def _held_kelvin(color: parse.ModeColor | None) -> int | None:
+    """The ``last_color_temp_kelvin`` a 0x15 report shown over pieces (:func:`_shown_over_pieces`) holds: its
+    Kelvin above 0, which h60a1 ``Info4Detail.Q:401-404`` stores as the screen's held Kelvin ``v``
+    (``Info4Detail.q:728-729``, the Kelvin of ``illuminationCur``), else None, ``v`` kept. A tint in range
+    that the pieces all show then replaces it, as ``initColor4Device:1211-1222`` syncs that one
+    (``KelvinConfig.f:144-157`` -> ``syncKelvin`` -> ``Info4Detail.f:564-570``). The Glide panels' decode
+    reads no Kelvin from 0x15, as cubelight ``CubeNewInfo4Detail.U:488-537`` takes none."""
+    return color.kelvin if isinstance(color, parse.KelvinReport) and color.kelvin > 0 else None
+
+
+def _stock_page(profile: DeviceProfile) -> bool:
+    """Whether the screen shows a reported colour on the stock colour page with a Kelvin control."""
+    return profile.color_page == "stock" and Capability.COLOR_TEMP in profile.capabilities
+
+
+def _one_colour(pieces: Sequence[Segment]) -> tuple[int, int, int] | None:
+    """The one colour every piece shows (``ColorUtils.q:335-349``; one piece always does), None when they
+    differ or one is unknown."""
+    shown = pieces[0].rgb
+    return None if shown is None or any(seg.rgb != shown for seg in pieces) else shown
+
+
+def _page_colour(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, int]) -> parse.ColorReport:
+    """One colour as ``DelegateColorV2.W1`` shows it: one of the app's tint colours
+    (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin lies in the device's inclusive range
+    (:func:`kelvin_range`) is that colour temperature, with no RGB colour (``KelvinConfig.c:119-122`` when
+    ``KelvinConfig.i:193-200`` holds), else it is the RGB colour."""
     span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
     tint = kelvin_for_tint(rgb)
     if span is None or tint is None or not span[0] <= tint <= span[1]:

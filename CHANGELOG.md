@@ -1042,9 +1042,22 @@ model, from which the shipped readers are generated).
   (`ColorViewModel.initColor4Device:1211-1222` -> `KelvinConfig.f:144-157`). Segments that differ among
   themselves keep the report's `rgb_color`, with no Kelvin remembered for it (the page shows no one colour); a
   read that brings none (the H60A6 at pact (1,1), whose own profile has no segments, Fixed, and whose status read
-  asks for no 0xA5) folds as before, as the app tests the report's one colour there. A report that decodes to a Kelvin above 0 stays as decoded. Segments
-  held from before the read (a write's, an earlier read's) are not tested, and a poll whose `aa 05` goes unanswered
-  shows no earlier report over its walk.
+  asks for no 0xA5) folds as before, as the app tests the report's one colour there. A 0x0d report that decodes to
+  a Kelvin above 0 stays as decoded. Segments held from before the read (a write's, an earlier read's) are not
+  tested, and a poll whose `aa 05` goes unanswered shows no earlier report over its walk. Segments that all show
+  one colour are shown over a 0x15 report too, which carries the gradual flag and a Kelvin and no colour (the
+  user's decision 30, 2026-10-23). The segmented rows write a colour as the 0x15 segment frame, and the bench
+  H60A6's status bursts report `05 04 15 01 00 00` (`tests/test_wire_reassemble.py`). Both screens show it on the
+  colour page (h60a1 `Info4Detail.K:215-224`, cubelight `CubeNewInfo4Detail.M:297-306`) and leave
+  `SubMode4Color.d` to the same read's groups: h60a1 `Info4Detail.Q:399-407` (the `Info4Detail` of the H60A1 /
+  H60A4's `VM4Light`, of the H60A6 / H1232 / H1252's `VM4LightH60A6:150` and of the H1270's
+  `VM4LightH1270:145`) takes only the flag and the Kelvin, and cubelight `CubeNewInfo4Detail.U:488-537` takes
+  nothing. So where those segments all show one colour, `W1` shows it whatever the report's Kelvin, and so does
+  the state now (`_fold._shown_over_pieces`), read as above; a Kelvin above 0 is remembered as
+  `last_color_temp_kelvin`, as `Q:401-404` holds it, unless the segments' tint replaces it. Until now the report
+  read as decoded: a Kelvin above 0 as `color_temp_kelvin`, while a Kelvin of 0 (and the Glide panels' decode,
+  which reads nothing from 0x15) left `rgb_color` as it was, so a colour set in the Govee app showed in `segments`
+  only, as on the released H60A6 and H6061. Over segments that differ, or with none, it still reads as decoded.
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
@@ -1070,20 +1083,12 @@ model, from which the shipped readers are generated).
     keep-alive re-read's `aa 05` (a 0x15 Kelvin of 0) while that re-read's `aa a5` group is read and not
     applied, so the fold goes with the H703A / H703B status read-back step in the next release (decision 27).
     Not live-verified.
-  - Not yet the segments' colour over a 0x15 report, on the 14 segmented rows above. All of the above is a
-    colour report (the 0x0d sub-mode). These rows write a colour as the 0x15 segment frame, so the report after
-    such a write is the 0x15 sub-mode, which carries the gradual flag and a Kelvin and no colour (the bench
-    H60A6 bursts in `tests/test_wire_reassemble.py`: `05 04 15 01 00 00`). The app shows the segments there too:
-    h60a1 `Info4Detail.Q:399-407` (the H60A6's, `VM4LightH60A6:150`) takes only the flag and a Kelvin above 0
-    and leaves `SubMode4Color.d` to the same read's groups, and cubelight `CubeNewInfo4Detail.U:488-537` reads
-    nothing from it (`M:297-305` still shows page 9), so `W1` shows `d[0]` when every piece agrees. The library
-    reads the report as decoded (`_fold.apply_kelvin_report`; the Glide panels' decode reads no 0x15): a Kelvin
-    above 0 as `color_temp_kelvin`, while a Kelvin of 0 leaves `rgb_color` as it was, so a colour set in the
-    Govee app shows in `segments` only. The H60A6 and H6061 read it this way in 1.6.1 too.
   - For example the H6052, whose screen decodes its 0x0d report as `[r, g, b]` only: a report of a tint colour in
     [2000, 9000] now reads as `color_temp_kelvin`, not `rgb_color` (README). The live report of a colour
     temperature set elsewhere, `0d ff ff ff 0a 8c`, is white, no tint, and stays RGB, as the app shows it. On
-    the H60A6 it is a 0x0d report (pact (1,1)); its 0x15 reports carry the Kelvin and are unchanged.
+    the H60A6 it is a 0x0d report (pact (1,1)). Its 0x15 reports carry a Kelvin: unchanged at pact (1,1), whose
+    read brings no segments, and at pact (1,2) / (1,3) shown as the burst's segments where they all show one
+    colour (above).
   - State only: no frame, refusal or profile change but the new field (checked against fd770ff over every SKU
     either tree routes, with and without `allow_modelled`, with no pact, an unknown one and each listed pact, and
     crafted `aa 05` / TLV 0x05 reports at tint colours). Decision 29 was checked the same way against e3c51ba,
@@ -1093,7 +1098,12 @@ model, from which the shipped readers are generated).
     H1232, H1252). Showing the segments' colour was checked the same way against 3f7f4b3, with segments that
     agree with the report, that all show another colour (a tint and not) and that differ among themselves: no
     frame, refusal or profile change, and the state changes only where the segments all show another colour, on
-    the same 14 rows. Not live-verified: no read-back of a tint report was made on the bench.
+    the same 14 rows. Showing them over a 0x15 report (decision 30) was checked the same way against 9602d85, with
+    0x15 reports at a Kelvin of 0, above 0 and below 0, and 0x0d tint reports, over walks and TLV 0xA5 groups that
+    all show 4000 K's tint, all show 3000 K's or 2000 K's tint, all show another colour, and differ among
+    themselves: no frame, refusal or profile change, and the state changes only where a 0x15 report's segments
+    all show one colour, on the same 14 rows. Not live-verified: no read-back of a tint report was made on the
+    bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
