@@ -59,7 +59,8 @@ def _reply(*b: int) -> bytes:
 def test_all_profiles_construct() -> None:
     for p in PROFILES:
         for sku in p.skus:
-            pact = routing_pact(sku)   # a SKU only a gated target row routes is built from its advert's pact
+            # a SKU only a gated target row routes, or a pact route's profile, is built from its advert's pact
+            pact = routing_pact(sku, profile=p)
             adv = None if pact is None else GoveeAdvertisement(sku, f"GV{sku}", False, 0, *pact)
             d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku, adv)
             assert d is not None and d.sku == sku.upper()

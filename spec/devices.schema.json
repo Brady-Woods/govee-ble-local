@@ -378,7 +378,7 @@
             "properties": {
               "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
               "power_index": { "type": "integer", "minimum": 0, "maximum": 255, "description": "The zone's index in its power write (33 30 <index>; 33 36 bar order)." },
-              "segments": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "The colour pieces (mask bits) the zone covers." }
+              "segments": { "type": "array", "minItems": 0, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "The colour pieces (mask bits) the zone covers; [] = a zone the screen only switches on and off (no zone colour or brightness)." }
             }
           },
           "description": "Independently switched zones; [] = unzoned."
@@ -460,13 +460,15 @@
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
-      "description": "A pact branch of a client_profile row: applied over the row's own values when the device's pact is the key, its leaves replacing the row's. The pact is the advertised one where the screen scans before connecting, else the record's; with the pact unknown, the row's own values apply. Firmware branches stay on the row (by_firmware), as in wire.",
+      "description": "A pact branch of a client_profile row: applied over the row's own values when the device's pact is the key, its leaves replacing the row's. The pact is the advertised one where the screen scans before connecting, else the record's; with the pact unknown, the row's own values apply. Firmware branches stay on the row (by_firmware), as in wire. A branch on color_scheme, zones or capabilities changes the device's controls at that pact; the wire layer's by_pact branch at the same pact carries the pact's wire facts.",
       "properties": {
         "doc": { "type": "string" },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "status_read": { "$ref": "#/$defs/clientRow/properties/status_read" },
+        "color_scheme": { "$ref": "#/$defs/family/properties/client_profile/properties/color_scheme", "description": "The colour instruction the screen builds at this pact, where it differs from the row's (a goodsType whose Config.x version tests the pact: h60ax 303's Config.kw)." },
         "capabilities": { "$ref": "#/$defs/clientCapabilities" },
+        "zones": { "$ref": "#/$defs/clientRow/properties/zones", "description": "The zones at this pact, replacing the row's whole list: where the screen's zone controls differ by pact (h60ax 303 at (1,1): on/off only, no colour pieces)." },
         "connect_reads": { "$ref": "#/$defs/clientRow/properties/connect_reads" },
         "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range" },

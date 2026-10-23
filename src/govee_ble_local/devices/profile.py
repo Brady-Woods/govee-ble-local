@@ -625,7 +625,7 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
 class _Route(NamedTuple):
     """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any), its profile, and
     whether it is taken only on an advertised pact (``_resolve.Route.needs_pact``: the target row of a
-    pact-conditioned reassignment, or a ``pact_required`` row)."""
+    pact-conditioned reassignment, a ``pact_required`` row, or a pact route, H60A6's at (1, 1))."""
     goods_type: int
     pacts: frozenset[tuple[int, int]] | None
     profile: DeviceProfile
@@ -638,8 +638,9 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     pact-conditioned rewrite to its target row only for a record whose pact meets the gate, and keeps a
     record without one at its source goodsType (``_resolve`` module doc), so a pact-less advert never reaches
     that row; and a ``pact_required`` row's goodsType also runs, at pacts the row doesn't list, a path the
-    row doesn't serve (the (1,1) of straightfloorlamp 69 and the h70b3 rows, the (1,2) / (1,3) of h70b6 329),
-    so a pact-less advert may be one of those."""
+    row doesn't serve (the (1,1) of straightfloorlamp 69, the h70b3 rows and pact_tvlightv2 24, the (1,2) /
+    (1,3) of h70b6 329), so a pact-less advert may be one of those. A pact route is its pact's alone, so a
+    pact-less advert takes the row's own route (H60A6: the 13 segments)."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -685,11 +686,12 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     served only at its rows' pacts, as the app's scan serves it (``AbsBaseBleModel.e``: ``checkProtocol`` ->
     ``Pact.i`` refuses a pact the goodsType doesn't accept), but for the 1.x pact fallback (decision D3,
     ``_resolve.PACT_FALLBACK_SKUS``): at a pact no row accepts, each of the 18 SKUs 1.4.0 shipped still routes
-    to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted. A
-    SKU whose rows are all such rows needs its pact: without one it is unsupported, whatever the goodsType, as
-    the app keeps a pact-less unit at its source goodsType (a reassignment) or may run it on a path the row
-    doesn't serve (``pact_required``: H6076 / H8076 / R16D0, H70B6, and the ``modelled`` h70b3 rows' H70B3 /
-    H70B4 / H70B5 / H6810 / H6811 / H8811)."""
+    as a unit advertising no pact does, to its one ``hardware_verified`` / ``app_traced`` profile there, as in
+    1.x, so no released unit is demoted (a pact route, such as H60A6's at (1, 1), is taken at its pact alone).
+    A SKU whose rows all need a pact (above) needs its pact: without one it is unsupported, whatever the
+    goodsType, as the app keeps a pact-less unit at its source goodsType (a reassignment) or may run it on a
+    path the row doesn't serve (``pact_required``: H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and the
+    ``modelled`` h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -698,7 +700,7 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
             return next(iter(hits.values())) if len(hits) == 1 else None
     if pact is not None and key in _resolve.PACT_FALLBACK_SKUS:   # D3, the 1.x compatibility rule
         loose = {id(r.profile): r.profile for r in _ADMITTED[1].get(key, ())
-                 if goods_type is None or r.goods_type == goods_type}
+                 if _accepts(r, None) and (goods_type is None or r.goods_type == goods_type)}
         if len(loose) == 1:
             return next(iter(loose.values()))
     return None

@@ -178,11 +178,13 @@ async def test_a_teardown_cut_short_by_the_connect_limit_ends_before_the_lock_is
             in_flight -= 1
 
     real_abandon = conn._abandon_disconnect
+    abandoned: list[asyncio.Task[None]] = []
 
     def abandon(task: asyncio.Task[None]) -> None:
         before = task.cancelling()
         real_abandon(task)
         if task.cancelling() > before:
+            abandoned.append(task)
             log.append(("abandon", loop.time()))
 
     monkeypatch.setattr(fake_ble.FakeClient, "disconnect", disconnect)
@@ -193,8 +195,11 @@ async def test_a_teardown_cut_short_by_the_connect_limit_ends_before_the_lock_is
             await dev.update(connect_attempts=1, connect_timeout=0.05)
         log.append(("raised", loop.time()))
         assert not conn._lock.locked() and conn._client is None
-        if wedged:   # the one teardown left is abandoned (cancelled), not running on
-            assert [t.cancelling() for t in conn._background] == [1]
+        if wedged:   # the one teardown left is abandoned (cancelled), not running on: still winding down
+            # its cancel, or already gone from _background if the loop has run it to its end
+            last = abandoned[-1]
+            assert last.cancelled() or last.cancelling() == 1
+            assert set(conn._background) <= {last}
         else:
             assert not conn._background and not fake.clients[-1].is_connected
     ended = "abandon" if wedged else "disconnected"

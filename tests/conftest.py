@@ -115,19 +115,22 @@ def scene_store(sku: str, catalog: dict[str, dict[str, Any]]) -> str:
     return json.dumps({"pool": pool, "skus": {sku: list(range(len(pool)))}, "by_set": {}})
 
 
-def routing_pact(sku: str, *, goods_type: int | None = None,
-                 allow_modelled: bool = False) -> tuple[int, int] | None:
+def routing_pact(sku: str, *, goods_type: int | None = None, allow_modelled: bool = False,
+                 profile: Any = None) -> tuple[int, int] | None:
     """None where ``sku`` routes without a pact (at ``goods_type`` where given), else the lowest pact one
     of its rows (at ``goods_type``) lists: a pact-conditioned reassignment's target row is served on an
     advertised pact alone (profile_for), so a SKU it routes needs one there, also when its source row
-    routes it without."""
+    routes it without. With ``profile``, the same for the SKU's routes to that profile (a pact route's, such
+    as H60A6's at (1, 1), is taken at its pact alone)."""
     from govee_ble_local.devices import profile as profile_mod
 
-    if profile_mod.profile_for(sku, goods_type=goods_type, allow_modelled=allow_modelled) is not None:
+    found = profile_mod.profile_for(sku, goods_type=goods_type, allow_modelled=allow_modelled)
+    if found is not None and (profile is None or found is profile):
         return None
     tables = (profile_mod._ADMITTED, profile_mod._MODELLED) if allow_modelled else (profile_mod._ADMITTED,)
     pacts = sorted(pact for table in tables for route in table[1].get(sku.upper(), ())
-                   if goods_type is None or route.goods_type == goods_type for pact in route.pacts or ())
+                   if (goods_type is None or route.goods_type == goods_type)
+                   and (profile is None or route.profile is profile) for pact in route.pacts or ())
     return pacts[0] if pacts else None
 
 

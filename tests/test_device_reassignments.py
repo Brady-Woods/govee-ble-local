@@ -62,9 +62,9 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
               for gt, gate in targets.items()
               if profile_for(sku, pact=gate, goods_type=gt, allow_modelled=True) is not None]
     assert served and all(profile_for(sku, goods_type=gt, allow_modelled=True) is None for sku, gt in served)
-    # Nor is a pact_required row (straightfloorlamp 69, the modelled h70b3 rows, h70b6 329), whose goodsType
-    # the app also runs, at another pact, on a path the row doesn't serve; and the flag means nothing on a row
-    # that takes any pact.
+    # Nor is a pact_required row (straightfloorlamp 69, the modelled h70b3 rows, h70b6 329, pact_tvlightv2
+    # 24), whose goodsType the app also runs, at another pact, on a path the row doesn't serve; and the flag
+    # means nothing on a row that takes any pact.
     required = [(sku, int(gt), _resolve._pact(row["pacts"][0])) for fam in FAMILIES
                 for gt, row in (fam.get("client_profile") or {}).get("by_goods_type", {}).items()
                 if row.get("pact_required")
