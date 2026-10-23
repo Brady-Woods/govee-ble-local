@@ -2530,7 +2530,7 @@ families:
             timing.heartbeat.deviations). J3's re-read on a switch change follows it (heartbeat_reread; the user's
             decision 17, and D7's wait for it): D5 -> Compose4Off2On's aa 05 (G5 -> Info4Detail.R), then w5's one aa a5
             01 group over H61D3Support.e's one piece in groups of H61D3Support.t = 4; D5 skips it while a multi-packet
-            command is in flight (x0().I()), where the library's re-read waits behind the read gate. MODELLED for one
+            command is in flight (x0().I()), where the library's re-read waits behind the read gate. MODELLED for a
             gap of its own: the re-read's group is read and not applied (one piece, no segments), where the app shows
             that piece's colour, so on a link that stays up the colour is the link's status read's and the library's own
             writes. Not modelled either: the ee 30 push. One note holds on every status row, the
@@ -2545,7 +2545,16 @@ families:
             single_record): one [brightness, R, G, B] record at bytes 1-4 from a value of 5 bytes or more, byte 0
             unread, applied at the one piece (VM4Light$afterConnectedSingleReadDeviceInfo$1.n -> SubMode4Color.l). The
             library folds it as the whole-device colour before the same burst's TLV 0x05, so a Kelvin above 0 there
-            still reads as colour temperature and a scene clears it; the app holds both. Not listed: the TimerConfig.f
+            still reads as colour temperature and a scene clears it; the app holds both. The colour page is the stock
+            one (VM4Light is an IColorModeFuc and ConfigDetail.a sets colour strips only, Build.V, no Build.U, so
+            DelegateCurMode builds DelegateColorV2; the bundled mode list, base.apk assets/localSkuComponentConfigs.json
+            "H703A" / "H703B", is [15, 9, 10, 8, 11, 12, 20, 23], page 9 among them), and where the burst's 0x15
+            Kelvin is 0 the record's colour stays SubMode4Color.d (Info4Detail.W replaces it only for a Kelvin above
+            0; the 0x15 parse, SubMode4Color.parseModeValidBytes, sets the flag and Kelvin alone), which W1 shows as
+            its Kelvin when it is a tint in [2700, 6500]. A second gap of the row's, until the H703A / H703B step in
+            the next release (decision 27): the library reads such a record as rgb_color and the row has no
+            color_page (its kelvin_15 decode reports no colour), as the keep-alive re-read's aa 05 (a 0x15 Kelvin of
+            0) would clear a folded Kelvin while its aa a5 group is not applied. Not listed: the TimerConfig.f
             time sync before the read. No account lock (SecretController is sent only in PairViewModel). Scenes
             untraced. Device info (device_info_reads none): Y4's compose
             (VM4Light$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b, no
@@ -2559,14 +2568,16 @@ families:
             - split_h61d3/com/govee/h61d3/pact/H703ABBleIotSkuItem.java:7-9
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
             - split_h61d3/com/govee/h61d3/adjustNew/H703ADetailActivity.java:34,111-114
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:222-259,315-327,458-464,703-797,811-813,827-829,952-977,1065-1075,1299-1307,636-669
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:119,222-259,315-327,458-464,703-797,811-813,827-829,952-977,1065-1075,1299-1307,636-669
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1012,1348-1363
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-81,99-107
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:46-68,79-97,100-153,163-199
             - split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:498-506,559-607,767-803
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-179,229,286-299
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/DeviceBaseInfoFromDevice.java:70-80,144-146,182-184
-            - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201
+            - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-48,180-201,239-242,334-346
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-203
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:666-730,1105-1123
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,1725-1745
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:231-257,277-292,352-368,1311-1315,4825-4829,5522-5526,5944-5948,11176-11179,12960-12968,13829-13832,16770-16773
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501

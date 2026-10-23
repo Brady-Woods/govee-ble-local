@@ -954,9 +954,10 @@ model, from which the shipped readers are generated).
     write, or an RGB pick of a tint colour) in the report, the device now reads back as the Kelvin that was
     sent; whether it does is not hardware-checked. Not live-verified: none of these SKUs is on the bench.
   - The next entry extends the fold to every screen with the stock colour page; these keep it.
-- **On every screen with the stock colour page, whatever its decode, a reported colour that is one of the app's
-  Kelvin tint colours inside the device's range now reads as that colour temperature, as the app shows it** (the
-  user's decision 27, "Extend, match the app", 2026-10-22; CLAUDE.md rule 3). The fold above ran on the
+- **On every screen with the stock colour page (the H703A / H703B's excepted for now, below), whatever its
+  decode, a reported colour that is one of the app's Kelvin tint colours inside the device's range now reads as
+  that colour temperature, as the app shows it** (the user's decision 27, "Extend, match the app", 2026-10-22;
+  CLAUDE.md rule 3). The fold above ran on the
   `rgb_kelvin_0d_nocct` decode alone, but the test is the colour page's, not the decode's: every newdetail screen
   whose view model is an `IColorModeFuc` gets `DelegateColorV2` from `DelegateCurMode.createView:185-203`, and its
   `w1:666-730` -> `W1:1105-1123` shows a report of one colour as the colour temperature `KelvinConfig.c:119-122` of
@@ -985,6 +986,17 @@ model, from which the shipped readers are generated).
     H615B / H615C / H615D** (40), **H616B** (68), **H6178** (78), **H615E** (108), **H6192** (143). 86 SKUs, 31
     of them released in 1.6.1.
   - Behind `allow_modelled`: h60ax **H1270** (346), **H1232** (356), **H1252** (373); homelightv1 **H6148** (16).
+  - Not yet the H703A / H703B (h61d3 263, behind `allow_modelled`). Their screen shows the stock page too
+    (`H703ADetailActivity`'s `VM4Light` is an `IColorModeFuc`, `VM4Light.java:119`; `ConfigDetail.a:63-106`
+    registers colour strips only, `Build.V`; the bundled mode list `[15, 9, 10, 8, 11, 12, 20, 23]` holds page 9),
+    and their colour is the status read's one-record TLV 0xA5
+    (`VM4Light$afterConnectedSingleReadDeviceInfo$1.n:114-124` -> `SubMode4Color.l:180-201`), which `W1` shows as
+    its Kelvin when it is a tint in [2700, 6500] and the burst's 0x15 Kelvin is 0 (`Info4Detail.W:568-578`
+    replaces it only for a Kelvin above 0). The library still reads such a record as `rgb_color`, and the row
+    has no `color_page` (its `kelvin_15` decode reports no colour): a folded Kelvin would be cleared by the
+    keep-alive re-read's `aa 05` (a 0x15 Kelvin of 0) while that re-read's `aa a5` group is read and not
+    applied, so the fold goes with the H703A / H703B status read-back step in the next release (decision 27).
+    Not live-verified.
   - For example the H6052, whose screen decodes its 0x0d report as `[r, g, b]` only: a report of a tint colour in
     [2000, 9000] now reads as `color_temp_kelvin`, not `rgb_color` (README). The live report of a colour
     temperature set elsewhere, `0d ff ff ff 0a 8c`, is white, no tint, and stays RGB, as the app shows it. On

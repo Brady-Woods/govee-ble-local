@@ -388,7 +388,10 @@ def apply_status(
         # The one-record 0xA5 (H703A / H703B): the one piece's colour, folded as the whole-device colour
         # before the same burst's mode, which then decides: a Kelvin above 0 reads as colour temperature, 0
         # keeps the colour, a scene clears it. A library choice: the app holds the Kelvin (Info4Detail.W) and
-        # the piece colour (SubMode4Color.l) side by side, and state keeps one of the two.
+        # the piece colour (SubMode4Color.l) side by side, and state keeps one of the two. Not yet read as the
+        # screen's stock colour page shows it (DelegateColorV2.W1: a tint in range as its Kelvin; _as_shown):
+        # the row has no color_page, as the keep-alive re-read's aa 05 (a 0x15 Kelvin of 0) would clear a
+        # folded Kelvin while its aa a5 group is not applied; the H703A / H703B step (decision 27) does both.
         state.rgb_color, state.color_temp_kelvin = st.color, None
         applied = True
     if st.mode is not None:

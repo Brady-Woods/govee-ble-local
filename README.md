@@ -164,7 +164,9 @@ is sent as one. So the H6052, whose screen decodes its colour report as RGB only
 range (the colour of a colour-temperature write, should the lamp echo it) as `color_temp_kelvin`, and any
 other colour (the white `ff ff ff` it reported for a colour temperature set elsewhere, for one) as
 `rgb_color`. H8015, H6071 and H6075 show no colour page (`color_page == "none"`), so their reports read as
-decoded.
+decoded. The H703A / H703B (behind `allow_modelled`) are the one exception for now: their screen shows the
+stock page too, but their colour comes from the status read's one-record TLV 0xA5, not a mode report, and a
+tint there still reads as `rgb_color` where the app shows its Kelvin (their profile has no `color_page`).
 
 H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
 BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of
