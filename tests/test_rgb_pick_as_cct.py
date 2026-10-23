@@ -442,6 +442,8 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 # A row without a colour page (color_page none) reads it as decoded. Where the same read brings the segments
 # (the burst's TLV 0xA5 groups; the poll's aa a5 walk, after its aa 05) it folds only when every segment
 # shows that colour, as DelegateColorV2.W1 tests SubMode4Color.d, which those pieces fill; else the RGB stays.
+# Segments held from before the read (a write's, an earlier read's) are not tested: d is the report's one
+# colour until the same read's groups replace it (h60a1 Info4Detail.Q:416-420, SubMode4Color.j:113-148).
 _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
 _TINT = (0xFF, 0xD5, 0xA1)
 _NO_PIECES = [
@@ -475,10 +477,11 @@ def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
                       for g in range(0, len(pieces), 4) for rec in [pieces[g:g + 4]])
     burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body]) + groups),
                                     decode=wire_profile(p))
-    via_status = DeviceState(rgb_color=(9, 9, 9))
+    held = [Segment(0, (9, 9, 9), 100)]   # a held segment that is not the tint
+    via_status = DeviceState(rgb_color=(9, 9, 9), segments=list(held))
     _fold.apply_status(p, via_status, burst)
     poll = Device(p, ble_device("AA:BB:CC:DD:EE:98", sku), sku=sku)   # its aa 05 read, then the walk's pieces
-    poll._state.rgb_color = (9, 9, 9)
+    poll._state.rgb_color, poll._state.segments = (9, 9, 9), list(held)
     poll._read_reply = AsyncMock(return_value=_frame(0xAA, 0x05, *body))  # type: ignore[method-assign]
     asyncio.run(poll._read_mode())
     if pieces:
@@ -486,6 +489,11 @@ def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     # initColor4Device syncs a Kelvin only when every piece is one tint (KelvinConfig.f:144-157)
     for state in (via_status, poll.state):
         assert (state.rgb_color, state.color_temp_kelvin, state.last_color_temp_kelvin) == (*shown, shown[1])
+    # the next poll's aa 05 goes unanswered: its walk shows no report, not this poll's
+    poll._read_reply = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    asyncio.run(poll._read_mode())
+    poll._apply_segments([Segment(0, (1, 2, 3), 100)])
+    assert (poll.state.rgb_color, poll.state.color_temp_kelvin) == shown
 
 
 def test_h6047_state_tracks_the_kelvin_per_bar() -> None:

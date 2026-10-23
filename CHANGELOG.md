@@ -983,7 +983,8 @@ model, from which the shipped readers are generated).
   `CubeVM4Light$connectBleSuc$2.l:47-60`) before it shows the page. So the library shows the poll's report again
   once the walk is in (`_fold.apply_mode_over_pieces`). Segments that differ keep the `rgb_color`, with no Kelvin
   remembered for it; a read that brings none (the H60A6 below pact (1,2), whose status read asks for no 0xA5)
-  folds as before, as the app tests the report's one colour there. Segments a write left in state are not tested.
+  folds as before, as the app tests the report's one colour there. Segments held from before the read (a write's,
+  an earlier read's) are not tested, and a poll whose `aa 05` goes unanswered shows no earlier report over its walk.
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
