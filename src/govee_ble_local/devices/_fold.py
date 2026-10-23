@@ -400,7 +400,8 @@ def apply_status(
         # Its colour is shown over the pieces of this burst's TLV 0xA5 groups (_as_shown): the app applies
         # the TLVs in reply order (Compose4BaseInfoSingleRead.u:247-345), the reply carries 0x05 before
         # 0xA5 (the real H60A6 bursts in tests/test_wire_reassemble.py), and the groups then replace the
-        # report's one colour in SubMode4Color.d (SubMode4Color.j:124-126), which DelegateColorV2.W1 tests.
+        # report's one colour in SubMode4Color.d (SubMode4Color.j:124-126), which DelegateColorV2.W1 tests
+        # and, where they all show one colour, shows (d[0]).
         apply_mode(profile, state, st.mode, pieces=st.segments)
         applied = True
     # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
@@ -438,7 +439,11 @@ def apply_mode_over_pieces(profile: DeviceProfile, state: DeviceState, m: Any, p
     ``VM4Light.h5:327-340`` -> ``Y4:153-179`` -> ``Z4:181-185``, then ``i5:342-358``; cubelight
     ``CubeVM4Light$connectBleSuc$2.l:47-60`` -> ``CubeVM4Light.l5:386-421`` -> ``m5:424-438``). So
     ``DelegateColorV2.W1`` tests the walk's pieces, which replace the report's one colour in
-    ``SubMode4Color.d`` (:func:`_as_shown`). Any other report already left state as the page shows it."""
+    ``SubMode4Color.d`` (:func:`_as_shown`): their one colour, where they all show the same, whatever the
+    report's was. The Kelvin is remembered only where that colour reads as one, as the app syncs a Kelvin
+    only when every piece is one tint in range (``initColor4Device:1211-1222``: ``KelvinConfig.f:144-157``
+    -> ``syncKelvin``), else ``remembered`` stays. Any other report already left state as the page shows
+    it."""
     if parse.scene_of(m) is not None:
         return
     color = parse.mode_color(m, unsigned_kelvin=profile.mode_color_parse == "rgb_kelvin")
@@ -491,31 +496,37 @@ def _as_shown(profile: DeviceProfile, state: DeviceState, color: parse.ColorRepo
               pieces: Sequence[Segment] = ()) -> parse.ColorReport:
     """A colour report ``(rgb, kelvin)`` as the screen shows it over ``pieces``, the segments the same read
     brought (a status burst's TLV 0xA5 groups, a poll's ``aa a5`` walk: :func:`apply_mode_over_pieces`). On
-    the stock colour page (:attr:`~.profile.DeviceProfile.color_page`), an RGB that is one of the app's
-    tint colours (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin lies in the device's inclusive range
-    (:func:`kelvin_range`) is that colour temperature, with no RGB colour, whatever the decode, when every
-    piece shows that colour or the read brought none. ``DelegateColorV2.W1:1105-1123``
+    the stock colour page (:attr:`~.profile.DeviceProfile.color_page`) the page shows one colour: the
+    report's when the read brought no pieces, else the pieces' when every piece shows the same one. That
+    colour, when it is one of the app's tint colours (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin
+    lies in the device's inclusive range (:func:`kelvin_range`), is that colour temperature, with no RGB
+    colour, whatever the decode; else it is the RGB colour. ``DelegateColorV2.W1:1105-1123``
     (``DelegateCurMode.createView:185-203`` -> ``ColorViewModel.initColor4Device:1182-1224`` ->
     ``v1:625-630`` -> ``w1:666-734``) tests ``SubMode4Color.d``: when its pieces all equal the first
-    (``ColorUtils.q:335-349``; one piece always does) it shows the Kelvin slider at ``KelvinConfig.c:119-122``
-    of that colour when ``KelvinConfig.i:193-200`` holds (``ColorUtils.i:261-276``, inclusive), else the
-    colour; when they differ it sets neither, and ``w1:732`` -> ``S1:1084-1090`` shows the pieces. ``d`` is
-    the report's one colour (h60a1 ``Info4Detail.Q:416-420``, cubelight ``CubeNewInfo4Detail:146``) until
-    the same read's groups replace it, sized to the piece count (``SubMode4Color.j:113-148``), so with
-    pieces the test is theirs. Pieces that differ from the report keep its RGB; where they all show another
-    colour the page shows that one, which the library holds only as the segments. The report's own Kelvin
-    bytes are not read here: a decode that takes a Kelvin above 0 as colour temperature has already reported
-    no colour, and the page never tests the Kelvin of one that doesn't (``rgb_kelvin_0d_nocct``). The same
-    rule as a write's (:func:`apply_rgb`), so a tint the library sent reads back as the Kelvin it sent. Any
-    other report, another page and a profile without COLOR_TEMP stay as decoded."""
+    (``ColorUtils.q:335-349``; one piece always does) it shows ``d[0]``, as the Kelvin slider at
+    ``KelvinConfig.c:119-122`` of it when ``KelvinConfig.i:193-200`` holds (``ColorUtils.i:261-276``,
+    inclusive), else as that colour (``P1`` / ``G1``); when they differ it sets neither, and ``w1:732`` ->
+    ``S1:1084-1090`` shows the pieces. ``d`` is the report's one colour (h60a1 ``Info4Detail.Q:416-420``,
+    cubelight ``CubeNewInfo4Detail:146``) until the same read's groups replace it, sized to the piece count
+    (``SubMode4Color.j:113-148``), so with pieces ``d[0]`` is the first piece's, whatever the report's was.
+    Pieces that differ keep the report's RGB, a library choice: the page shows no one colour, and state
+    holds the pieces as the segments. The report's own Kelvin bytes are not read here: a decode that takes a
+    Kelvin above 0 as colour temperature has already reported no colour, and the page never tests the Kelvin
+    of one that doesn't (``rgb_kelvin_0d_nocct``); such a report stays as decoded. The same rule as a
+    write's (:func:`apply_rgb`), so a tint the library sent reads back as the Kelvin it sent. Any other
+    report, another page and a profile without COLOR_TEMP stay as decoded."""
     rgb, _kelvin = color
-    if (rgb is None or profile.color_page != "stock" or Capability.COLOR_TEMP not in profile.capabilities
-            or any(seg.rgb != rgb for seg in pieces)):
+    if rgb is None or profile.color_page != "stock" or Capability.COLOR_TEMP not in profile.capabilities:
         return color
+    if pieces:
+        shown = pieces[0].rgb
+        if shown is None or any(seg.rgb != shown for seg in pieces):
+            return color
+        rgb = shown   # W1 shows d[0]: the pieces' one colour, which replaced the report's in SubMode4Color.d
     span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
     tint = kelvin_for_tint(rgb)
     if span is None or tint is None or not span[0] <= tint <= span[1]:
-        return color
+        return rgb, None
     return None, tint
 
 

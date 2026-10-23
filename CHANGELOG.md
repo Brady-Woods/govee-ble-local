@@ -981,10 +981,15 @@ model, from which the shipped readers are generated).
   (`Compose4BaseInfoSingleRead.u:247-345`), and a poll's `aa a5` walk, which the app reads in the same compose
   after the `aa 05` (`Compose4InfoBleIot$iControllerStrategy$1.v:125-132`; h60a1 `VM4Light.h5:327-340`, cubelight
   `CubeVM4Light$connectBleSuc$2.l:47-60`) before it shows the page. So the library shows the poll's report again
-  once the walk is in (`_fold.apply_mode_over_pieces`). Segments that differ keep the `rgb_color`, with no Kelvin
-  remembered for it; a read that brings none (the H60A6 below pact (1,2), whose status read asks for no 0xA5)
-  folds as before, as the app tests the report's one colour there. Segments held from before the read (a write's,
-  an earlier read's) are not tested, and a poll whose `aa 05` goes unanswered shows no earlier report over its walk.
+  once the walk is in (`_fold.apply_mode_over_pieces`). Segments that all show one colour other than the
+  report's are what the page shows, as `W1` shows `d[0]` (CLAUDE.md rule 3): that colour as `rgb_color`, or, when
+  it is a tint in range, its colour temperature, remembered as `last_color_temp_kelvin` as the app syncs it
+  (`ColorViewModel.initColor4Device:1211-1222` -> `KelvinConfig.f:144-157`). Segments that differ among
+  themselves keep the report's `rgb_color`, with no Kelvin remembered for it (the page shows no one colour); a
+  read that brings none (the H60A6 below pact (1,2), whose status read asks for no 0xA5) folds as before, as the
+  app tests the report's one colour there. A report that decodes to a Kelvin above 0 stays as decoded. Segments
+  held from before the read (a write's, an earlier read's) are not tested, and a poll whose `aa 05` goes unanswered
+  shows no earlier report over its walk.
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
@@ -1020,7 +1025,10 @@ model, from which the shipped readers are generated).
     with walks and TLV 0xA5 groups that agree with the report and that differ: no frame, refusal or profile
     change, and the state changes only with segments that differ, on the 14 segmented stock-page rows (H60A6,
     H60A4 / H80A4, H60A1 / H80A1, H6061, H6063, H6065, H6066, H6067, H606A; behind `allow_modelled` H1270,
-    H1232, H1252). Not live-verified: no read-back of a tint report was made on the bench.
+    H1232, H1252). Showing the segments' colour was checked the same way against 3f7f4b3, with segments that
+    agree with the report, that all show another colour (a tint and not) and that differ among themselves: no
+    frame, refusal or profile change, and the state changes only where the segments all show another colour, on
+    the same 14 rows. Not live-verified: no read-back of a tint report was made on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the

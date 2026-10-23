@@ -441,7 +441,8 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 # from the status TLV 0x05 and from an aa 05 reply alike, whatever the decode; its Kelvin bytes are not read.
 # A row without a colour page (color_page none) reads it as decoded. Where the same read brings the segments
 # (the burst's TLV 0xA5 groups; the poll's aa a5 walk, after its aa 05) it folds only when every segment
-# shows that colour, as DelegateColorV2.W1 tests SubMode4Color.d, which those pieces fill; else the RGB stays.
+# shows that colour, as DelegateColorV2.W1 tests SubMode4Color.d, which those pieces fill; pieces that differ
+# keep the RGB, and pieces that all show another colour are shown instead (W1 shows d[0], or its Kelvin).
 # Segments held from before the read (a write's, an earlier read's) are not tested: d is the report's one
 # colour until the same read's groups replace it (h60a1 Info4Detail.Q:416-420, SubMode4Color.j:113-148).
 _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
@@ -466,6 +467,8 @@ _NO_PIECES = [
     ("H60A1", (1, 1), "stock", _TINT_4000, (None, 4000), (_TINT,) * 14),
     # the burst's 13 group pieces and the walk's alike, the last a near miss
     ("H60A6", (1, 2), "stock", _TINT_4000, (_TINT, None), (_TINT,) * 12 + ((0xFF, 0xD5, 0xA2),)),
+    # the 13 pieces all show red, not the report's tint: the page shows red, with no Kelvin remembered
+    ("H60A6", (1, 2), "stock", _TINT_4000, ((0xFF, 0x00, 0x00), None), ((0xFF, 0x00, 0x00),) * 13),
 ])
 def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     sku: str, pact: tuple[int, int], page: str, body: tuple[int, ...],

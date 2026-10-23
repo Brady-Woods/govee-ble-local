@@ -162,7 +162,9 @@ colour the report carries the way the screen's colour page shows it. On the stoc
 that colour temperature (`color_temp_kelvin`, no `rgb_color`), whatever the decode, as a pick of that colour
 is sent as one. Where the same read brings the segments (a status burst's TLV 0xA5 groups on the H60A6, or a
 poll's `aa a5` walk after its `aa 05` on the H60A1 and the Glide panels), that holds only when every segment
-shows that colour, as the page tests the pieces; segments that differ keep the `rgb_color`. So the H6052,
+shows that colour, as the page tests the pieces; segments that differ keep the `rgb_color`, and segments that
+all show another colour are what the page shows (their colour, or its colour temperature if it is a tint in
+range). So the H6052,
 whose screen decodes its colour report as RGB only, reports a tint colour in
 range (the colour of a colour-temperature write, should the lamp echo it) as `color_temp_kelvin`, and any
 other colour (the white `ff ff ff` it reported for a colour temperature set elsewhere, for one) as
