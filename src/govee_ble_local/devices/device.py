@@ -741,9 +741,9 @@ class Device:
         (:meth:`_unlock_frames`; never in the read_secret itself). With no secret on an
         :attr:`.DeviceProfile.empty_secret_check` profile, an operation that overlaps a read_secret waits for
         it first (``_pairing_lock``), so its frames never go out ahead of the check on a session the read set
-        up. Without a live session nothing is sent: the next session setup sends it. A rejection is a
-        GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at session setup
-        (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
+        up. Without a live session nothing is sent: the next session setup sends it. A rejection ends the
+        session and is a GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at
+        session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
         out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
         calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
         write retry's reconnect ran out of them) is raised, and the next session setup sends the
@@ -766,6 +766,10 @@ class Device:
             done = True
         except GoveeBleCommandRejected as err:
             done = True
+            # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end the
+            # session, so the next operation's setup sends the check again and is refused the same way: no
+            # later frame goes out on this link unchecked, as the app's compose stops at its failed check.
+            await self._conn.disconnect()
             raise GoveeBleAuthError(
                 f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
             ) from err

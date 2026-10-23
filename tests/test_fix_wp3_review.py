@@ -20,7 +20,7 @@ from fake_ble import frame as _frame
 
 from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
-from govee_ble_local.exceptions import GoveeBleTimeout
+from govee_ble_local.exceptions import GoveeBleAuthError, GoveeBleCommandRejected, GoveeBleTimeout
 from govee_ble_local.identify import parse_broadcast_onoff
 from govee_ble_local.models import Encryption
 from govee_ble_local.scenes import load_scenes
@@ -301,6 +301,26 @@ def test_unlock_goes_before_a_read(live: None, sku: str, empty: bool) -> None:
     assert run(overlap()) == ([build.empty_secret_check()] if empty else [])
     assert flog == ([("query", build.secret_read()), ("send", build.empty_secret_check()), power] if empty
                     else [power, ("query", build.secret_read())])
+    # A refused check after the read ends the session, as at setup: the write fails and nothing goes out
+    # unchecked on that link, so the next operation's setup sends the check again (source-modelled).
+    if empty:
+        def read(_request: bytes) -> list[bytes]:
+            g._unlock_frames()   # the unlock step of the session this read sets up
+            return [_frame(0xAA, 0xB1, 0x01, *_SECRET)]
+
+        g, glog = _dev(sku, {0xB1: read})
+
+        async def refuse(frame: bytes, **_k: object) -> None:
+            if frame == build.empty_secret_check():
+                raise GoveeBleCommandRejected("refused")
+            glog.append(("send", frame))
+
+        g._conn.send = AsyncMock(side_effect=refuse)  # type: ignore[method-assign]
+        g._conn.disconnect = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        run(g.read_secret())
+        with pytest.raises(GoveeBleAuthError):
+            run(g.set_power(True))
+        assert g._conn.disconnect.await_count == 1 and glog == [("query", build.secret_read())]
 
 
 def test_unlock_goes_before_the_segment_count_read(live: None) -> None:
