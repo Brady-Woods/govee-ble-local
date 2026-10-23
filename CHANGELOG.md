@@ -261,9 +261,6 @@ model, from which the shipped readers are generated).
   per-zone colour-temperature control on `profile.segment_color_temp` as well. The Home Assistant
   integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 40 released SKUs
   listed under Changed their colour temperature would raise GoveeBleNotSupported.
-  - **Frozen for integrators:** the field's name, keyword-only form, default (True) and meaning stay as they are
-    through 1.x, so an integration can gate on `getattr(profile, "segment_color_temp", True)` and run on 1.6.x
-    and later alike.
 - **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
   default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
   standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
@@ -913,7 +910,8 @@ model, from which the shipped readers are generated).
   `BasicShapeBusiness.x:989-991` / `x0:1017-1019` show no add point at the cap, and `SplicePreviewAc.d1:189-192`
   refuses one), so 23 (`Support.getBulbStringMaxNum:180-194`, the read-back default with no layout stored) is no
   layout the app can store. The bytes change at a full layout:
-  - the whole-device RGB (`Bytes.l`) and colour-temperature (`Bytes.u`) masks go from `ff ff 7f` to `ff ff 0f`;
+  - the whole-device colour-temperature mask (`Bytes.u`) goes from `ff ff 7f` to `ff ff 0f`, and the whole-device
+    RGB, which 1.6.1 sent as six `15 04` group frames, is one `Bytes.l` frame at `ff ff 0f` (Fixed);
   - the `aa a5` read-back walks 5 groups, not 6;
   - `Device.segment_count`, the profile's `segments` and the panel bound go from 23 to 20 (a count above 20 from
     `Device.set_segment_count` is refused at write time, as one above 23 was).
@@ -938,6 +936,9 @@ model, from which the shipped readers are generated).
     (h6840 278), H6841 / H8841† (325), H6842 / R6842† (381), H6843 (382), H70B6 (h70b6 329) and H70B8 (341).
     The fold also promotes the h70b3 rows (Added); H70B6's profile now also serves H6810, H6811 and H8811,
     whose facts it shares (`DeviceProfile.skus`, a grouping change; no other admitted SKU's profile changes).
+    Their rows come first in devices.yaml, so the profile's first SKU is now H6810, not H70B6: a `Device` built
+    from H70B6's profile without `sku=` names itself H6810 and checks an advertised pact against H6810's rows
+    (`create_device` and `make_device` always pass the SKU). H6061's and H617C's profiles keep their first SKU.
   - State only: no frame changes. Where the firmware echoes the tint of a `Bytes.p` write (a colour-temperature
     write, or an RGB pick of a tint colour) in the report, the device now reads back as the Kelvin that was
     sent; whether it does is not hardware-checked. Not live-verified: none of these SKUs is on the bench.
@@ -1013,8 +1014,8 @@ model, from which the shipped readers are generated).
   come first in their own, so a `Device` built from H1AA5's or H7066's profile without `sku=` names itself
   after them, not H1AB2 or H7055 (`create_device` and `make_device` always pass the SKU). H1AB2's and H7055's
   profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 100 have no
-  segment colour temperature (86 by default, 14 behind `allow_modelled`) and 54 keep it (36 by default, 18
-  behind `allow_modelled`); in all, 140 SKUs have none (126 / 14) and 77 keep it (59 / 18). The rows the
+  segment colour temperature (97 by default, 3 behind `allow_modelled`) and 54 keep it (41 by default, 13
+  behind `allow_modelled`); in all, 140 SKUs have none (137 / 3) and 77 keep it (64 / 13). The rows the
   1.8.0 work adds or promotes are none of them list-d goodsTypes, so each says false: h60ax 235 / 302, h61d3
   202 / 239 / 246, dreamcolorlightv1 204 and h7050 98 (H7061's two heads). A row with a
   `color_temp_control` (the `whole_device_kelvin` profiles, Added) must say false where it has segments, and
@@ -1096,7 +1097,7 @@ model, from which the shipped readers are generated).
   segment brightness (h61d3 202).
 - **Every status row but the H60A6's and the H6076's takes its versions and device id from TLV 0x07 alone and
   sends no device-info reads**, as its screen does (the user's decision, 2026-10-22: "Skip them", option A of
-  the `status-row-versions-from-tlv07` decision). That is 95 SKUs: 87 admitted by default and 8 behind
+  the `status-row-versions-from-tlv07` decision). That is 95 SKUs: 88 admitted by default and 7 behind
   `allow_modelled`. **Four of them were released at 1.6.1 and change:** H60B1 (h60b1 300), H7056 (h7056 304),
   H1630 and R1630 (h1630 364) no longer send `aa 06` / `aa 07 03` / `aa 07 02` on their first poll.
   - Each status row now names its `device_info_reads` (`devices.schema.json` clientRow). It is required on every
@@ -1785,7 +1786,8 @@ model, from which the shipped readers are generated).
   `Support.getBulbStringMaxNum(69)` / `getOneGroupColorSize(69)` = 4), 140 on 284 (`CubeVM4Light.h5` -> `l5`:
   the stored shape layout's size, `CubeNewInfo4Detail.v`, from `CubeDataSource.d` through `CubeAcLightDetail.H3`,
   and `Support.getBulbStringMaxNum(284)` = 140 only when none is stored; the library has no layout, so the row
-  takes the no-layout count, which the row's doc names as open for the user), 15 on 351 / 352 (rgbiclight `VM4Light.G5` -> `O5` -> `N5`: `Support.b` / `d`
+  takes the no-layout count, kept until the stored-IC release reads the layout, the user's decision 26), 15 on
+  351 / 352 (rgbiclight `VM4Light.G5` -> `O5` -> `N5`: `Support.b` / `d`
   / `D`) and 1 on 263 (h61d3 `VM4Light.D5` -> `G5` -> `w5`, `H61D3Support.e` / `t`; its wire gains `group: { rule:
   fixed, num_per_group: 4 }`). `timing.heartbeat.deviations` says what the library sends and where it differs (the
   re-read at once on the reply's link, the beat held, the setting reads left out, a miss ending it, the colours

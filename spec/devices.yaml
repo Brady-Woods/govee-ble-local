@@ -4730,7 +4730,8 @@ families:
             to Support.getBulbStringMaxNum(284) = 140. So the app sends groups 1 .. ceil(n / 4) for a layout of n shapes.
             The library has no layout (it lives in the account: decision D10 reads the Glide layout, deviceSettings
             shapes, through the login in the stored-IC release), so heartbeat_reread pieces 140 is the app's no-layout
-            count, groups 1-35; whether to send that or wait for the stored layout is the user's call (open). Whether an H6069 answers aa a5 is not in
+            count, groups 1-35, which the user chose to keep until the stored-IC release reads the layout (decision 26),
+            and from then on it is sized from the layout (ceil(n / 4)). Whether an H6069 answers aa a5 is not in
             the app (its connect skips it); an unanswered group ends the re-read, as it ends the compose. Device info
             (device_info_reads none): the 284 path (d0 -> x5) queues no
             aa 06 / aa 07 read, and its success callback (CubeVM4Light$singleReadInfoDevice$1.h) takes the soft and hard
