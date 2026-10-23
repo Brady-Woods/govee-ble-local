@@ -1063,8 +1063,15 @@ class Device:
             _LOGGER.debug("%s (%s): a keep-alive re-read is running; this change's re-read is skipped",
                           self.address, self._sku)
             return
+        # A fresh context, not this caller's: the keep-alive reply that starts it comes in whatever context
+        # the transport calls back in, which can be that of the operation that set the session up (its
+        # heartbeat timer and the notify subscription are made there), and a task copies the context it is
+        # created in. After a read_secret() session the re-read would then carry _PAIRING_READ, and its unlock
+        # step (_send_pending_unlock) would skip the empty 33 b2 check as the pairing read does. No profile
+        # has both empty_secret_check and heartbeat_reread_pieces today; this keeps a later one from
+        # inheriting it.
         self._reread = asyncio.get_running_loop().create_task(
-            self._reread_after_change(self._conn.link_number))
+            self._reread_after_change(self._conn.link_number), context=contextvars.Context())
 
     async def _reread_after_change(self, link: int) -> None:
         """The screen's re-read on a keep-alive power change (``J3`` -> ``Compose4Off2On``;
