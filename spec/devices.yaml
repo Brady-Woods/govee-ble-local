@@ -14561,7 +14561,8 @@ families:
       by_goods_type:
         "24":   # H6199 / H6198 (Support.b / Support.c); pact (1,1) is left off pacts: its colour write and read-back are not served (pact_tvlightv2.md gap 1)
           models: [H6198, H6199]
-          pacts: ["2,1", "3,1", "4,1"]   # NOT the app's full set: Support.addSupportPact registers (1,1), (2,1), (3,1), (4,1) for 24 (split_tvlightv4/com/govee/pact_tvlightv2/pact/Support.java:57-74); (1,1) is left off until gap 1 lands (the integrator's call). The library refuses (1,1) only when the advert's pact is known when the device is built; the app refuses a pact-less broadcast (VM4Light.X0 true; AbsViewMode4Op.onScanEvent) (pact_tvlightv2.md gap 3)
+          pacts: ["2,1", "3,1", "4,1"]   # NOT the app's full set: Support.addSupportPact registers (1,1), (2,1), (3,1), (4,1) for 24 (split_tvlightv4/com/govee/pact_tvlightv2/pact/Support.java:57-74); (1,1) is left off until gap 1 lands: there the colour write is Config.J[6] = eu -> Bytes.c (33 05 0b), which no scheme serves
+          pact_required: true   # so a unit advertising no pact, which may be a (1,1) one, is refused (the user's decision 28; doc)
           support: app_traced
           color_scheme: h60a6   # pacts (2,1)-(4,1): Config.x[24] = pu -> 0 -> Config.J[0] = Yt (Bytes.h / Bytes.r type 1); (1,1) -> J[6] = eu -> Bytes.c
           color_functions: [segment_brightness, color_temperature]
@@ -14577,10 +14578,22 @@ families:
           heartbeat: power
           doc: >-
             H6199 / H6198 (DreamView T1 / T1S) on the pact_tvlightv2 AcNewDetail / VM4Light screen (SubLib keys
-            Support.h = {24}; Model.t). Pacts: the app also accepts (1,1), left off because its colour write (Bytes.c, 33
-            05 0b) and aa a2 read-back are not served; the screen connects only on a parsed, supported broadcast pact
-            (VM4Light.X0 true -> AbsViewMode4Op.onScanEvent -> O1 -> VM4Light.n4, else message 999), whereas the library
-            routes a pact-less advert to this row and keeps the profile when a refused pact is heard later. Connect: the
+            Support.h = {24}; Model.t). Pacts: the app also accepts (1,1) (Support.addSupportPact :57-74), left off
+            because its colour write and aa a2 read-back are not served: at pactType 1 Config.x[24] = pu gives 6
+            (Config.pu :15671-15674), so Config.J[6] = eu sends Bytes.c, 33 05 0b R G B [K s16be] [mask] (Config.eu
+            :13930-13934, Bytes.c :239-267). Nothing but the pact tells a (1,1) unit apart, so the row is
+            pact_required (the user's decision 28), as h70b6 329 is: profile_for, is_supported_sku, make_device and
+            create_device take it only on an advertised pact (profile._accepts), and a pact-less record, which may be
+            a (1,1) unit, is refused rather than sent the 15 01 colour frames the app never sends one. The app never
+            runs this screen without a pact. It starts from the account record's (Model.t :47-50 -> DefInfo.d
+            :125-134, the stored pactType / pactCode), then takes each matched broadcast's pact block before it
+            connects (VM4Light.X0 :770-772 is true; AbsViewMode4Op.onScanEvent :1960-1983 ->
+            AbsViewMode4OpWithOtaCheck.j1 :570-591 -> GoodsType.parseBleBroadcastPactInfo :1564-1578, then
+            AbsViewMode4OpWithOtaCheck.W1 :451-466 -> Info4BleIotDevice.f1 :449-463), and connects only at a pact
+            VM4Light.n4 accepts (ShareVM.O1 :1367-1370 -> VM4Light.n4 :1075-1082). For a broadcast without a pact
+            block j1 is null, so the screen posts 999 instead of connecting (AbsViewMode4Op :1980-1982, :2218-2222),
+            the old-app dialog (AbsViewMode4OpWithOtaCheck.F1 :271-283). A device built on an advertised (2,1)-(4,1)
+            keeps its profile if it later advertises (1,1) (Device._learn_pact logs it). Connect: the
             default Compose4InfoBleIot read (the time-sync write, versions, Wi-Fi
             versions and MAC, timers, sleep, wake-up, aa 04, aa a3, aa 01, no extra reads, aa 05), then the direct aa a5
             groups 1..4 of 4 over getBulbStringMaxNum = 15 pieces (VM4Light.n5). Power: switchTrigger writes one 33 01
@@ -14604,6 +14617,7 @@ families:
             - split_tvlightv4/com/govee/pact_tvlightv2/pact/Support.java:23-35,57-74,93-122,143-189,234-249
             - split_tvlightv4/com/govee/pact_tvlightv2/pact/deviceitem/SubLib.java:14-33
             - split_tvlightv4/com/govee/pact_tvlightv2/pact/deviceitem/Model.java:20-62
+            - base-classes11/com/govee/base2light/kt/comm/DefInfo.java:125-134
             - split_tvlightv4/com/govee/pact_tvlightv2/add/BleBroadcastProcessor.java:12-52
             - split_tvlightv4/com/govee/pact_tvlightv2/newdetail/AcNewDetail.java:199-202
             - split_tvlightv4/com/govee/pact_tvlightv2/newdetail/NewDetailConfig.java:38-126
@@ -14612,9 +14626,11 @@ families:
             - split_tvlightv4/com/govee/pact_tvlightv2/newdetail/Info4Detail.java:294-342,548-608,958-996
             - split_tvlightv4/com/govee/pact_tvlightv2/newdetail/ColorMode.java:93-101,123-143,175-191,261-309
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
-            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1014,1348-1369,2956-2964
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1014,1348-1370,2956-2964
             - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:934-943,1955-1983,2210-2222
-            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:570-590
+            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:271-283,451-466,570-591
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:216-218,449-463
+            - base-classes9/com/govee/base2home/pact/GoodsType.java:1564-1578
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-80
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49,72-87,113-148,233-236,334-347
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38

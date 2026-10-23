@@ -79,13 +79,13 @@ advertisement, build a capability-driven `Device`, then drive it.
   `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
-  rows, H6076 / H8076 / R16D0, H70B6, and behind `allow_modelled` the h70b3 rows' H70B3 / H70B4 / H70B5 /
-  H6810 / H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the advertisement's pact
-  (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it (`create_device` with the
-  advertisement, `supported`, `match` and `discover` pass it already). `allow_modelled=True` (also on
-  `supported_skus`, `create_device`, `supported`, `match` and `discover`) admits the rows the spec marks
-  `modelled` (inferred from the app, not traced), which are off by default (`device_profile_for(sku)` is a
-  deprecated alias of `profile_for`, removed in 2.0).
+  rows, H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and behind `allow_modelled` the h70b3 rows' H70B3 /
+  H70B4 / H70B5 / H6810 / H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the
+  advertisement's pact (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it
+  (`create_device` with the advertisement, `supported`, `match` and `discover` pass it already).
+  `allow_modelled=True` (also on `supported_skus`, `create_device`, `supported`, `match` and `discover`)
+  admits the rows the spec marks `modelled` (inferred from the app, not traced), which are off by default
+  (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,

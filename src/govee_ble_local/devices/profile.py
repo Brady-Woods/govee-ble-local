@@ -638,9 +638,9 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     pact-conditioned rewrite to its target row only for a record whose pact meets the gate, and keeps a
     record without one at its source goodsType (``_resolve`` module doc), so a pact-less advert never reaches
     that row; and a ``pact_required`` row's goodsType also runs, at pacts the row doesn't list, a path the
-    row doesn't serve (the (1,1) of straightfloorlamp 69 and the h70b3 rows, the (1,2) / (1,3) of h70b6 329),
-    so a pact-less advert may be one of those. A pact route is its pact's alone, so a pact-less advert takes
-    the row's own route (H60A6: the 13 segments)."""
+    row doesn't serve (the (1,1) of straightfloorlamp 69, the h70b3 rows and pact_tvlightv2 24, the (1,2) /
+    (1,3) of h70b6 329), so a pact-less advert may be one of those. A pact route is its pact's alone, so a
+    pact-less advert takes the row's own route (H60A6: the 13 segments)."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -690,8 +690,8 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     1.x, so no released unit is demoted (a pact route, such as H60A6's at (1, 1), is taken at its pact alone).
     A SKU whose rows all need a pact (above) needs its pact: without one it is unsupported, whatever the
     goodsType, as the app keeps a pact-less unit at its source goodsType (a reassignment) or may run it on a
-    path the row doesn't serve (``pact_required``: H6076 / H8076 / R16D0, H70B6, and the ``modelled`` h70b3
-    rows' H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811)."""
+    path the row doesn't serve (``pact_required``: H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and the
+    ``modelled`` h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
