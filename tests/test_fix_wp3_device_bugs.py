@@ -159,17 +159,29 @@ def test_bytes_like_secret_is_normalised_to_bytes(raw: Any) -> None:
 
 
 # ── Decision D4: the empty 33 b2 check, where the screen sends the check on every connect ──────
-@pytest.mark.parametrize(("empty", "secret", "want"), [
-    (False, None, []),                              # the plugs, H605051NewDetailVm: a known secret only
-    (True, None, [build.empty_secret_check()]),     # H6058NewDetailVm.T4 / h6071: Controller4Secret.a("")
-    (True, b"12345678", [build.secret_check(b"12345678")]),
+@pytest.mark.parametrize(("sku", "empty"), [
+    ("H6050", False),   # H605051NewDetailVm (and the plugs): the check with a known secret only
+    ("H6058", True),    # hollowlamp 59, H6058NewDetailVm.T4: Controller4Secret.a("") first at connect
+    ("H6071", True),    # h6071 57, VM4Light's connect strategy: the same
 ])
-def test_unlock_without_a_secret_follows_the_screen(empty: bool, secret: bytes | None,
-                                                    want: list[bytes]) -> None:
-    d = _dev("H5083", empty_secret_check=empty)
-    if secret is not None:
-        d.set_secret(secret)
-    assert d._unlock_frames() == want
+def test_unlock_without_a_secret_follows_the_screen(monkeypatch: pytest.MonkeyPatch, sku: str,
+                                                    empty: bool) -> None:
+    setup: list[bytes] = []
+
+    def pairing_read(_request: bytes) -> list[bytes]:
+        setup.extend(d._unlock_frames())   # the unlock step of the session this read sets up
+        return [_frame(0xAA, 0xB1, 0x01, *b"12345678")]
+
+    d = _dev(sku, {0xB1: pairing_read})
+    monkeypatch.setattr(GoveeConnection, "is_connected", property(lambda _self: True))
+    # The pairing screen reads with no check (AbsPairAc4SecretV1.T1); the next operation on that session
+    # sends the control screen's empty check first, and so does every later session.
+    assert run(d.read_secret()) == b"12345678" and setup == []
+    run(d.set_power(True))
+    assert (_sent(d)[0] == build.empty_secret_check()) is empty
+    assert d._unlock_frames() == ([build.empty_secret_check()] if empty else [])
+    d.set_secret(b"12345678")
+    assert d._unlock_frames() == [build.secret_check(b"12345678")]
 
 
 # ── WP3-021: an advertised power change keeps the zones consistent ────────────────────────

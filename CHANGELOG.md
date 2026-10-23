@@ -436,7 +436,10 @@ model, from which the shipped readers are generated).
   bytes, and `BleUtils.p:1030-1041` zero-fills the frame, so with no secret the check is `33 b2`, 17 zero bytes
   and the xor (`govee_ble_frame` `secret_write` with its 8 bytes zero, Spec). On such a profile a `Device` with no
   secret set now sends that empty check after the handshake on every session, where it sent no unlock; with a
-  secret it sends the secret's check, as before. A device that refuses the empty check (a non-zero status) fails
+  secret it sends the secret's check, as before. `Device.read_secret()` is the pairing screen's read, which sends
+  the `aa b1` read alone while the account has no secret (`AbsPairAc4SecretV1.T1:107-113`): a session it sets up
+  sends no empty check, and the next other operation on that session sends it first. A device that refuses the
+  empty check (a non-zero status) fails
   the session with GoveeBleAuthError, as the app's connect read fails on it
   (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`); a
   missing ack is logged and the session goes on. Screens that test the secret first send none
@@ -678,6 +681,9 @@ model, from which the shipped readers are generated).
   `BleUtils.p:1030-1041`). Every session without a secret sends that frame after the handshake, before any
   other, where the library's account-locked rows sent no unlock without one. A device that refuses it fails the
   session with GoveeBleAuthError, as the app's connect read fails; with a secret set the bytes are as before.
+  `read_secret()`'s pairing read sends none: the app's pairing screen (`h6071.add.PairAcV1`, an
+  `AbsPairAc4SecretV1`) reads the secret with no check (`AbsPairAc4SecretV1.T1:107-113`), so a session that
+  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first.
   Source-traced, not live-verified: no H6071 or H6075 is on the bench.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for

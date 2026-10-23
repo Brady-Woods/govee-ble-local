@@ -550,11 +550,13 @@ types:
       H6058NewDetailVm.T4; h6071 VM4Light's connect strategy,
       initControllerNoEventList). A screen that tests the secret first sends
       no empty check (H605051NewDetailVm: supportDeviceCheck and a non-empty
-      secret).
+      secret), and nor does the pairing screen, whose secret read is the
+      AA B1 read alone while the secretCode is empty (AbsPairAc4SecretV1.T1,
+      SecretKeyController(b2())); the library's read_secret follows it.
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-35,57-78
       - base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-46
-      - base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:110-112,204-206
+      - base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:107-113,204-206
       - base-classes11/com/govee/base2light/kt/comm/DefInfo.java:106-110
       - base-classes10/com/govee/base2home/util/Encode.java:29-40
       - base-classes11/com/govee/base2light/kt/ble/AbsController.java:30-45
