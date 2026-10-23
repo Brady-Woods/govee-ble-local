@@ -23,6 +23,9 @@ from .profile import DeviceProfile, wire_profile
 # ``kelvin_15_rgb_kelvin_0d``: the H60A1 / H80A1, H60A4 / H80A4, H60A6, H1270, H1232 and H1252 rows), whose
 # 0x0d branch leaves a Kelvin above 0 to the same read's groups (:func:`_left_to_pieces`).
 _H60A1_PARSE = "kelvin_15_rgb_kelvin_0d"
+# The colour the stock colour page shows for a black piece: ``ColorUtils.N:183-185`` (``I(1, 1, 1)``), which
+# its copy of ``SubMode4Color.d`` holds in a black piece's place (:func:`_one_colour`).
+_BLACK_SHOWN = (1, 1, 1)
 
 
 def kelvin_range(profile: DeviceProfile, hardware: str | None = None,
@@ -622,10 +625,18 @@ def _stock_page(profile: DeviceProfile) -> bool:
 
 
 def _one_colour(pieces: Sequence[Segment]) -> tuple[int, int, int] | None:
-    """The one colour every piece shows (``ColorUtils.q:335-349``; one piece always does), None when they
-    differ or one is unknown."""
-    shown = pieces[0].rgb
-    return None if shown is None or any(seg.rgb != shown for seg in pieces) else shown
+    """The one colour every piece shows on the stock colour page (``ColorUtils.q:335-349``; one piece always
+    does), None when they differ or one is unknown. The page tests a copy of ``SubMode4Color.d``, not ``d``
+    itself: ``ColorViewModel.initColor4Device:1192-1202`` copies it and puts ``ColorUtils.N`` (1, 1, 1) in
+    each black piece's place (``I(0, 0, 0)``, as the group reads build every piece colour:
+    ``Controller4ColorInfoByGroup.Companion:154``, ``q:171``), then posts the copy (``:1210``), which
+    ``DelegateColorV2.w1`` hands ``W1``. So black pieces show as (1, 1, 1), and black and (1, 1, 1) pieces
+    agree. Only that shown colour changes: ``state.segments`` keep the colours the device reported, and the
+    Kelvin sync tests the original ``d`` (``:1211``, ``KelvinConfig.f``), where neither colour is a tint, so
+    it syncs the same."""
+    shown = [_BLACK_SHOWN if seg.rgb == (0, 0, 0) else seg.rgb for seg in pieces]
+    first = shown[0]
+    return None if first is None or any(rgb != first for rgb in shown) else first
 
 
 def _page_colour(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, int]) -> parse.ColorReport:

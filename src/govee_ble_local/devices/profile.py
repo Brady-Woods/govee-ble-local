@@ -304,7 +304,8 @@ class DeviceProfile:
     TLV 0x05 alike, as a pick of that colour does (:func:`~._fold.apply_rgb`), while every segment the same
     read brought (the burst's TLV 0xA5 groups, the poll's ``aa a5`` walk) shows that colour, as ``W1`` tests
     the pieces; where they all show another colour, the page shows theirs, read the same way
-    (:func:`~._fold._as_shown`). A 0x15 report, which carries a Kelvin and no colour, and on the h60a1
+    (:func:`~._fold._as_shown`), a black piece as (1, 1, 1), as the page's copy of them holds it
+    (:func:`~._fold._one_colour`). A 0x15 report, which carries a Kelvin and no colour, and on the h60a1
     screen's rows a 0x0d report of a Kelvin above 0, whose tint the pieces replace, show those pieces' colour
     the same way where they all show one, and else read as decoded (:func:`~._fold._shown_over_pieces`).
     ``"none"`` (the screen shows

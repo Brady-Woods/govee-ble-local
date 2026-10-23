@@ -177,9 +177,11 @@ none, the report reads as decoded (a Kelvin above 0 as `color_temp_kelvin`; a Ke
 decode, which reads nothing from 0x15, leaves `rgb_color` as it was). The same goes on the H60A1, H60A4 and
 H60A6 (and, behind `allow_modelled`, the H1270, H1232 and H1252) for a 0x0d report of a Kelvin above 0, whose
 tint their screen replaces with the same read's segments; the Glide panels' screen keeps that tint, so there it
-reads as its Kelvin. So the H6052, whose screen decodes its colour report as RGB only, reports a tint colour in
-range (the colour of a colour-temperature write, should the lamp echo it) as `color_temp_kelvin`, and any other
-colour (the white `ff ff ff` it reported for a colour temperature set elsewhere, for one) as `rgb_color`. H8015, H6071 and H6075 show no colour page
+reads as its Kelvin. Wherever the segments' colour is shown, a black segment counts as (1, 1, 1), as the app's
+page shows it, and `segments` keep the black. So the H6052, whose screen decodes its colour report as RGB only,
+reports a tint colour in range (the colour of a colour-temperature write, should the lamp echo it) as
+`color_temp_kelvin`, and any other colour (the white `ff ff ff` it reported for a colour temperature set
+elsewhere, for one) as `rgb_color`. H8015, H6071 and H6075 show no colour page
 (`color_page == "none"`), so their reports read as decoded. The H703A / H703B (behind `allow_modelled`) are
 the one exception for now: their screen shows the stock page too, but their colour comes from the status
 read's one-record TLV 0xA5, not a mode report, and a tint there still reads as `rgb_color` where the app

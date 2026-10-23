@@ -1070,7 +1070,13 @@ model, from which the shipped readers are generated).
   holds it, unless the segments' tint replaces it (`KelvinConfig.f:144-157`). Until now such a report read as its
   Kelvin whatever the segments showed. Elsewhere a 0x0d report of a Kelvin above 0 still reads as decoded: on the
   Glide panels the walk keeps the report's tint in `d` while its Kelvin is above 0 (`CubeVM4Light.m5:424-438`),
-  so their page shows that Kelvin.
+  so their page shows that Kelvin. Wherever the segments' colour is shown, a black segment counts as (1, 1, 1),
+  as on the page (CLAUDE.md rule 3): `ColorViewModel.initColor4Device:1192-1210` posts a copy of
+  `SubMode4Color.d` with `ColorUtils.N` (1, 1, 1) in each black piece's place, and that copy is what `W1` tests
+  and shows. So segments that are all black show `rgb_color` (1, 1, 1), not (0, 0, 0), and black and (1, 1, 1)
+  segments together count as one colour, (1, 1, 1), where they read as differing until now. `segments` keep the
+  black the device reported, and `last_color_temp_kelvin` is as before (the Kelvin sync, `:1211`, tests the
+  original `d`, where neither colour is a tint).
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
@@ -1118,8 +1124,12 @@ model, from which the shipped readers are generated).
     all show one colour, on the same 14 rows. Showing them over the h60a1 screen's 0x0d report was checked the
     same way against e18f6f2, with 0x0d reports at a Kelvin above 0, of 0 and below 0 over the same segment
     sets: no frame, refusal or profile change, and the state changes only where a 0x0d report of a Kelvin above
-    0 meets segments that all show one colour other than that Kelvin's tint, on the 8 SKUs of those rows. Not
-    live-verified: no read-back of a tint report was made on the bench.
+    0 meets segments that all show one colour other than that Kelvin's tint, on the 8 SKUs of those rows.
+    Showing black segments as (1, 1, 1) was checked the same way against e18f6f2 and that change, adding
+    segment sets all black and black with (1, 1, 1): no frame, refusal or profile change, and the state changes
+    only in `rgb_color` / `color_temp_kelvin` where the same read's segments are all black (now (1, 1, 1)) or
+    black and (1, 1, 1) (now (1, 1, 1), no Kelvin), on the same 14 rows; `segments` and `last_color_temp_kelvin`
+    don't change. Not live-verified: no read-back of a tint report was made on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
