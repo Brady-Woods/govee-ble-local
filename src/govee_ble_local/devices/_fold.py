@@ -23,8 +23,9 @@ from .profile import DeviceProfile, wire_profile
 # ``kelvin_15_rgb_kelvin_0d``: the H60A1 / H80A1, H60A4 / H80A4, H60A6, H1270, H1232 and H1252 rows), whose
 # 0x0d branch leaves a Kelvin above 0 to the same read's groups (:func:`_left_to_pieces`).
 _H60A1_PARSE = "kelvin_15_rgb_kelvin_0d"
-# The colour the stock colour page shows for a black piece: ``ColorUtils.N:183-185`` (``I(1, 1, 1)``), which
-# its copy of ``SubMode4Color.d`` holds in a black piece's place (:func:`_one_colour`).
+# The colour the stock colour page shows for black: ``ColorUtils.N:183-185`` (``I(1, 1, 1)``), which its
+# copy of ``SubMode4Color.d`` holds in each black colour's place, the report's one colour or a piece's
+# (:func:`_on_page`).
 _BLACK_SHOWN = (1, 1, 1)
 
 
@@ -527,10 +528,11 @@ def _as_shown(profile: DeviceProfile, state: DeviceState, color: parse.ColorRepo
     """A colour report ``(rgb, kelvin)`` as the screen shows it over ``pieces``, the segments the same read
     brought (a status burst's TLV 0xA5 groups, a poll's ``aa a5`` walk: :func:`apply_mode_over_pieces`). On
     the stock colour page (:attr:`~.profile.DeviceProfile.color_page`) the page shows one colour: the
-    report's when the read brought no pieces, else the pieces' when every piece shows the same one. That
-    colour, when it is one of the app's tint colours (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin
-    lies in the device's inclusive range (:func:`kelvin_range`), is that colour temperature, with no RGB
-    colour, whatever the decode; else it is the RGB colour. ``DelegateColorV2.W1:1105-1123``
+    report's when the read brought no pieces, else the pieces' when every piece shows the same one, black
+    either way as (1, 1, 1), as the page's copy of ``d`` holds it (:func:`_on_page`). That colour, when it
+    is one of the app's tint colours (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin lies in the device's
+    inclusive range (:func:`kelvin_range`), is that colour temperature, with no RGB colour, whatever the
+    decode; else it is the RGB colour. ``DelegateColorV2.W1:1105-1123``
     (``DelegateCurMode.createView:185-203`` -> ``ColorViewModel.initColor4Device:1182-1224`` ->
     ``v1:625-630`` -> ``w1:666-734``) tests ``SubMode4Color.d``: when its pieces all equal the first
     (``ColorUtils.q:335-349``; one piece always does) it shows ``d[0]``, as the Kelvin slider at
@@ -549,12 +551,10 @@ def _as_shown(profile: DeviceProfile, state: DeviceState, color: parse.ColorRepo
     rgb, _kelvin = color
     if rgb is None or not _stock_page(profile):
         return color
-    if pieces:
-        shown = _one_colour(pieces)
-        if shown is None:
-            return color
-        rgb = shown   # W1 shows d[0]: the pieces' one colour, which replaced the report's in SubMode4Color.d
-    return _page_colour(profile, state, rgb)
+    # W1 shows d[0]: the pieces' one colour, which replaced the report's in SubMode4Color.d, else the
+    # report's, each as the page's copy of d holds it
+    shown = _one_colour(pieces) if pieces else _on_page(rgb)
+    return color if shown is None else _page_colour(profile, state, shown)
 
 
 def _shown_over_pieces(profile: DeviceProfile, state: DeviceState, m: Any, color: parse.ModeColor | None,
@@ -626,17 +626,30 @@ def _stock_page(profile: DeviceProfile) -> bool:
 
 def _one_colour(pieces: Sequence[Segment]) -> tuple[int, int, int] | None:
     """The one colour every piece shows on the stock colour page (``ColorUtils.q:335-349``; one piece always
-    does), None when they differ or one is unknown. The page tests a copy of ``SubMode4Color.d``, not ``d``
-    itself: ``ColorViewModel.initColor4Device:1192-1202`` copies it and puts ``ColorUtils.N`` (1, 1, 1) in
-    each black piece's place (``I(0, 0, 0)``, as the group reads build every piece colour:
-    ``Controller4ColorInfoByGroup.Companion:154``, ``q:171``), then posts the copy (``:1210``), which
-    ``DelegateColorV2.w1`` hands ``W1``. So black pieces show as (1, 1, 1), and black and (1, 1, 1) pieces
-    agree. Only that shown colour changes: ``state.segments`` keep the colours the device reported, and the
-    Kelvin sync tests the original ``d`` (``:1211``, ``KelvinConfig.f``), where neither colour is a tint, so
-    it syncs the same."""
-    shown = [_BLACK_SHOWN if seg.rgb == (0, 0, 0) else seg.rgb for seg in pieces]
+    does), each as the page's copy of ``SubMode4Color.d`` holds it (:func:`_on_page`), None when they differ
+    or one is unknown. So black pieces show as (1, 1, 1), and black and (1, 1, 1) pieces agree: the group
+    reads build every piece colour as ``I(r, g, b)`` (``Controller4ColorInfoByGroup.Companion:154``,
+    ``q:171``)."""
+    shown = [None if seg.rgb is None else _on_page(seg.rgb) for seg in pieces]
     first = shown[0]
     return None if first is None or any(rgb != first for rgb in shown) else first
+
+
+def _on_page(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    """A colour of ``SubMode4Color.d`` as the stock colour page tests and shows it. The page works on a copy
+    of ``d``, not ``d`` itself: ``ColorViewModel.initColor4Device:1192-1202`` copies it and puts
+    ``ColorUtils.N`` (1, 1, 1) in each black colour's place (``ColorUtils.I(0, 0, 0)``), then posts the copy
+    (``:1210``), which ``DelegateColorV2.w1`` hands ``W1``. So black shows as (1, 1, 1), whether ``d`` holds
+    the same read's pieces (:func:`_one_colour`) or, with none, the report's one colour, which every
+    stock-page decode stores opaque, as ``ColorUtils.I`` / ``H`` of the report's bytes (h60a1
+    ``Info4Detail.Q:417-420``; cubelight ``CubeNewInfo4Detail:146``, homelightv1 ``Info4Detail:118``, h6022
+    ``Info4Detail:115``, h7040 ``Info4Detail:154``, ``H6055InfoDetail:115``; bulblight
+    ``ModeParseStrategyConfig.a:60``, rgblight ``:42``; ``H6052InfoDetail:118``; ``H60501InfoDetail:137-143``;
+    h70bx ``Info4Detail:129-131``, h6840 ``Info4Detail:125-127``, h70b3 ``Info4Detail:153-155``). Only that
+    shown colour changes: ``state.segments`` keep the colours the device reported, and the Kelvin sync tests
+    the original ``d`` (``:1211``, ``KelvinConfig.f:144-157``), where neither colour is a tint, so it syncs
+    the same."""
+    return _BLACK_SHOWN if rgb == (0, 0, 0) else rgb
 
 
 def _page_colour(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, int]) -> parse.ColorReport:

@@ -1071,16 +1071,25 @@ model, from which the shipped readers are generated).
   holds it, unless the segments' tint replaces it (`KelvinConfig.f:144-157`). Until now such a report read as its
   Kelvin whatever the segments showed. Elsewhere a 0x0d report of a Kelvin above 0 still reads as decoded: on the
   Glide panels the walk keeps the report's tint in `d` while its Kelvin is above 0 (`CubeVM4Light.m5:424-438`),
-  so their page shows that Kelvin. Wherever the segments' colour is shown, a black segment counts as (1, 1, 1),
-  as on the page (CLAUDE.md rule 3): `ColorViewModel.initColor4Device:1192-1210` posts a copy of
-  `SubMode4Color.d` with `ColorUtils.N` (1, 1, 1) in each black piece's place, and that copy is what `W1` tests
-  and shows. So segments that are all black show `rgb_color` (1, 1, 1), not (0, 0, 0), and black and (1, 1, 1)
-  segments together count as one colour, (1, 1, 1), where they read as differing until now. H7061's two heads
-  are such pieces: `H70606162Info4Detail.I:247-261` puts them in `d` (`SubMode4Color.p`), and its page starts
-  from that `SubMode4Color` (`H70606162DetailVM.getInitColorData:589-591`), so two black heads show (1, 1, 1),
-  and so do a black and a (1, 1, 1) head, where they showed no colour. `segments` keep the black the device
-  reported, and `last_color_temp_kelvin` is as before (the Kelvin sync, `:1211`, tests the original `d`, where
-  neither colour is a tint).
+  so their page shows that Kelvin. Wherever the page's colour is shown, black counts as (1, 1, 1), as on the
+  page (CLAUDE.md rule 3): `ColorViewModel.initColor4Device:1192-1210` posts a copy of `SubMode4Color.d` with
+  `ColorUtils.N` (1, 1, 1) in each black colour's place, and that copy is what `W1` tests and shows. So segments
+  that are all black show `rgb_color` (1, 1, 1), not (0, 0, 0), and black and (1, 1, 1) segments together count
+  as one colour, (1, 1, 1), where they read as differing until now. H7061's two heads are such pieces:
+  `H70606162Info4Detail.I:247-261` puts them in `d` (`SubMode4Color.p`), and its page starts from that
+  `SubMode4Color` (`H70606162DetailVM.getInitColorData:589-591`), so two black heads show (1, 1, 1), and so do
+  a black and a (1, 1, 1) head, where they showed no colour. So does a black report where the same read brings
+  no segments: `d` is then the report's own one colour, which every stock-page decode stores opaque, as
+  `ColorUtils.I` / `H` of the report's bytes, so a black one is `I(0, 0, 0)` and the copy replaces it (h60a1
+  `Info4Detail.Q:417-420`; cubelight `CubeNewInfo4Detail:146`, homelightv1 `Info4Detail:118`, h6022
+  `Info4Detail:115`, h7040 `Info4Detail:154` and `H6055InfoDetail:115`; bulblight
+  `ModeParseStrategyConfig.a:60` and rgblight `ModeParseStrategyConfig.a:42`, a negative Kelvin's tint
+  included; `H6052InfoDetail:118`; `H60501InfoDetail:137-143`; h70bx `Info4Detail:129-131`, h6840
+  `Info4Detail:125-127` and h70b3 `Info4Detail:153-155`; each screen's `getInitColorData` hands the page that
+  `SubMode4Color`). So the H6052's `0d 00 00 00`, for one, reads as `rgb_color` (1, 1, 1), not (0, 0, 0), on
+  every row with the stock page; `color_page: none` rows and rows without a page read it as decoded. `segments`
+  keep the black the device reported, and `last_color_temp_kelvin` is as before (the Kelvin sync, `:1211`,
+  tests the original `d` with `KelvinConfig.f:144-157`, and black is no tint).
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
@@ -1136,7 +1145,12 @@ model, from which the shipped readers are generated).
     don't change. H7061's heads were then checked the same way against that change, adding head pairs of black,
     (1, 1, 1), red and two tints: no frame, refusal or profile change, and the state changes only on H7061, in
     `rgb_color`, for two black heads ((0, 0, 0), now (1, 1, 1)) and a black with a (1, 1, 1) head (no colour,
-    now (1, 1, 1)). Not live-verified: no read-back of a tint report was made on the bench.
+    now (1, 1, 1)). A black report with no segments was then checked the same way against that change, adding
+    black 0x0d / 0x15 / 0x0b / 0x02 reports at a Kelvin of 0, below 0 (a black tint too) and above 0: no frame,
+    refusal or profile change, and the state changes only in `rgb_color`, (0, 0, 0) now (1, 1, 1), where the
+    read brings no segments, on every stock-page SKU but H7061 (104 admitted by default, and H1270, H1232,
+    H1252 and H6148 behind `allow_modelled`); `color_temp_kelvin`, `last_color_temp_kelvin` and `segments`
+    don't change. Not live-verified: no read-back of a tint report was made on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the

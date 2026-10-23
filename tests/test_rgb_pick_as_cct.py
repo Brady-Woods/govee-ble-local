@@ -452,9 +452,9 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
 # A 0x15 report carries no colour and leaves d to the same read's pieces, so the page shows them there too
 # (h60a1 Info4Detail.Q:399-407, cubelight CubeNewInfo4Detail.U:488-537), its Kelvin above 0 held unless their
 # tint replaces it (Q:401-404). So does the h60a1 screen's 0x0d report of a Kelvin above 0, whose tint in d
-# the pieces replace (Q:416-426, SubMode4Color.j:124-126). The page tests a copy of the pieces with each black
-# one as (1, 1, 1) (ColorViewModel.initColor4Device:1194-1202). The status path is checked where the burst
-# brings the pieces: a polled row's status decode reads no TLV 0xA5.
+# the pieces replace (Q:416-426, SubMode4Color.j:124-126). The page tests a copy of d with each black colour
+# as (1, 1, 1) (ColorViewModel.initColor4Device:1194-1202), the pieces' or, with none, the report's. The
+# status path is checked where the burst brings the pieces: a polled row's status decode reads no TLV 0xA5.
 _TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
 _REPORT_15 = (0x15, 0x01, 0x00, 0x00)   # the bench H60A6 burst's report (test_wire_reassemble._BURST)
 _TINT = (0xFF, 0xD5, 0xA1)
@@ -464,6 +464,7 @@ _NO_PIECES = [
     ("H6800", (2, 1), "stock", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K
     ("H6840", (2, 1), "stock", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # no tint
     ("H6052", (2, 1), "stock", (0x0D, 0xFF, 0xD5, 0xA1), (None, 4000)),                 # rgb_0d, colour only
+    ("H6052", (2, 1), "stock", (0x0D, 0x00, 0x00, 0x00), ((1, 1, 1), None)),           # black, as on the page
     ("H6004", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_tint
     ("H6061", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_0d
     ("H60A6", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # kelvin_15_rgb_kelvin_0d
