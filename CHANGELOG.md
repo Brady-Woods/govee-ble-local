@@ -1582,10 +1582,11 @@ model, from which the shipped readers are generated).
   and without `allow_modelled`, but H3401 and H3510 / H3511 (Added) and H6671 / H6672 (above).
 - For integrators: `Device.segment_count` follows the device from the first poll on, and the library refuses a
   segment index at or past it, on a `DeviceProfile.color_writes_live_ic` profile (H6641 and every other IC-sized
-  row, Fixed below, where it was the profile's static count), on the H707A strings (`status_segment_count`,
-  Added), on the h7020 bulb strings (`light_num_per_unit`, Added) and, behind `allow_modelled`, on H706A / H706B /
-  H706C / H806A / H806C (the `ac a1` special-info read, Added). hass-govee-ble-local builds one segment
-  entity per `profile.segments`; it needs to size them from `device.segment_count` after the first refresh
+  row, Fixed below, where it was the profile's static count), on the H707A / H707B / H707C strings and their
+  R707A-C (`status_segment_count`, Added), on the h7020 bulb strings (`light_num_per_unit`, Added) and, behind
+  `allow_modelled`, on H706A / H706B / H706C / H806A / H806C (the `ac a1` special-info read, Added).
+  hass-govee-ble-local builds one segment entity per `profile.segments`; it needs to size them from
+  `device.segment_count` after the first refresh
   (and reload when the count changes): until then a strip shorter than the profile's count shows entities
   whose writes raise GoveeBleInvalidValue, and H6641's `segment_14` / `segment_15` entities (its count is now
   at most 14) need removing. Release order, as for the card rows (DECISIONS.md 16, "Integration support first"):
@@ -1752,7 +1753,8 @@ model, from which the shipped readers are generated).
   per poll, in its place. Live-verified on the bench H6641 on 2026-10-22, on 3885c57 (not re-run on a later
   head): IC 42, so 9 pieces, and one whole-device colour, a Kelvin tint, went out as the
   `33 05 15 01` tint frame with the live mask `ff 01` where 1.6.1 sent `ff ff`; the device acked it and applied it,
-  and the start state was restored. The other h61d3 rows, and H6641's segment and Kelvin paths, are source-traced
+  and the start state was restored. That was the one frame sent (`set_color_temp(2800)` builds the same bytes):
+  H6641's other colour-temperature, plain RGB and segment writes, and the other h61d3 rows, are source-traced
   only.
 - **H6098 / H8098 (pact_h6099 203) and H6690 (336): segment brightness now covers the app's groups.** Their
   screen's colour strip, the `ColorMode14Rect4ReverseSelect` that pact_h6099's `DetailConfig` builds for 191 /
