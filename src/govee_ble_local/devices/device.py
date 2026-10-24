@@ -767,8 +767,9 @@ class Device:
         except GoveeBleCommandRejected as err:
             done = True
             # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end the
-            # session, so the next operation's setup sends the check again and is refused the same way: no
-            # later frame goes out on this link unchecked, as the app's compose stops at its failed check.
+            # session, so the next operation's setup sends the check again and is refused the same way, as the
+            # app's compose stops at its failed check. An operation that overlaps it can still get a frame out
+            # first (CHANGELOG: known issue, fixed in the next release).
             await self._conn.disconnect()
             raise GoveeBleAuthError(
                 f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"

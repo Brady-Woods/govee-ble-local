@@ -233,6 +233,8 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
         # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
         if not entry.has_switch_state:
             continue
+        if on_mask == 0:   # a mask with no bits (0 or False) is never on, as 1.7.0 read it
+            return False   # (the spec's advert_on_mask 0 means a light, so it can't carry this case)
         rule = _spec.profile(advert_on_mask=on_mask or 0).power
         return bool(_spec.read(_spec.State.PowerState, entry.device_state, _spec.State.Source.advert,
                                rule).is_on)

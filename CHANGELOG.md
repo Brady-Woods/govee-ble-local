@@ -93,19 +93,21 @@ model, from which the shipped readers are generated).
   is [2200, 6500] below hardware 1.04.03 (`KelvinConfig.Config.Y2`, a numeric compare), the library's the
   [2700, 6500] valid on every revision, so on that hardware an RGB pick of one of the ten 2200-2600 K tint
   colours goes out as RGB where the app sends a colour-temperature frame. Not hardware-verified.
-- **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized as
-  the app sizes it, and H61A9 is admitted by default (`app_traced`), no longer behind `allow_modelled` as at
-  1.7.0.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
-  keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d`
-  -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws (an
-  IC field of 0x1000 or more) the app walks nothing, and now neither does the library, nor when the aa 40 read
-  goes unanswered (it has no count to size the walk with). New
-  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`). The
-  aa 40 read keeps its place in the poll. The frames are 1.7.0's for a section sum of 0 or 13-15 on 141 (groups
-  of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static). Rgbiclight
-  141's promotion on the H61C3 bench reading (the user's decision 1, 1.7.0's Spec) stands; this makes
-  its connect walk exact on every unit. Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no non-zero
-  sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
+- **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized
+  as the app sizes it, and H61A9 is admitted by default (`app_traced`), no longer behind `allow_modelled` as
+  at 1.7.0.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
+  keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes
+  (`ControllerIcNum.d` -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0.
+  Where that reader throws (an IC field of 0x1000 or more) the app walks nothing, and now neither does the
+  library, nor when the aa 40 read goes unanswered (it has no count to size the walk with). New
+  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces:
+  sections`), and `DeviceProfile.ic_num_read_only` is now False on these rows, since the section sum replaces
+  the fixed-piece read (frames unchanged). The aa 40 read keeps its place in the poll. The frames are 1.7.0's
+  for a section sum of 0 or 13-15 on 141 (groups of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20
+  on 204 (groups of 4, 18 static). Rgbiclight 141's promotion on the H61C3 bench reading (the user's decision
+  1, 1.7.0's Spec) stands; this makes its connect walk exact on every unit. Source-modelled: no H61A9, H61C2
+  or H61C5 is on the bench, and no non-zero sum has been read. The live-IC rows (H6641 and the other h61d3
+  rows) keep their walk.
 - **H7061 (h7050 98), a two-head flood light, admitted by default (`app_traced`).** Its aa 05 0x15 report is two
   `[bri s8][r g b]` head records (`bri_rgb_pair_15`), which the library decoded but did not fold. It now folds
   them as the colour page holds them (`H70606162Info4Detail.I`; `H7061ColorMode.updateColor` /
@@ -164,9 +166,16 @@ model, from which the shipped readers are generated).
   on it (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`),
   at session setup and when the next operation after a `read_secret()` sends it: either way the session ends,
   and the next setup sends the check again (source-modelled); a missing ack is logged and the session goes on.
-  **Known issue:** an operation that overlaps the refused check (two calls at once) can still send its frame on
-  that link before the session ends, and a plug's time sync can follow a refused check. A refused check means a
-  wrong or stale secret, and the device has just rejected the session. The next release fixes it.
+  **Known issue,** fixed in the next release. Each case needs a refused check, which means a wrong or stale
+  secret on a device that has just rejected the session.
+  - An operation that overlaps the refused check (two calls at once) can still send its frame on that link before
+    the session ends. That call reports success, and its state is applied.
+  - A plug's re-read after a power write, overlapping a refused `set_secret()` check, can send the plug's time
+    sync on that link.
+  - If the refused call is cancelled while its session is ending, the link stays up, and later operations go out
+    on it unchecked until it idles out.
+  - A pending check that gets no ack is sent again after the reconnect's own check (two `33 b2` back to back).
+
   Screens that test the secret first send none
   (`H605051NewDetailVm:163-169`: H6050 / H6051), and nor do the plugs. Set on H6071 / H6075 (h6071 57 / 67,
   Changed), the user's decision D4 (2026-10-22). H6058 (hollowlamp 59) stays behind `allow_modelled` without
@@ -431,6 +440,14 @@ model, from which the shipped readers are generated).
   H61D2-H61D6 resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at
   none, with and without `allow_modelled`. H61D2-H61D6 change: `SEGMENTS`, `whole_device_kelvin`,
   `segment_brightness=False`, and admitted by default; their whole-device frames are as before.
+
+### Fixed
+- **A refused live `33 b2` check ends the session, on every account-locked SKU** (the plugs, H6050 / H6051,
+  H6071 / H6075). In 1.7.0, a `set_secret()` whose check the device refused on a session that was up raised
+  `GoveeBleAuthError` but left the link up, so later calls on it succeeded without a check. Now the session ends
+  before the error is raised, as a refusal at session setup does, so each later call reconnects and is refused at
+  setup. The same goes for the empty check after a `read_secret()` (Added). The overlapping-operation cases are a
+  known issue (Added), fixed in the next release. Source-modelled, not live-verified.
 
 ### Spec
 - **devices.yaml: 20 more goodsType rows take `support`, and 4 rise from `modelled` to `app_traced`.** Of the 305
