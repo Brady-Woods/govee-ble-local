@@ -9,297 +9,18 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
-- **`bound_advertisement(advertisement_data, sku, *, fallback_name=None)`, in `__all__`.** It reads an
-  advertisement's pact and encrypt flag from its Govee manufacturer data whatever the local name, for a caller
-  that has no `Device` yet. It returns the public `GoveeAdvertisement` (`.pact`, `.encrypted`,
-  `.encryption_known`), or None when the name isn't a Govee name and there's no Govee pact block.
-  - **What it is:** the read `create_device`, `make_device` and the `Device` make of their advertisement since
-    1.6.1, until now package-internal as `identify._bound_advertisement`. Its pact is the pact `create_device`
-    routes the profile by. After a `GoveeBleNotSupported` it is the pact that was refused, even for a renamed or
-    nameless Home Assistant record, where `identify()`'s name gate returns None.
-  - **Labels:** `.sku` is always the caller's `sku`, upper-cased, whatever SKU a Govee name carries; `.name` is
-    the advertised name, else `fallback_name`, else `""`. Neither changes the pact or the flag. Until now a
-    Govee name's own SKU labelled the internal read; nothing read it.
-  - **Merged records:** with more than one Govee pact entry, the first in the dict's order gives the pact and
-    the flag, as `create_device` and the `Device` constructor take them.
-  - **App basis, for the light goodsTypes:** the control screen matches a bound device by its stored MAC, not
-    its name (`AbsViewMode4OpWithOtaCheck.s2:766-774`). It parses the broadcast with the stored goodsType
-    (`AbsViewMode4OpWithOtaCheck.j1:570-591` -> `GoodsType.parseBleBroadcastPactInfo:1564-1578` ->
-    `BleUtil.parseBleBroadcastPact:779-803`) and keeps the encrypt flag (`AbsViewMode4OpWithOtaCheck.w2:171-178`).
-    The caller's `sku` stands for that stored device.
-  - **What stays as it is:** `identify.identify` and `identify.parse_manufacturer_data`, the raw parser under
-    this read, stay out of `__all__`; the bare `(encrypted, broadcast_version, pact_type, pact_code)` tuple
-    can't grow a field without a MAJOR. Released Home Assistant integrations import both, so both keep their
-    signatures and results through 1.x; a new way of reading a merged record goes in a new function.
-    Discovery keeps the name gate as before.
-- **`Device.advertised_on(advertisement_data) -> bool | None`: an advertisement's on/off, decoded as this device
-  decodes it.** A light is on for a switch byte of 1, a plug for any bit of its profile's `advert_on_mask`. The
-  result is None when the advertisement carries no switch byte (no Govee manufacturer data, a header below 2, too
-  short), and always on the H6057, whose power is its light switch (below). It is passive: it leaves the state as it is and ignores the window after a command or read in which
-  `ingest_advertisement` ignores the advertised on/off. `ingest_advertisement` now decodes through it.
-  - **Why a Device method:** this mirrors the app's split. `BleUtil.parseBleBroadOnOff` reads the raw byte the
-    same way for every device (the overload at `:719-744` for lights, the one at `:700-717` for plugs), and each
-    device model decodes it in its own `z(scanRecord)`: `AbsBaseBleModel.z:393-397` for lights, h5080
-    `Model.z:254-265` and `Model4Plug2.z:269-290` for plugs. So a caller no longer passes the mask itself. The
-    Home Assistant integration can use it in place of `identify.parse_broadcast_onoff(..., on_mask=...)`, which
-    is not in `__all__`.
-  - **What stays:** `identify.parse_broadcast_onoff` and `DeviceProfile.advert_on_mask` are unchanged and stay
-    supported through 1.x, because released integrations import them.
-  - **Merged records:** the on/off comes from the Govee entry whose value last changed between two advertisements
-    the Device was given, and from that entry alone. That is the entry the latest broadcast carried. When it has no
-    switch byte, the advertisement gives no on/off. A key new in the record doesn't count as a change. Until one
-    has changed, or when the record lacks that entry, the first Govee entry with a switch byte is read.
-    `advertised_on` gives what `ingest_advertisement` would read from the same advertisement now, and stays
-    passive. Only an ingest moves on the advertisement the next one is compared with. See Fixed, below.
-- **`Device.power_read_at -> float | None`: when a read last returned the device's whole on/off.** The value is in
-  `time.monotonic()` seconds, and only while `state.is_on` still holds what that read gave; otherwise None.
-  - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01` (on the H6057 the `aa 34`
-    device-detail read that replaces it, its light flag: `DeviceProfile.detail_power_read`), a bar-switch
-    device's `aa 36` (in a poll or before a bar write) and a plug's `aa 01` relay read. A poll that read nothing,
-    a read discarded as stale, an advertisement and an acked write stamp nothing.
-  - **What drops it:** any change to `is_on` that no read made, even one that later changes back. Also a power
-    write or scene activation that raises (it may have reached the device), including a `set_scene_by_name`
-    whose power-on lead or upload raises. Also a write that wakes a zoned device not known to be on, an acked
-    zone-on while `is_on` is not True (an H60A6 `33 30` zone-on also sets the main switch, FUN_9b0278dc
-    @0x9b02795e), and each case where `is_on` may say on for a device that is off. Those are the
-    `DeviceState.zone_power_confirmed` events. A read issued before a drop doesn't stamp after it.
-  - **Why it's needed:** `DeviceState.optimistic` clears at the first answered read and is never set again, so
-    a consumer could not tell a later poll that read the on/off from one that read nothing.
-  - **Why on the Device:** it is not a `DeviceState` field, so `dataclasses.asdict(state)` and `snapshot()`
-    don't carry it. A consumer that compares `asdict(state)` between polls (the Home Assistant integration
-    does) sees no change from a re-read.
-- **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but three row
-  facts, below: segment colour temperature, the segment-brightness groups and a status row's device-info
-  reads; the illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9,
-  and the segment split that promotes H61D2-H61D6, below): 105 admitted by default (`app_traced`) and 53
-  behind `allow_modelled` (`modelled`). The entries below admit 64 more by default (16 through the resolver
-  changes; H7004, H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and
-  the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the
-  device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose
-  pairing write is read as an exact-pact condition; and H6057 on its light switch) and 11 more behind
-  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 268 admitted
-  by default and 69 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU now admitted by default:
-  Changed). None is
-  hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
-  is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
-  catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
-
-  Admitted by default:
-  - stringlightv2: **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196**, **H613G**† (2),
-    **H616B** (68), **H6178** (78), **H6192** (143);
-  - h6114: **H6114** (39); h613839: **H6138 / H6139** (39), each on an advertised pact only (below);
-    carlightv1: **H6118 / H6194** (6); tvlightv1: **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24), on
-    an advertised pact only (below);
-  - h60ax: **H60A4 / H80A4** (302, by the illumination-tab pair, below); h6047: **H6039** (277); h61d3:
-    **H61B0** (264, with H61B3 / H61B6), **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202, by the segment
-    split, below); dreamcolorlightv1: **H70A1 / H70A2 / H70A3** (193),
-    **H61A9** (204, by the aa 40 section sum, below);
-  - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
-    **H618G**, **R618D**† (352);
-  - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
-    **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), on an advertised pact only
-    (below), **H16C0** (377);
-  - h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162);
-  - h6840: **H6840**, **H8840**† (278), **H6841**, **H8841**† (325), **H6842**, **R6842**† (381), **H6843**
-    (382);
-  - h6609: **H70C1 / H70C2 / H70CB** (181), **H6860 / R6860 / H6861 / R6861** (362), **H6350** (374),
-    **H6850** (378), **H6351** (392);
-  - pact_h605b: **H605C** (120), **H6602** (142), **H6604 / H8604** (243), **H2A40**, **H2A41**† (360);
-    pact_h6099: **H6099** (191), **H6097** (273), **H66A0**, **H66A1 / R2A80 / R2A81**† (327);
-  - h7057: **H7057**, **H8057**† (274), **H7058** (275), **H7093** (289), **H7094** (290), **H8066** (305),
-    **H7087** (315), **H3501** (339), **H3500** (345), **H3200** (353), **H8067** (393);
-  - h7020: **H7025**, **H8025**† (296); h7045: **H7045 / H7046** (338); h7075: **H7075** (205); h7078:
-    **H7078** (245); h7086: **H7086** (293); h70b6: **H70B6** (329), on an advertised pact only (below);
-    h6800: **H6800** (272); h3751: **H3751** (354);
-  - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
-    pact test (`h7017 Model.t`).
-
-  Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
-  every unit; each row's `doc` names the difference):
-  - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
-  - h61d3: **H703A / H703B** (263);
-  - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
-    (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
-  - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
-  - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256),
-    each on an advertised pact only (below);
-  - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
-    H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
-  - h7057: **H3510**, **H3511**† (349);
-  - h604a: **H604B** (109), **H604D** (133), traced on Govee Home 7.5.12 only: 7.7.02 runs their screen from
-    the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so the shipped
-    path is unseen (the rows' `doc`; their doc-refs under `govee-apk-decompiled/sources/` are 7.5.12 paths).
-- **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
-  (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
-  (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
-  (below). Not hardware-verified (none is on the bench).
-- **H70D1 / H80D1**† (h70dx 267), **H70D2** (268) and **H70D3** (269), admitted by default (`app_traced`).
-  Their screen's connect read is the bare 0xAC status read `ac 03 00`, which requests no TLV type
-  (`VM4H70DX.e5`), and it parses each TLV the reply carries, the 0xA5 colour groups included (`VM4H70DX.g5`).
-  Which TLVs the firmware returns is not in the app; not hardware-verified.
-- **H14C0 / H14A1 / R14A1 / H14C2 / R14C2 / H14C1 / R14C0 / R14C1** (bulblightv3 342), admitted by default
-  (`app_traced`). After its connect reads the screen sends `33 25 01` (light_effect_stop) only for H14A1 /
-  R14A1 / H14C2 / R14C2 (bulblight `Support.c`, `VM4Light.i5`), so those four SKUs carry it as a `by_model`
-  connect write and the other four send none. Not hardware-verified (none is on the bench).
-- **Six more SKUs whose status read names TLV types the spec now has ids for** (Spec, below): by default
-  **H7071** (h6092 334), **H7073** (333) and **H3860** (401), power and brightness; **H3351** (h7072 371) and
-  **H70B8** (h70b6 341), power, brightness, RGB and colour temperature; and **H7072** (h7072 294) behind
-  `allow_modelled`. Each sends the app's request: `ac 03 02 41 0c`, `ac 03 03 41 0c 42`, `ac 03 03 41 0c 45`,
-  `ac 03 03 41 a5 4b` and `ac 03 04 41 39 7d 7e` (`VM4LightH7070.T4`, `VM4LightH3860.T4`, `H7072VM4Light`,
-  `VM4H70B6.i5`). H7072 stays `modelled`: the app places each TLV 0xA5 group at (group - 1) x that TLV's own
-  record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its firmware's split is untraced. None
-  is hardware-verified.
-- **The BK-firmware rows, on an advertised pact only.** The app rewrites these SKUs to a BK goodsType only for
-  a record whose pact meets the gate, and keeps a record without a pact (an int 0) at its source goodsType
-  (`SkuToGoodsTypeUtil.f` over `OldRgbBkUtil.a` / `.b`; `OldRgbicBkUtil.isRgbicBk4Ble`;
-  `OldCarBkUtil.isBkCar`), so the library takes such a target row only on an advertised pact at or above the
-  gate (`profile_for`, `make_device`, `create_device` and `is_supported_sku`, whatever the goodsType). Each of
-  these rows was held for exactly that; nothing else on them changed:
-  - by default: h6159 **H6159 / H6110 / H6109 / H614B / H614E**, h6160 **H6160** and h6182 **H6182** (40, pact
-    (2,1)); h6113 **H6113** and h6181 **H6181** (39, (10,1) / (10,2)); barelightv1 **H6145 / H6146 / H6147**
-    (17, (10,1) to (10,3));
-  - behind `allow_modelled`: h6119 **H6119** (44, (10,1) / (10,2));
-  - the BK route of three SKUs above, carlightv1 **H6118 / H6194** and tvlightv1 **H6179** (39,
-    (10,1) / (10,2), percent brightness): without a pact, and at their own pacts, they keep their
-    goodsType-6 / -12 rows.
-
-  These twelve, H6119 and H6114 / H6138 / H6139 have no admitted source row, so `supported_skus()` lists them,
-  but `is_supported_sku(sku)`, `profile_for`, `make_device` and `create_device` refuse one without a pact:
-  pass the advert's (`is_supported_sku(sku, pact=adv.pact)`; `scanner.supported()`, `discover()` and
-  `create_device` with the advertisement already do). Not hardware-verified: no gated SKU is on the bench.
-- **H6076 / H8076 / R16D0**† (straightfloorlamp 69) **on an advertised pact only**, as the BK rows above. The
-  app accepts (1,1) and (2,1) for goodsType 69, and at (1,1) the screen runs the polled connect read
-  (`VM4Light.d0` -> `VM4Light$connectBleSuc$1`), not the 0xAC status read the row serves, which it runs at
-  pactType 2 only (`Support.isH6076Iteration`). A unit that advertises no pact may be a (1,1) one, so the row is
-  `pact_required` (Spec, below): `profile_for`, `is_supported_sku`, `make_device` and `create_device` refuse
-  these three without a pact, rather than serve a pact-less record the (2,1) status profile with the plaintext
-  cipher fallback. `create_device` with the advertisement still builds them: an encrypted (2,1) advert, as both
-  bench units send, gives the status profile and AES (checked offline, not on the bench). They join the
-  pact-gated SKUs above, 19 in all with H6119 (`supported_skus()` lists them; a caller passes the advert's
-  pact), so the integration's setup fix for those covers them too.
-- **H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811**† (h70b3 229 / 230 / 231 / 255 / 256, behind
-  `allow_modelled`) **on an advertised pact only**, as straightfloorlamp 69. The app registers (1,1) for each
-  of these goodsTypes too, and there the screen runs the polled connect read, not the 0xAC status read the
-  rows serve: `Support.N` is false only at (1,1), so `VM4H70B345.d0` runs `r6`
-  (`AfterConnectSuccessReadDeviceInfo`, which reads aa 06 and aa 07 among others). The rows leave (1,1) out,
-  and now they are `pact_required` too: a pact-less record, which may be a (1,1) unit, is refused rather than
-  given the status profile.
-- **H70B6** (h70b6 329) **on an advertised pact only**, as straightfloorlamp 69. The app accepts (1,1), (1,2)
-  and (1,3) for goodsType 329 (`Config4H70B6Manager.b:112-127`), and above (1,1) its status read adds TLVs
-  0x7D and 0x7E, `ac 03 04 41 39 7d 7e` (`Support.d` / `e:57-75`, `VM4H70B6.i5:478-488`). The row serves (1,1)
-  only, so it is now `pact_required` too: a pact-less record, which may be a (1,2) / (1,3) unit, is refused
-  rather than polled with the (1,1) read `ac 03 02 41 39`. The app never runs the screen without a pact: it
-  starts from the account's stored pact (`h70b6 Model.t:104-105`), takes each matched broadcast's pact block
-  before it connects, and doesn't connect for a broadcast without one (`AbsViewMode4Op.onScanEvent:1960-1983`
-  -> handler 999). Not hardware-verified (no H70B6 is on the bench).
-- **H6198 / H6199** (pact_tvlightv2 24) **on an advertised pact only**, as H70B6 (the user's decision). The
-  app accepts (1,1), (2,1), (3,1) and (4,1) for goodsType 24 (`Support.addSupportPact:57-74`). At (1,1) its
-  colour write is `33 05 0b R G B [K] [mask]` (`Config.pu:15671-15674` gives 6 at pactType 1, so
-  `Config.J[6]` = `Config.eu:13930-13934` -> `Bytes.c:239-267`), which no colour scheme serves, so the row
-  lists (2,1)-(4,1) only. It is now `pact_required` too: a pact-less record, which may be a (1,1) unit, is
-  refused rather than sent the `33 05 15 01` colour frames the app never sends one. The app never runs the
-  screen without a pact: `VM4Light.X0:770-772` is true, so a broadcast without a pact block goes
-  `AbsViewMode4Op.onScanEvent:1960-1983` -> `AbsViewMode4OpWithOtaCheck.j1:570-591` (null) -> handler 999, the
-  old-app dialog (`AbsViewMode4OpWithOtaCheck.F1:271-283`), and the screen never connects to it. With them and
-  H615A-E (below) the pact-gated SKUs are 33, 26 by default and 7 behind `allow_modelled` (H6119 and the six
-  h70b3 SKUs). H6198 / H6199 are new since 1.6.1, so no released unit changes. Not hardware-verified (neither
-  is on the bench).
-- **Brightness on a SKU whose range the pact picks** (`DeviceProfile.brightness_by_pact`: stringlightv2 H6121
-  / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G†). These route without a pact, but a `Device` set up
-  from a pact-less record (`create_device` with no advertisement, or one without a Govee pact block) refuses
-  every brightness command until `Device.ingest_advertisement` hears the pact, `turn_on(brightness=...)`
-  included, which then sends nothing, not even the power-on. Power, colour and colour temperature work
-  meanwhile. Documented in `brightness_by_pact` and `create_device`; no behaviour changed.
-- **The other Glide panels, behind `allow_modelled`**, on the fixed `h6061` scheme (Fixed, below): **H6066**
-  (96, 25 panels), **H6067** (97, 23), **H6065** (121, 20), **H606A** (163, 21) and **H6063** (228, 20). They
-  run H6061's screen and builders (cubelight `SubLib` keys, `Model.t` -> `CubeAcLightDetail` / `CubeVM4Light`;
-  `Config.x` = 5 and `Config.I[gt][4]` for all five), so they get its power, brightness, whole-device RGB and
-  colour temperature, and the `aa a5` read-back. They are `modelled` because the app sizes every mask and the
-  read-back from the user's stored panel layout, which the device never reports: the row's count is a full
-  layout's (`Support.getBulbStringMaxNum`; for H6065 `ColorPieceConfig.f(121)` = 20, where the read-back
-  default is 23). H6061 itself stays admitted by default, the user's explicit exception for the same inferred
-  count. Not hardware-verified.
-- **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
-  `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
-  - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
-    aa a5 01-05, aa 06, aa 07 03 and aa 07 02, all answered: on, brightness 100, 15 segments, soft 3.03.23,
-    hard 3.01.10. The aa 40 reply's section sum is 0, so the app reads the 15 pieces (5 groups of 3) the row
-    has. On that reading the row is `app_traced` (below).
-  - **H6076 x2** (straightfloorlamp 69, pact (2,1), encrypted): the handshake, the app's status read
-    `ac 03 02 a5 a3`, then aa 06 / aa 07 03 / aa 07 02, all answered: on, brightness 90 and 100, 7 segments
-    each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
-    (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
-    reply.
-- **H7004** (h7004 goodsType 0), a grow light, admitted by default (`app_traced`) as a power-only row at any
-  pact, following the user's decision (2026-10-22: "Ship power-only"); `VM4Light.X0` runs no pact check at
-  goodsType 0. Its screen reads aa 01 and the device info, never aa 04 or aa 05
-  (`ControllerStrategyConfig.k1`), and offers no brightness: `VM4Light.supportBrightness` is false for H7004,
-  so the screen's default header hides its slider (`DelegateHeader.X`). So the row has no brightness, and the
-  library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
-  are not modelled. Not hardware-verified.
-- **`DeviceProfile.light_nonzero`** (keyword-only, default False; the spec's `power_rule.light_nonzero`): a
-  polled light whose screen reads the aa 01 reply as on for any non-zero byte, as the legacy
-  `SwitchController.parseValidBytes` and the H70BX connect read (`AfterConnectSuccessReadDeviceInfo.w`) do. A
-  devices.yaml row opts in with its wire `power.light_nonzero` (the connect read) or
-  `power.light_heartbeat_nonzero` (the aa 01 heartbeat, where the connect read takes 1: H1168's
-  `HeartControllerWithBattery`). As with a plug's `relay_on_mask`, the field is the rule the library's poll
-  follows, the heartbeat's where the row has one. Every other light still reads on only for a byte of 1
-  (`ControllerSwitch.Companion.c`), so no admitted SKU's decoded state changes. `parse.parse_light_power`
-  takes the profile's `wire_profile` for the rule (default: on at 1). The field covers the poll only: on such
-  a row an advertisement's switch byte still reads on only for 1 (`Device.advertised_on`), as the app's device
-  list decodes it for every light (`AbsBaseBleModel.z` over `BleUtil.parseBleBroadOnOff`), so a byte of 2
-  reads off in the advertisement and on in the poll.
-- **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
-  `segment_color_temp`): whether `Device.set_segment_color_temp` may send a colour temperature to a piece
-  selection, as the app's Part-tab Kelvin item sends one (`DelegateColorV2Part.Z0` ->
-  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below), but false on the SKUs
-  whose item widens every pick to whole zones (the field's docstring lists them). The generated table sets
-  it from the row; a profile built by hand keeps 1.x's behaviour. Where it is false, `set_segment_color_temp`
-  raises GoveeBleNotSupported before any I/O, and `set_color_temp` is the device's colour temperature. It
-  doesn't govern `set_zone_color_temp`, which needs SEGMENTS, COLOR_TEMP and a zone with segments, as in 1.6.1.
-  **For integrators:** SEGMENTS plus COLOR_TEMP in `capabilities` no longer means `set_segment_color_temp`
-  works. Gate a per-segment colour-temperature control on `profile.segment_color_temp` as well. A per-zone
-  one needs what `set_zone_color_temp` needs, SEGMENTS, COLOR_TEMP and a zone with segments; don't gate it
-  on the field. The Home Assistant
-  integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 42 released SKUs
-  listed under Changed their colour temperature would raise GoveeBleNotSupported.
-- **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
-  default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
-  standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
-  alive with an aa 01 heartbeat (fixed 2 s). H1162 / H1163 / H1167 match `AdjustActivity` (`Model.t`, cloud
-  gid <= 0), whose aa 01 reply is on at any non-zero byte (`SwitchController.parseValidBytes`, the rows' wire
-  `power.light_nonzero`). H1168 has no standalone screen: its row is the header switch of
-  `AcMusicFeastDetail4H1168` (`VM4MusicFeast.G4` -> `DeviceToggleController`; the screen class is set in
-  base.apk's `assets/base2home_config.properties`). Its aa 01 connect read is on at 1 (`Compose4ReadAllInfo`),
-  but the 2 s aa 01 heartbeat that replaces it is on at any non-zero byte (`VM4MusicFeast.onEventHeart`,
-  `HeartControllerWithBattery.parseValidBytes`), and the library's poll follows the heartbeat (the row's wire
-  `power.light_heartbeat_nonzero`). The Music Feast screen (group control, CLAUDE.md rule 5) is the documented
-  other path for H1162 / H1163 / H1167. The feast frames (`33 60`, `aa 60`), music, the battery and H1168's
-  `33 60 01` feast-effect toggle are not modelled. Not hardware-verified.
-- **H70B1** (h70b1 goodsType 134) and **H70BC** (h70bx goodsType 216), splicing panels on the H70BX screen,
-  admitted by default (`app_traced`) at pacts (1,1) and (2,1): power, brightness, RGB and colour temperature
-  on the h6006 frames, one piece, and the aa 00 keep-alive. Power is read back by the polled aa 01 read, on at
-  any non-zero byte as the screen's decoder reads it (`AfterConnectSuccessReadDeviceInfo.w`; the rows' wire
-  `power.light_nonzero`). That decoder was all the rows waited for; every core frame was traced. The app's
-  live `ee 30` power push is traced too (`power_live: [push_30]`), but the library doesn't read `ee 30` pushes
-  yet. Splicing, the aa 39 direction read and scenes are not modelled. Not hardware-verified.
-- **`DeviceProfile.segment_brightness_groups`** (keyword-only, default `()`): disjoint groups of segment
-  indices. On a profile with groups, `Device.set_segment_brightness` sends the `33 05 15 02` mask over every
-  segment of each group that holds a requested index, and folds the brightness into `state.segments` over that
-  same set. That is what the colour strips of these screens do before the write, with the groups {0-2}, {3-6},
-  {7-9} and {10-13}: `ColorMode14Rect4ReverseSelect.canClickBrightness`, `H605CColorMode.canClickBrightness`
-  and the H6097 `ColorMode.canClickBrightness`, via `DelegateColorV2Part.U` -> `DelegateColorV2.Z0` ->
-  `ColorViewModel.m0`. A devices.yaml row sets it with `segment_brightness_groups` (Spec, below). The new SKUs
-  of pact_h605b 120 / 142 / 243 / 360 and pact_h6099 191 / 273 / 327 (H605C, H6602, H6604 / H8604, H2A40 /
-  H2A41, H6099, H6097, H66A0 / H66A1 / R2A80 / R2A81) get it as they are admitted, and so do three released
-  SKUs (Fixed, below). No other profile has groups, so every other segment-brightness frame is unchanged.
-- **`DeviceProfile.device_info_reads`** (keyword-only, default True; the spec's status-row
-  `device_info_reads`): whether `Device.update` sends the device-info reads, `aa 06` / `aa 07 03` /
-  `aa 07 02`. The generated table sets it False on every status row at `none` (Changed, below): there the
-  library sends none of them, nor the re-read of a version that a firmware-gated fact waits for, and the
-  versions and device id come from each status reply's TLV 0x07 alone, as on the app's screen
-  (`Compose4BaseInfoSingleRead.w`). True keeps 1.x's reads, so a profile built by hand reads as before.
-
+- **28 more SKUs, and 9 that 1.7.0 served behind `allow_modelled` now admitted by default, for 268 admitted by
+  default and 69 behind `allow_modelled` (1.7.0: 235 / 74).** None is hardware-verified, and none has a bundled
+  scene catalog, so none is offered scenes. Each is in an entry below, with its trace.
+  - New, admitted by default (24): the 10 `legacy_02` SKUs (H6105, H6107, H6129, H6185, H7310 / H7312 /
+    H7317, H7318, H6165 / H6166); H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its
+    pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E on the exact-pact pairing write; and
+    H6057 on its light switch.
+  - New, behind `allow_modelled` (4): H61E5 / H61E6 (the h60a6 white slot) and H60A1 / H80A1 (a polled row's
+    aa 05 decode).
+  - Admitted by default, behind `allow_modelled` at 1.7.0 (9): H60A4 / H80A4 and H8015 (the illumination-tab
+    pair), H61A9 (the aa 40 section sum) and H61D2 / H61D3 / H61D4 / H61D5 / H61D6 (the segment split). Their
+    changes are under Changed.
 - **The legacy 0x02 colour scheme, `legacy_02`, and 10 SKUs on it, admitted by default (`app_traced`)**:
   H6105 (h6105), H6107 (h6107), H6129 (h6129), H6185 (h6185), H7310 / H7312 / H7317 (h73101217), H7318
   (h7318) and H6165 / H6166 (h6165), all at goodsType 0 and any pact. Their colour screens run colour
@@ -360,9 +81,9 @@ model, from which the shipped readers are generated).
   level its screen holds, not the old one; the pair's state takes the level it sent. The tab writes every piece,
   so the profile is `whole_device_kelvin` (the segment and zone Kelvin setters raise). Promoted from
   `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
-  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece) and, on the user's sign-off, **H8015** (bulblightv3
-  328: `Config.N[2]` = `Bytes.A`, the h6188 frame), behind `allow_modelled` since 1.6.1, whose bytes change
-  (Changed).
+  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece), behind `allow_modelled` at 1.7.0, and, on the user's
+  sign-off, **H8015** (bulblightv3 328: `Config.N[2]` = `Bytes.A`, the h6188 frame), behind `allow_modelled`
+  since 1.6.1. The three send the pair where 1.7.0 sent the Kelvin frame alone (Changed).
 - **A polled row's aa 05 decode** (`DeviceProfile.mode_decode`): the aa 05 mode report is read with the row's
   wire `mode` (its music layout and empty-value rule), where the resolver refused any but the default on a
   polled row. Empty by default, so every other profile reads its reports as before (the same cached
@@ -373,16 +94,16 @@ model, from which the shipped readers are generated).
   [2700, 6500] valid on every revision, so on that hardware an RGB pick of one of the ten 2200-2600 K tint
   colours goes out as RGB where the app sends a colour-temperature frame. Not hardware-verified.
 - **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized as
-  the app sizes it, and H61A9 is admitted by default (`app_traced`; listed above), no longer behind
-  `allow_modelled`.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
+  the app sizes it, and H61A9 is admitted by default (`app_traced`), no longer behind `allow_modelled` as at
+  1.7.0.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
   keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d`
   -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws (an
   IC field of 0x1000 or more) the app walks nothing, and now neither does the library, nor when the aa 40 read
   goes unanswered (it has no count to size the walk with). New
   `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`). The
-  aa 40 read keeps its place in the poll. The frames are the ones sent before for a section sum of 0 or 13-15 on
-  141 (groups of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static).
-  Rgbiclight 141's promotion on the H61C3 bench reading (the user's decision 1, Spec below) stands; this makes
+  aa 40 read keeps its place in the poll. The frames are 1.7.0's for a section sum of 0 or 13-15 on 141 (groups
+  of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static). Rgbiclight
+  141's promotion on the H61C3 bench reading (the user's decision 1, 1.7.0's Spec) stands; this makes
   its connect walk exact on every unit. Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no non-zero
   sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
 - **H7061 (h7050 98), a two-head flood light, admitted by default (`app_traced`).** Its aa 05 0x15 report is two
@@ -401,9 +122,9 @@ model, from which the shipped readers are generated).
     False). The poll reads aa 04, then aa 34 in place of aa 01, then aa 05, the screen's connect order
     (`Compose4InfoBleIotH6057`), and takes the light-open flag, byte 0 bit 7 (`Controllers.d`,
     `H6057Info4Detail.H`): the screen's on / off, and the light switch's state. With white noise playing and
-    the light closed it reads off, as the screen shows it. New `build.device_detail_query` and
-    `parse.parse_detail_power`; the frame describer (`wire.describe`) reads the aa 34 reply as `wire.parse`
-    does.
+    the light closed it reads off, as the screen shows it. It stamps `Device.power_read_at` as a polled
+    light's aa 01 does. New `build.device_detail_query` and `parse.parse_detail_power`; the frame describer
+    (`wire.describe`) reads the aa 34 reply as `wire.parse` does.
   - **The write:** new `power_write: light_switch` (`DeviceProfile.light_switch_power`, keyword-only, default
     False) and `build.light_switch`. `set_power`, `turn_on` and `turn_off` write the header's light switch,
     `33 30 01` / `33 30 00` (`H6057DelegateHeader.s0` -> `H6057DetailVM.h5`:
@@ -536,9 +257,10 @@ model, from which the shipped readers are generated).
   aa 01 keep-alive. A unit advertising (65535, 255), where the app runs colour version 4 (the `legacy_02`
   frames), raw brightness [6, 254] (`Support4StringLightV2.b`) and the pairing write's goodsType, is refused:
   no row lists that pact. So is a unit whose advert carries no pact, which may be such a unit: each route of a
-  SKU a pairing write names needs an advertised pact (`_resolve.Route.needs_pact`, as on the BK rows' target
-  routes, above). As for those, `supported_skus()` lists H615A-E, but `is_supported_sku(sku)`, `profile_for`,
-  `make_device` and `create_device` refuse one without a pact: pass the advert's. Not hardware-verified.
+  SKU a pairing write names needs an advertised pact (`_resolve.Route.needs_pact`, Spec), as on 1.7.0's BK
+  target routes. As for those, `supported_skus()` lists H615A-E, but `is_supported_sku(sku)`, `profile_for`,
+  `make_device` and `create_device` refuse one without a pact: pass the advert's. With them the pact-gated SKUs
+  are 33, 26 by default and 7 behind `allow_modelled` (1.7.0: 28, 21 / 7). Not hardware-verified.
 - **A later advert's pact re-selects the row** (`devices.profile.reroute`, which `Device` follows on every
   advertisement it reads, and at construction). Where a pact heard after the Device was built routes its SKU to
   another row whose profile differs from the held one only in what a pact picks within a row (the status read,
@@ -550,22 +272,576 @@ model, from which the shipped readers are generated).
   [20, 254], and an advert at (10, 1) / (10, 2) now moves them to goodsType 39's percent brightness, as the
   app's rewrite does (`OldRgbBkUtil.isOldRgbBk`, `Model.itemClickOp` / `ModelBle.itemClickOp`); a later
   (1, x) moves them back. Any other change of row (a pact the app's scan refuses, or another row's
-  capabilities, as H60A6's (1,1) pact route, Fixed) keeps the profile and logs the warning as before. The
+  capabilities, as H60A6's (1,1) pact route, 1.7.0's Fixed) keeps the profile and logs the warning as before. The
   support check already takes the advertised pact (`is_supported_sku(sku, pact=)`, `scanner.supported`,
   `create_device`, `make_device`). Source-modelled, not live-verified: none of the three is on the bench.
-- **Segment brightness follows the colour page** (`DeviceProfile.segment_brightness`, keyword-only, default
-  True; `Device.supports_segment_brightness`). A row with segments offers the `33 05 15 02` write only where
-  its colour scheme has the frame (h60a6) and its colour page the slider: a traced `color_functions` without
-  `segment_brightness` turns it off, and `set_segment_brightness` then raises GoveeBleNotSupported before any
-  I/O; an untraced `color_functions` keeps the 1.x rule (on). Segment colour and the segment Kelvin rules are
+- **Segment brightness follows the colour page** (`DeviceProfile.segment_brightness`, keyword-only, default True;
+  `Device.supports_segment_brightness`). A row with segments offers the `33 05 15 02` write only where its colour
+  scheme has the frame (h60a6) and its colour page the slider: a traced `color_functions` without
+  `segment_brightness` turns it off, and `set_segment_brightness` then raises GoveeBleNotSupported before any I/O;
+  an untraced `color_functions` keeps the 1.x rule (on). Segment colour and the segment Kelvin rules are
   unchanged. It promotes **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (h61d3 202) from `modelled` to `app_traced`,
   admitted by default and now with segments: the screen's colour pick masks the selected pieces
-  (`ColorModeH61d3.canClickColor`; `ColorViewModel.p0` -> `ColorModeControllerConfig.c`, one h60a6 frame over
-  the selected of 14 pieces, a Kelvin tint colour as the partial `Bytes.r`), its Kelvin pick sets every piece (`canClickColorTem`: `color_temp_control: whole_device`, so the
-  segment and zone Kelvin setters raise), and its segment-brightness slider is hidden (`Config.I[202][3]`
-  false, `DelegateColorV2Part.Z0`). Not hardware-verified.
+  (`ColorModeH61d3.canClickColor`; `ColorViewModel.p0` -> `ColorModeControllerConfig.c`, one h60a6 frame over the
+  selected of 14 pieces, a Kelvin tint colour as the partial `Bytes.r`), its Kelvin pick sets every piece
+  (`canClickColorTem`: `color_temp_control: whole_device`, so the segment and zone Kelvin setters raise), and its
+  segment-brightness slider is hidden (`Config.I[202][3]` false, `DelegateColorV2Part.Z0`). Not hardware-verified.
 
 ### Changed
+- **What changes for a SKU 1.7.0 admits.** Of its 309 (235 by default, 74 behind `allow_modelled`), twelve
+  resolve to a changed profile:
+  - H60A4 / H80A4 (h60ax 302) and H8015 (bulblightv3 328), behind `allow_modelled` at 1.7.0, are admitted by
+    default and send the illumination tab's Kelvin + brightness pair, where 1.7.0 sent the Kelvin frame alone
+    (`kelvin_with_brightness` and `whole_device_kelvin`, Added; H8015's bytes below). None of the three gains a
+    refusal: H8015 has no segments or zones, and H60A4 / H80A4 have no zones and already had no segment colour
+    temperature (`segment_color_temp` false);
+  - H61A9 (dreamcolorlightv1 204), behind `allow_modelled` at 1.7.0, is admitted by default, and it and H61C2 /
+    H61C3 / H61C5 (rgbiclight 141) size the colour read-back by the aa 40 section sum
+    (`color_readback_ic_sections`, Added), with 1.7.0's frames for a sum of 0 or 13-15 on 141 and 0 or 17-20 on
+    204;
+  - H61D2-H61D6 (h61d3 202), behind `allow_modelled` at 1.7.0 without segments, are admitted by default with
+    them, with no segment brightness and with whole-device Kelvin (the segment split, Added); their whole-device
+    frames are 1.7.0's.
+
+  Each other one resolves to the same profile, field by field (every new field at its default), at every pact
+  its rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged.
+  Two SKU-specific changes are outside the profile: H6113 at its BK pacts keeps an RGB pick of a Kelvin tint
+  colour as that colour (the `legacy_02` entry, below), and H6118 / H6194 / H6179 follow a later advert's pact
+  to the row it routes them to (`reroute`, Added).
+- **Segment colour temperature on the rows this release adds or promotes** (`DeviceProfile.segment_color_temp`,
+  1.7.0's integrator note under Added): none of them is a list-d goodsType, so each says false: h60ax 235 / 302,
+  h61d3 202 / 239 / 246, dreamcolorlightv1 204 and h7050 98 (H7061's two heads). None of them has zones. A row
+  with a `color_temp_control` (the `whole_device_kelvin` profiles, Added) must say false where it has segments,
+  and the resolver refuses true there, so `segment_color_temp` stays the one fact an integrator gates a
+  per-segment Kelvin on. In all, 124 SKUs have no segment colour temperature (96 by default, 28 behind
+  `allow_modelled`) and 61 keep it (35 / 26), where 1.7.0 had 114 (87 / 27) and 61 (35 / 26): H61D2-H61D6
+  (with segments now) and H7061 join the 124 by default and H60A1 / H80A1 and H61E5 / H61E6 behind
+  `allow_modelled`, and H60A4 / H80A4 and H61A9 move into its default count. Source-traced (Govee Home 7.7.02),
+  not live-verified.
+- **One more status row reads its versions and device id from TLV 0x07 alone** (1.7.0's `device_info_reads`
+  entry): h6092 283 (H7070, Added), whose `VM4LightH7070.T4` compose carries no controller list at any of its
+  pacts (its callback `U4` takes the versions from TLV 0x07). H60A4 / H80A4 (h60ax 302), which sent none behind
+  `allow_modelled` at 1.7.0, now do so admitted by default. That makes 77 SKUs, 60 admitted by default and 17
+  behind `allow_modelled` (1.7.0: 76, 57 / 19). Source-traced (Govee Home 7.7.02), not live-verified.
+- **H6071 / H6075 (h6071 57 / 67) send the app's empty `33 b2` check on every connect while no secret is set**
+  (the user's decision D4, 2026-10-22, an approved connect-byte change; `DeviceProfile.empty_secret_check`,
+  Added). Their screen puts `Controller4Secret.Companion.a` of the account's `secretCode` first in its connect
+  read with no secret test (`VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.initControllerNoEventList:126`,
+  `:184`), and `""` there (`DefInfo:106-110`) gives `33 b2`, 17 zero bytes and the xor
+  (`Encode.decryByBase64:29-40`, `BleUtils.p:1030-1041`). Every session without a secret sends that frame
+  after the handshake, before any other, where the library's account-locked rows sent no unlock without one. A
+  device that refuses it fails the session with GoveeBleAuthError, as the app's connect read fails; with a secret
+  set the bytes are as before.
+  `read_secret()`'s pairing read sends none: the app's pairing screen (`h6071.add.PairAcV1`, an
+  `AbsPairAc4SecretV1`) reads the secret with no check (`AbsPairAc4SecretV1.T1:107-113`), so a session that
+  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first, an
+  operation that overlaps the read included (it waits for the read). Both SKUs are new in this release (Added),
+  so no released SKU's frames change: every other account-locked row (the plugs, hollowlamp 27 / 37, and H6058
+  behind `allow_modelled`) still sends no unlock without a secret.
+  Source-modelled (Govee Home 7.7.02), not live-verified: no H6071 or H6075 is on the bench.
+- The `legacy_02` scheme changes no other SKU: each of the 309 SKUs 1.7.0 admits (235 by default, 74 behind
+  `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at
+  (99, 99) and at none, with and without `allow_modelled`; the 10 `legacy_02` SKUs (Added) are the only new
+  routes. One state rule it adds is not scheme-bound: a profile without `COLOR_TEMP` keeps an RGB pick that is a
+  Kelvin tint colour as `rgb_color`, though its frame is the colour-temperature form, as the colour page keeps
+  the picked colours (`ColorViewModel.u0`: `SubMode4Color.p`) and `syncKelvin` moves only an illumination tab
+  (rgblight `VM4Light.syncKelvin`). Of the SKUs admitted before, only H6113 at its BK pacts (h6113 39, the h6006
+  frames without colour temperature, the rgblight screen) has such a profile: after a pick of a tint colour in
+  [2000, 9000] its state now holds that colour where it held the Kelvin. Its frames are unchanged.
+- The colour-temperature work changes no other SKU: each of the 319 the table admitted before it (1.7.0's 309 and
+  the 10 `legacy_02` SKUs; 245 by default, 74 behind `allow_modelled`) but H60A4 / H80A4 and H8015 (Changed,
+  below) resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at none, with
+  and without `allow_modelled` (`white_type="rgb_white"`, whose frames are as before byte for byte,
+  `whole_device_kelvin` and `kelvin_with_brightness` False, and an empty `mode_decode`). H60A4 / H80A4, behind
+  `allow_modelled` at 1.7.0, take the pair (Added), and so does H8015 (Changed, below).
+- For integrators: `Capability.SEGMENTS` with `Capability.COLOR_TEMP` no longer means the segment and zone Kelvin
+  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4, H8015, H6071 / H6075 and
+  H61D2-H61D6 by default; H61E5 / H61E6 and H60A1 / H80A1 behind `allow_modelled`) `set_segment_color_temp` and
+  `set_zone_color_temp` raise GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Every
+  such profile with segments also has `segment_color_temp=False` (its row says false, and the resolver refuses
+  true beside a `color_temp_control`), so a per-segment control gated on `profile.segment_color_temp` (1.7.0's
+  integrator note under Added) offers none there, and none of them has zones, so a per-zone one (COLOR_TEMP and
+  the profile's zones) offers none either; hass-govee-ble-local's segment lights need that follow-up (they offer
+  colour temperature whenever the device has `COLOR_TEMP`). A profile built by hand with
+  `whole_device_kelvin=True` is refused too, whatever its `segment_color_temp`. Of the SKUs 1.7.0 admits, H8015,
+  H60A4 / H80A4 and H61D2-H61D6 (all behind `allow_modelled` there) have `whole_device_kelvin=True` now, and none
+  of them gains a refusal (the first entry of this section).
+- **H8015 (bulblightv3 328) sends the app's colour-temperature pair and is admitted by default
+  (`app_traced`)**, on the user's sign-off (2026-10-22: "Approve"). Since 1.6.1, and in 1.7.0, it was served
+  behind `allow_modelled` with the Kelvin frame alone. Its screen's only colour-temperature control is the
+  illumination tab, which writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
+  (`View4IlluminationMode.I0`: `Config.N[2]` = `Config.GM` -> `Bytes.A`, then `BrightnessConfig.b` of
+  `illuminationCur()[0]`, the aa 04 brightness). Its row now says `color_temp_control: illumination`, so:
+  - `set_color_temp(4000)` with brightness 42 held sends `33 05 0d ff ff ff 0f a0 ff d5 a1 ...` and then
+    `33 04 2a ...`, each acked in order, where 1.6.1 and 1.7.0 sent the first frame alone;
+  - with the brightness unknown it reads aa 04 first, and with no reply it raises GoveeBleError and writes
+    nothing;
+  - `turn_on(kelvin=)` sends the Kelvin frame before its `33 04` (the given brightness, else the held one);
+  - the profile is `kelvin_with_brightness` and `whole_device_kelvin` (H8015 has no segments, so nothing else
+    is refused).
+
+  Every other frame, read and decode is as before. Source-traced (Govee Home 7.7.02), not live-verified: there
+  is no H8015 on the bench. Every other SKU 1.7.0 admits but H60A4 / H80A4 (above) keeps
+  `kelvin_with_brightness=False` and its one-frame colour-temperature write.
+- The read-back work changes no other SKU: each of the 323 the table admitted before it (1.7.0's 309, the
+  `legacy_02` SKUs and H61E5 / H61E6 / H60A1 / H80A1; 247 by default with H60A4 / H80A4, 76 behind
+  `allow_modelled`) but H61A9 and H61C2 / H61C3 / H61C5 (Added) resolves to the same profile, field by
+  field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`
+  (`color_readback_ic_sections` and `detail_power_read` False). H7061 is a new route.
+- The transport reads a write's command through the frame reader (`wire.parse.write_command`, the write
+  counterpart of `request_command`), for the ack it waits for: `GoveeConnection.send` with `expect_ack`,
+  `send_many` and `send_once` check each frame with it before any I/O, and the ack-verified write takes its
+  command from it. A `33` frame of 2 bytes (the proType and the checksum: no command) now raises
+  `GoveeBleInvalidValue` before any I/O instead of being sent. No frame the library builds changes.
+- The device-list card's row type changes no other SKU: each of the 324 the table admitted before it (those 323
+  and H7061; 249 by default with H61A9, 75 behind `allow_modelled`) resolves to the same profile, field by field
+  (`session="held"`), at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`.
+  `identify.parse_broadcast_onoff` now reads the advert's switch byte through the spec (`power_state`, source
+  `advert`) and gives the same on/off as before for every SKU. H70B2, H6630, H8630 and H6631 are new routes.
+- The status read per pact changes no other SKU: each of the 328 the table admitted before it (those 324 and the
+  four card SKUs; 253 by default, 75 behind `allow_modelled`) resolves to the same profile, field by field
+  (`status_read_by_pact` empty), at every pact its rows list, at (99, 99) and at none, with and without
+  `allow_modelled`, so its request is as before. H7070 is a new route.
+- `kelvin_v9` changes no other SKU: each of the 329 the table admitted before it (those 328 and H7070; 254 by
+  default, 75 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list,
+  at (99, 99) and at none, with and without `allow_modelled`, and every builder's frames on the six schemes before
+  it are as before. `ColorScheme` (and `DeviceProfile.color_scheme`) gains the member, an additive change. H6071
+  and H6075 are new routes.
+- The exact-pact pairing write changes no other SKU: each of the 331 the table admitted before it (those 329 and
+  H6071 / H6075; 256 by default, 75 behind `allow_modelled`) resolves to the same profile, field by field, at
+  every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`; the routes read the
+  pairing items only to refuse H615A-E without a pact (no SKU a pairing item names was supported before). H615A-E
+  join the profile H6159 heads (`DeviceProfile.skus`), whose facts they share; H6159 stays first. The warning a
+  Device logs for a later pact none of its rows accepts no longer says the app takes another row there: it may run
+  the unit on other facts (H615A-E at (65535, 255)).
+- No SKU's resolved profile changes with the re-selection, and a Device whose advertised pact matches its
+  route keeps its profile and frames. Only a SKU with two routes whose profiles differ just in what a pact
+  picks can move: H6118, H6194 and H6179 (Added). `Device.profile` is no longer fixed for the life of a Device
+  on those three; read it after a pact change (the callbacks fire).
+- For integrators: `Capability.SEGMENTS` no longer means `set_segment_brightness` works. Check
+  `device.supports_segment_brightness` before offering brightness on a segment or zone entity:
+  hass-govee-ble-local's segment and zone lights call `set_segment_brightness` for their brightness, and need
+  that follow-up before H61D2-H61D6 are set up. Every SKU admitted before has `segment_brightness=True`, and
+  each of the 336 the table admitted before the split (those 331 and H615A-E; 261 by default, 75 behind
+  `allow_modelled`) but
+  H61D2-H61D6 resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at
+  none, with and without `allow_modelled`. H61D2-H61D6 change: `SEGMENTS`, `whole_device_kelvin`,
+  `segment_brightness=False`, and admitted by default; their whole-device frames are as before.
+
+### Spec
+- **devices.yaml: 20 more goodsType rows take `support`, and 4 rise from `modelled` to `app_traced`.** Of the 305
+  rows, 207 have `support` (1.7.0: 187): 168 `app_traced` (147), 35 `modelled` (36) and the same 4
+  `hardware_verified`; 98 have none (118). The 20, all `app_traced` but h60ax 235 and h61d3 239 / 246
+  (`modelled`): the seven `legacy_02` rows (h6105, h6107, h6129, h6185, h73101217, h7318 and h6165, each
+  goodsType 0), h60ax 235 and h61d3 239 / 246 (the colour-temperature work), h7050 98 (H7061's two heads), the
+  three device-list card rows (h70b2 185, h6630 285 / 286), h6092 283 (H7070's exact-pact status read), h6071
+  57 / 67 (the `kelvin_v9` scheme), stringlightv2 40 / 108 (the exact-pact pairing write) and h6057 104 (the
+  light switch). The 4: h60ax 302 and bulblightv3 328 (the illumination-tab pair), dreamcolorlightv1 204 (the
+  aa 40 section sum) and h61d3 202 (the segment split).
+- **`segment_color_temp`**: five more rows state it, all false (h60ax 235, h61d3 202 / 239 / 246 and h7050 98),
+  so 113 rows with support state it, 32 true and 81 false (1.7.0: 108, 32 / 76). The resolver now also refuses
+  true beside a `color_temp_control`, whose Kelvin covers every piece.
+- **`_resolve.Route.needs_pact`** (was `Route.pact_required`): the one flag that marks a route taken only on an
+  advertised pact, read by `profile._accepts`: a `pact_required` row's routes, a pact-conditioned reassignment's
+  target routes, each route of a SKU a pairing write names (Added) and a pact route (H60A6's at (1,1)).
+- h6092 283 (H7070), whose pacts (1,2) and (2,1) add 0x42 to its status read, is admitted on the exact-pact
+  status read (Added), and the reference self-test checks its read at each pact (`client_row`).
+- **`empty_secret_check`** (clientRow, `const` true, only with `account_lock: true`; devices.schema.json,
+  `tools/gen_devices.py` KEEP): the screen sends its 0xB2 check on every connect, empty when the account holds no
+  secret. Set on h6071 57 / 67, whose docs cite the connect list and say the library sends the empty check;
+  absent on the other `account_lock` rows (hollowlamp 27 / 37, `H605051NewDetailVm:163-169`, and the plugs).
+  Hollowlamp 59 (H6058) stays `modelled` without it: its screen sends the empty check too
+  (`H6058NewDetailVm.T4:128-135`), and its `doc` names that as the row's gap. `govee_ble_frame`
+  `secret_write` documents the empty check (`Controller4Secret.Companion.a("")`, `Encode.decryByBase64`,
+  `BleUtils.p`'s zero fill: the 8 secret bytes zero).
+- **`color_02_write` (govee_ble_frame) is the `legacy_02` scheme's frame**, now citing the writer the library
+  follows (`Config.fu` -> `Bytes.a` / `Bytes.o`, from `ColorViewModel.U` / `p0`), and its `white_flag` takes a
+  new enum, `color_02_flag` (`rgb` = Bytes.a, `white_tint` = Bytes.o / Bytes.y). `spec/govee_reference.py`
+  checks that `govee_commands.build_color_legacy` reads back as both forms.
+- **devices.yaml**: `color_scheme: legacy_02` and `support: app_traced` on h6105, h6107, h6129, h6185,
+  h73101217, h7318 and h6165 "0"; `specs.kelvin_range: [2000, 9000]` on h73101217, h7318 and h6165 (the range of
+  `fu`'s Kelvin-tint test, `KelvinConfig.Config.i[0]` = `P1` = 0; those screens have no colour temperature). The
+  resolver now requires a `kelvin_range` on a row with `rgb` under every scheme with a colour-temperature mode
+  (all but h61a8), not only under `color_temp`: each of their writers (`Config.Yt` / `bu` / `Zt` / `fu`) runs
+  `KelvinConfig.i` on every pick whatever the screen offers, and without the range the library would send a
+  tint pick as plain RGB. Every row already has one, so no profile changes. devices.schema.json lists the six
+  colour schemes as `color_scheme`'s enum.
+- **devices.yaml, the held colour-version-4 rows** (bulblightv3 0 for H6001 below its pact gate, h6159 0, h6160 0,
+  h6104, h6113 0, h6114 0, h6127 0, h613839 0, h6181 0, h6182 0, chassislightv1 11): their docs no longer say that
+  no library scheme builds the `Config.fu` 0x02 frames, which are now `legacy_02`'s. Each names the gaps that
+  still hold it: routing below the gate, the `rgb_flag_tint` (h6104: `rgb_flagnz_tint_02`) read-back that
+  `parse.mode_color` does not fold, the ffe0 / ffe1 GATT service, the soft-version route, chip-gated brightness,
+  or firmware-gated colour. Docs only: no row, value or profile changes. h6101's 0x02 frame stays a gap: it echoes
+  the reported tint (`SubModeColor.getWriteBytes`), which `legacy_02` doesn't.
+- **`white_type`** (devices.schema.json clientRow; `rgb_black`, `rgb_white`, `rgb_self_tem_color`, absent =
+  `rgb_white`): the white type the colour page hands `Bytes.r`, not `Config.P` read raw (the rgbiclight colour
+  page passes 1, so goodsType 176, `Config.P` 0, stays `rgb_white`; RGB_SELF builds as `rgb_white`). The
+  govee_ble_frame `op15_color` `color` field documents the slot per white type. h61d3 239 / 246 state
+  `rgb_self_tem_color`; h705a 180 states `rgb_black` and the `kelvin_tint` form, and stays without support (its
+  aa a1 0b piece count and its Kelvin read-back are still gaps). The reference self-test reads a `rgb_black` and
+  a partial `rgb_self_tem_color` frame.
+- **`color_temp_control`** (devices.schema.json clientRow; `illumination` or `whole_device`, absent = the
+  colour page's one-frame write over the selected pieces). `whole_device` needs the color_temp capability; h61d3
+  239 / 246 state it (`ColorMode.canClickColorTem` returns every piece for `H61D3Support.i0`). For
+  `illumination` the resolver needs the color_temp and brightness capabilities, percent brightness with no pact
+  branch, and the h60a6, h6188 or kelvin_v9 scheme (the three whose colour-temperature frame is a `Config.N`
+  builder: `Bytes.C`, `Bytes.A`, `Bytes.D`), and then lets the colour page's `color_temperature` flag be
+  off. h60ax 302 (with
+  `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) states it and is `app_traced`; h60ax 235
+  states it too (`modelled`), and so does bulblightv3 328 (H8015), now `app_traced` on the user's sign-off
+  (Changed).
+- **`color_functions` and segment brightness** (devices.schema.json descriptions): `segment_brightness` needs
+  `segments` on a scheme with the `15 02` frame, and a row with segments offers segment brightness only where
+  it is listed or `color_functions` is absent. h61d3 202 gets `segments`, `color_temp_control: whole_device`
+  and `support: app_traced` (was `modelled`, segments withheld).
+- **A pairing item's `pact`** (devices.schema.json `assignedGoodsType`): required on a `bind` item, and documented
+  as the one advertised pact the write is made at; the generated table keeps it (`tools/gen_devices.py`), which
+  prints the pairing routes for review. stringlightv2 40 / 108 get `support: app_traced` and full rows (`doc`,
+  `doc-ref`) at their (2,1) facts, and the reference self-test checks H615E's route at (2,1) and none at
+  (65535, 255).
+- **`kelvin_v9`** is a `color_scheme` (devices.schema.json's enum and its description), and the spec's
+  `op15_kelvin_v9` now cites its selection path (`Config.N[9]` = `JM`, `Config.x[57]` / `[67]`, the colour
+  page's `Config.J[9]` = `hu`). h6071's `client_profile` names it, and rows 57 / 67 get `support: app_traced` and
+  `color_temp_control: illumination`, citing the bundled mode list `[10, 13]` and `ShareVM.C3` / `Y3`.
+- h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No
+  `.ksy` change: govee_state already reads an aa 05 reply with the profile's `mode` decode, and its empty-value
+  rule only for a status TLV.
+- **The aa 40 section sum.** `govee_state` `ic_count` gains `segment_2_signed` and `section_sum` (bytes 2 and 5
+  as Java bytes, absent where the sectioned IC-pair reader `ControllerIcNum.d` throws, `app_pair_fails`), and
+  devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it.
+- **Command 0x34 is `cmd_34` (was `swap_light`), overloaded by the new `form_34`:** H6047's `33 34` bar swap (an
+  empty write) and H6057's `aa 34` device detail (`form_34: device_detail`). `govee_profile` gains `f_34`, and
+  `govee_state` the `cmd_34_state` / `device_detail` types (`[switch flags][battery][music flags][music code]
+  [volume][brightness]`, with `light_open`, `white_noise_playing` and `main_switch_on`). Only the generated enum
+  name changes for existing readers (`Command.swap_light` -> `Command.cmd_34`; nothing in the library used it).
+  The h6092 rows' `status_read` follows the rename. devices.schema.json: `power_read` gains `aa34_detail`, the
+  wire forms `f_34`; the h6057 wire gains `f_34: device_detail`.
+- **The H6057 light switch is its own `form_30` member, `light_switch`** (govee_common; `33 30 <1 / 0>`,
+  `BleProtocol.command_light_switch`, `H6057DetailVM.h5`), with the write type `light_switch_write`
+  (govee_ble_frame `cmd_30_write`, `state` a `light_power`), where `light_direction` had listed it with the
+  H6038 direction and the H71xx chart report. `device_detail.light_open` cites `Controllers.d` and names that
+  switch as its write; `cmd_30_state` notes that `light_switch` has no 0x30 read. The h6057 wire's `f_30` is
+  `light_switch` (was `light_direction`), and devices.schema.json's `f_30` enum gains it.
+  `spec/govee_commands.py`'s `build_h6057_light_switch` is the reference the library's `build.light_switch` is
+  checked against.
+- **`power_write`, a clientRow fact** (devices.schema.json; `tools/gen_devices.py` KEEP): the whole-device
+  power write where it isn't the `33 01` main switch. `light_switch` is the only value: the resolver needs
+  `power_read: aa34_detail` with it, and the other way round (the light flag is that switch's state), wire
+  `f_30: light_switch`, and no zones. h6057 104 states it and gets `support: app_traced`; its doc records both
+  header switches, the user's choice and what `turn_off` leaves playing. `power_read: aa34_detail` now reads
+  `device_detail.light_open`, not `main_switch_on` (the schema description says so).
+- **The device-list card's session, as spec vocabulary.**
+  - `clientRow.session`: `held` (absent; the control screen's) or `per_command` (the card's:
+    `CardCommManagerProxy.comm2Device` -> `u` -> `triggerBleCmd$2`).
+  - `power_read: advert`: no GATT read, the advert's switch byte as the card reads it, and
+    `heartbeat: none`: no keep-alive on a path that holds no link (the card's null heart message). A
+    `heartbeat_timing` beside `none` is refused by the schema.
+  - `timing.per_command`: the 1100 ms spacing, the 29.5 s command bound, the client, the send and the close,
+    with the library's deviations (it reads the reply for a refusal) and the citations.
+  - The advert's on/off is a `govee_state` `power_state` source, `advert`: the manufacturer data's
+    `device_state` read as the power byte, on at 1 for a light (`AbsBaseBleModel.z`) and by the
+    `govee_profile` `power_rule.advert_on_mask` for a plug (h5080 `Model.z` / `Model4Plug2.z`).
+    `identify.parse_broadcast_onoff` reads both through it (the same decodes as before, now from the spec).
+  - The resolver serves `per_command` only on a row that reads nothing, writes nothing on connect, holds no
+    link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
+    row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
+    later join a `per_command` row (design review R3).
+- **h70b2 185 and h6630 285 / 286 get `support: app_traced`** on the card's path (`session: per_command`,
+  `power_read: advert`, `heartbeat: none`, `brightness_range: [1, 100]`), with the card trace in `doc` and
+  `doc-ref` (card registration, model and BLE object, the frame builders, the slider gate, the session, the
+  advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
+  285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
+  self-test checks their routes and session.
+
+## [1.7.0] — 2026-10-23
+
+### Added
+- **`bound_advertisement(advertisement_data, sku, *, fallback_name=None)`, in `__all__`.** It reads an
+  advertisement's pact and encrypt flag from its Govee manufacturer data whatever the local name, for a caller
+  that has no `Device` yet. It returns the public `GoveeAdvertisement` (`.pact`, `.encrypted`,
+  `.encryption_known`), or None when the name isn't a Govee name and there's no Govee pact block.
+  - **What it is:** the read `create_device`, `make_device` and the `Device` make of their advertisement since
+    1.6.1, until now package-internal as `identify._bound_advertisement`. Its pact is the pact `create_device`
+    routes the profile by. After a `GoveeBleNotSupported` it is the pact that was refused, even for a renamed or
+    nameless Home Assistant record, where `identify()`'s name gate returns None.
+  - **Labels:** `.sku` is always the caller's `sku`, upper-cased, whatever SKU a Govee name carries; `.name` is
+    the advertised name, else `fallback_name`, else `""`. Neither changes the pact or the flag. Until now a
+    Govee name's own SKU labelled the internal read; nothing read it.
+  - **Merged records:** with more than one Govee pact entry, the first in the dict's order gives the pact and
+    the flag, as `create_device` and the `Device` constructor take them.
+  - **App basis, for the light goodsTypes:** the control screen matches a bound device by its stored MAC, not
+    its name (`AbsViewMode4OpWithOtaCheck.s2:766-774`). It parses the broadcast with the stored goodsType
+    (`AbsViewMode4OpWithOtaCheck.j1:570-591` -> `GoodsType.parseBleBroadcastPactInfo:1564-1578` ->
+    `BleUtil.parseBleBroadcastPact:779-803`) and keeps the encrypt flag (`AbsViewMode4OpWithOtaCheck.w2:171-178`).
+    The caller's `sku` stands for that stored device.
+  - **What stays as it is:** `identify.identify` and `identify.parse_manufacturer_data`, the raw parser under
+    this read, stay out of `__all__`; the bare `(encrypted, broadcast_version, pact_type, pact_code)` tuple
+    can't grow a field without a MAJOR. Released Home Assistant integrations import both, so both keep their
+    signatures and results through 1.x; a new way of reading a merged record goes in a new function.
+    Discovery keeps the name gate as before.
+- **`Device.advertised_on(advertisement_data) -> bool | None`: an advertisement's on/off, decoded as this device
+  decodes it.** A light is on for a switch byte of 1, a plug for any bit of its profile's `advert_on_mask`. The
+  result is None when the advertisement carries no switch byte (no Govee manufacturer data, a header below 2, too
+  short). It is passive: it leaves the state as it is and ignores the window after a command or read in which
+  `ingest_advertisement` ignores the advertised on/off. `ingest_advertisement` now decodes through it.
+  - **Why a Device method:** this mirrors the app's split. `BleUtil.parseBleBroadOnOff` reads the raw byte the
+    same way for every device (the overload at `:719-744` for lights, the one at `:700-717` for plugs), and each
+    device model decodes it in its own `z(scanRecord)`: `AbsBaseBleModel.z:393-397` for lights, h5080
+    `Model.z:254-265` and `Model4Plug2.z:269-290` for plugs. So a caller no longer passes the mask itself. The
+    Home Assistant integration can use it in place of `identify.parse_broadcast_onoff(..., on_mask=...)`, which
+    is not in `__all__`.
+  - **What stays:** `identify.parse_broadcast_onoff` and `DeviceProfile.advert_on_mask` are unchanged and stay
+    supported through 1.x, because released integrations import them.
+  - **Merged records:** the on/off comes from the Govee entry whose value last changed between two advertisements
+    the Device was given, and from that entry alone. That is the entry the latest broadcast carried. When it has no
+    switch byte, the advertisement gives no on/off. A key new in the record doesn't count as a change. Until one
+    has changed, or when the record lacks that entry, the first Govee entry with a switch byte is read.
+    `advertised_on` gives what `ingest_advertisement` would read from the same advertisement now, and stays
+    passive. Only an ingest moves on the advertisement the next one is compared with. See Fixed, below.
+- **`Device.power_read_at -> float | None`: when a read last returned the device's whole on/off.** The value is in
+  `time.monotonic()` seconds, and only while `state.is_on` still holds what that read gave; otherwise None.
+  - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01`, a bar-switch device's `aa 36` (in
+    a poll or before a bar write) and a plug's `aa 01` relay read. A poll that read nothing, a read discarded
+    as stale, an advertisement and an acked write stamp nothing.
+  - **What drops it:** any change to `is_on` that no read made, even one that later changes back. Also a power
+    write or scene activation that raises (it may have reached the device), including a `set_scene_by_name`
+    whose power-on lead or upload raises. Also a write that wakes a zoned device not known to be on, an acked
+    zone-on while `is_on` is not True (an H60A6 `33 30` zone-on also sets the main switch, FUN_9b0278dc
+    @0x9b02795e), and each case where `is_on` may say on for a device that is off. Those are the
+    `DeviceState.zone_power_confirmed` events. A read issued before a drop doesn't stamp after it.
+  - **Why it's needed:** `DeviceState.optimistic` clears at the first answered read and is never set again, so
+    a consumer could not tell a later poll that read the on/off from one that read nothing.
+  - **Why on the Device:** it is not a `DeviceState` field, so `dataclasses.asdict(state)` and `snapshot()`
+    don't carry it. A consumer that compares `asdict(state)` between polls (the Home Assistant integration
+    does) sees no change from a re-read.
+- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed but three row
+  facts, below: segment colour temperature, the segment-brightness groups and a status row's device-info
+  reads): 97 admitted by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). The entries
+  below admit 40 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 / H1168,
+  H70B1 and H70BC; and 17 through the status-read command ids and the BK pact gate) and 7 more behind
+  `allow_modelled` (H7072, H6119 and the five Glide panels), for 235 admitted by default and 74 behind
+  `allow_modelled` in all. None is hardware-verified (the only bench check, below, was read-only), and none
+  has a bundled scene catalog, so none is offered scenes. Each is listed with its family and goodsType; †
+  marks a SKU no row lists that the catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its
+  goodsType alone (16 of them).
+
+  Admitted by default:
+  - stringlightv2: **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196**, **H613G**† (2),
+    **H616B** (68), **H6178** (78), **H6192** (143);
+  - h6114: **H6114** (39); h613839: **H6138 / H6139** (39), each on an advertised pact only (below);
+    carlightv1: **H6118 / H6194** (6); tvlightv1: **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24), on
+    an advertised pact only (below);
+  - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
+    H70A3** (193);
+  - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
+    **H618G**, **R618D**† (352);
+  - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
+    **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), on an advertised pact only
+    (below), **H16C0** (377);
+  - h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162);
+  - h6840: **H6840**, **H8840**† (278), **H6841**, **H8841**† (325), **H6842**, **R6842**† (381), **H6843**
+    (382);
+  - h6609: **H70C1 / H70C2 / H70CB** (181), **H6860 / R6860 / H6861 / R6861** (362), **H6350** (374),
+    **H6850** (378), **H6351** (392);
+  - pact_h605b: **H605C** (120), **H6602** (142), **H6604 / H8604** (243), **H2A40**, **H2A41**† (360);
+    pact_h6099: **H6099** (191), **H6097** (273), **H66A0**, **H66A1 / R2A80 / R2A81**† (327);
+  - h7057: **H7057**, **H8057**† (274), **H7058** (275), **H7093** (289), **H7094** (290), **H8066** (305),
+    **H7087** (315), **H3501** (339), **H3500** (345), **H3200** (353), **H8067** (393);
+  - h7020: **H7025**, **H8025**† (296); h7045: **H7045 / H7046** (338); h7075: **H7075** (205); h7078:
+    **H7078** (245); h7086: **H7086** (293); h70b6: **H70B6** (329), on an advertised pact only (below);
+    h6800: **H6800** (272); h3751: **H3751** (354);
+  - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
+    pact test (`h7017 Model.t`).
+
+  Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
+  every unit; each row's `doc` names the difference):
+  - h60ax: **H60A4 / H80A4** (302), **H1270** (346), **H1232** (356), **H1252** (373);
+  - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
+  - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1:
+    **H6148** (16); hollowlamp: **H6058** (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
+  - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
+  - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256),
+    each on an advertised pact only (below);
+  - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
+    H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
+  - h7057: **H3510**, **H3511**† (349);
+  - h604a: **H604B** (109), **H604D** (133), traced on Govee Home 7.5.12 only: 7.7.02 runs their screen from
+    the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so the shipped
+    path is unseen (the rows' `doc`; their doc-refs under `govee-apk-decompiled/sources/` are 7.5.12 paths).
+- **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
+  (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
+  (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
+  (below). Not hardware-verified (none is on the bench).
+- **H70D1 / H80D1**† (h70dx 267), **H70D2** (268) and **H70D3** (269), admitted by default (`app_traced`).
+  Their screen's connect read is the bare 0xAC status read `ac 03 00`, which requests no TLV type
+  (`VM4H70DX.e5`), and it parses each TLV the reply carries, the 0xA5 colour groups included (`VM4H70DX.g5`).
+  Which TLVs the firmware returns is not in the app; not hardware-verified.
+- **H14C0 / H14A1 / R14A1 / H14C2 / R14C2 / H14C1 / R14C0 / R14C1** (bulblightv3 342), admitted by default
+  (`app_traced`). After its connect reads the screen sends `33 25 01` (light_effect_stop) only for H14A1 /
+  R14A1 / H14C2 / R14C2 (bulblight `Support.c`, `VM4Light.i5`), so those four SKUs carry it as a `by_model`
+  connect write and the other four send none. Not hardware-verified (none is on the bench).
+- **Six more SKUs whose status read names TLV types the spec now has ids for** (Spec, below): by default
+  **H7071** (h6092 334), **H7073** (333) and **H3860** (401), power and brightness; **H3351** (h7072 371) and
+  **H70B8** (h70b6 341), power, brightness, RGB and colour temperature; and **H7072** (h7072 294) behind
+  `allow_modelled`. Each sends the app's request: `ac 03 02 41 0c`, `ac 03 03 41 0c 42`, `ac 03 03 41 0c 45`,
+  `ac 03 03 41 a5 4b` and `ac 03 04 41 39 7d 7e` (`VM4LightH7070.T4`, `VM4LightH3860.T4`, `H7072VM4Light`,
+  `VM4H70B6.i5`). H7072 stays `modelled`: the app places each TLV 0xA5 group at (group - 1) x that TLV's own
+  record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its firmware's split is untraced. None
+  is hardware-verified.
+- **The BK-firmware rows, on an advertised pact only.** The app rewrites these SKUs to a BK goodsType only for
+  a record whose pact meets the gate, and keeps a record without a pact (an int 0) at its source goodsType
+  (`SkuToGoodsTypeUtil.f` over `OldRgbBkUtil.a` / `.b`; `OldRgbicBkUtil.isRgbicBk4Ble`;
+  `OldCarBkUtil.isBkCar`), so the library takes such a target row only on an advertised pact at or above the
+  gate (`profile_for`, `make_device`, `create_device` and `is_supported_sku`, whatever the goodsType). Each of
+  these rows was held for exactly that; nothing else on them changed:
+  - by default: h6159 **H6159 / H6110 / H6109 / H614B / H614E**, h6160 **H6160** and h6182 **H6182** (40, pact
+    (2,1)); h6113 **H6113** and h6181 **H6181** (39, (10,1) / (10,2)); barelightv1 **H6145 / H6146 / H6147**
+    (17, (10,1) to (10,3));
+  - behind `allow_modelled`: h6119 **H6119** (44, (10,1) / (10,2));
+  - the BK route of three SKUs above, carlightv1 **H6118 / H6194** and tvlightv1 **H6179** (39,
+    (10,1) / (10,2), percent brightness): without a pact, and at their own pacts, they keep their
+    goodsType-6 / -12 rows.
+
+  These twelve, H6119 and H6114 / H6138 / H6139 have no admitted source row, so `supported_skus()` lists them,
+  but `is_supported_sku(sku)`, `profile_for`, `make_device` and `create_device` refuse one without a pact:
+  pass the advert's (`is_supported_sku(sku, pact=adv.pact)`; `scanner.supported()`, `discover()` and
+  `create_device` with the advertisement already do). Not hardware-verified: no gated SKU is on the bench.
+- **H6076 / H8076 / R16D0**† (straightfloorlamp 69) **on an advertised pact only**, as the BK rows above. The
+  app accepts (1,1) and (2,1) for goodsType 69, and at (1,1) the screen runs the polled connect read
+  (`VM4Light.d0` -> `VM4Light$connectBleSuc$1`), not the 0xAC status read the row serves, which it runs at
+  pactType 2 only (`Support.isH6076Iteration`). A unit that advertises no pact may be a (1,1) one, so the row
+  is `pact_required` (Spec, below): `profile_for`, `is_supported_sku`, `make_device` and `create_device`
+  refuse these three without a pact, rather than serve a pact-less record the (2,1) status profile with the
+  plaintext cipher fallback. `create_device` with the advertisement still builds them: an encrypted (2,1)
+  advert, as both bench units send, gives the status profile and AES (checked offline, not on the bench). They
+  join the pact-gated SKUs above (`supported_skus()` lists them; a caller passes the advert's pact), so the
+  integration's setup fix for those covers them too.
+- **H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811**† (h70b3 229 / 230 / 231 / 255 / 256, behind
+  `allow_modelled`) **on an advertised pact only**, as straightfloorlamp 69. The app registers (1,1) for each
+  of these goodsTypes too, and there the screen runs the polled connect read, not the 0xAC status read the
+  rows serve: `Support.N` is false only at (1,1), so `VM4H70B345.d0` runs `r6`
+  (`AfterConnectSuccessReadDeviceInfo`, which reads aa 06 and aa 07 among others). The rows leave (1,1) out,
+  and now they are `pact_required` too: a pact-less record, which may be a (1,1) unit, is refused rather than
+  given the status profile.
+- **H70B6** (h70b6 329) **on an advertised pact only**, as straightfloorlamp 69. The app accepts (1,1), (1,2)
+  and (1,3) for goodsType 329 (`Config4H70B6Manager.b:112-127`), and above (1,1) its status read adds TLVs
+  0x7D and 0x7E, `ac 03 04 41 39 7d 7e` (`Support.d` / `e:57-75`, `VM4H70B6.i5:478-488`). The row serves (1,1)
+  only, so it is now `pact_required` too: a pact-less record, which may be a (1,2) / (1,3) unit, is refused
+  rather than polled with the (1,1) read `ac 03 02 41 39`. The app never runs the screen without a pact: it
+  starts from the account's stored pact (`h70b6 Model.t:104-105`), takes each matched broadcast's pact block
+  before it connects, and doesn't connect for a broadcast without one (`AbsViewMode4Op.onScanEvent:1960-1983`
+  -> handler 999). Not hardware-verified (no H70B6 is on the bench).
+- **H6198 / H6199** (pact_tvlightv2 24) **on an advertised pact only**, as H70B6 (the user's decision). The
+  app accepts (1,1), (2,1), (3,1) and (4,1) for goodsType 24 (`Support.addSupportPact:57-74`). At (1,1) its
+  colour write is `33 05 0b R G B [K] [mask]` (`Config.pu:15671-15674` gives 6 at pactType 1, so
+  `Config.J[6]` = `Config.eu:13930-13934` -> `Bytes.c:239-267`), which no colour scheme serves, so the row
+  lists (2,1)-(4,1) only. It is now `pact_required` too: a pact-less record, which may be a (1,1) unit, is
+  refused rather than sent the `33 05 15 01` colour frames the app never sends one. The app never runs the
+  screen without a pact: `VM4Light.X0:770-772` is true, so a broadcast without a pact block goes
+  `AbsViewMode4Op.onScanEvent:1960-1983` -> `AbsViewMode4OpWithOtaCheck.j1:570-591` (null) -> handler 999, the
+  old-app dialog (`AbsViewMode4OpWithOtaCheck.F1:271-283`), and the screen never connects to it. With them the
+  pact-gated SKUs are 28, 21 by default and 7 behind `allow_modelled` (H6119 and the six h70b3 SKUs). H6198 /
+  H6199 are new since 1.6.1, so no released unit changes. Not hardware-verified (neither is on the bench).
+- **Brightness on a SKU whose range the pact picks** (`DeviceProfile.brightness_by_pact`: stringlightv2 H6121
+  / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G†). These route without a pact, but a `Device` set up
+  from a pact-less record (`create_device` with no advertisement, or one without a Govee pact block) refuses
+  every brightness command until `Device.ingest_advertisement` hears the pact, `turn_on(brightness=...)`
+  included, which then sends nothing, not even the power-on. Power, colour and colour temperature work
+  meanwhile. Documented in `brightness_by_pact` and `create_device`; no behaviour changed.
+- **The other Glide panels, behind `allow_modelled`**, on the fixed `h6061` scheme (Fixed, below): **H6066**
+  (96, 25 panels), **H6067** (97, 23), **H6065** (121, 20), **H606A** (163, 21) and **H6063** (228, 20). They
+  run H6061's screen and builders (cubelight `SubLib` keys, `Model.t` -> `CubeAcLightDetail` / `CubeVM4Light`;
+  `Config.x` = 5 and `Config.I[gt][4]` for all five), so they get its power, brightness, whole-device RGB and
+  colour temperature, and the `aa a5` read-back. They are `modelled` because the app sizes every mask and the
+  read-back from the user's stored panel layout, which the device never reports: the row's count is a full
+  layout's (`Support.getBulbStringMaxNum`; for H6065 `ColorPieceConfig.f(121)` = 20, where the read-back
+  default is 23). H6061 itself stays admitted by default, the user's explicit exception for the same inferred
+  count. Not hardware-verified.
+- **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
+  `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
+  - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
+    aa a5 01-05, aa 06, aa 07 03 and aa 07 02, all answered: on, brightness 100, 15 segments, soft 3.03.23,
+    hard 3.01.10. The aa 40 reply's section sum is 0, so the app reads the 15 pieces (5 groups of 3) the row
+    has. On that reading the row is `app_traced` (below).
+  - **H6076 x2** (straightfloorlamp 69, pact (2,1), encrypted): the handshake, the app's status read
+    `ac 03 02 a5 a3`, then aa 06 / aa 07 03 / aa 07 02, all answered: on, brightness 90 and 100, 7 segments
+    each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
+    (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
+    reply.
+- **H7004** (h7004 goodsType 0), a grow light, admitted by default (`app_traced`) as a power-only row at any
+  pact, following the user's decision (2026-10-22: "Ship power-only"); `VM4Light.X0` runs no pact check at
+  goodsType 0. Its screen reads aa 01 and the device info, never aa 04 or aa 05
+  (`ControllerStrategyConfig.k1`), and offers no brightness: `VM4Light.supportBrightness` is false for H7004,
+  so the screen's default header hides its slider (`DelegateHeader.X`). So the row has no brightness, and the
+  library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
+  are not modelled. Not hardware-verified.
+- **`DeviceProfile.light_nonzero`** (keyword-only, default False; the spec's `power_rule.light_nonzero`): a
+  polled light whose screen reads the aa 01 reply as on for any non-zero byte, as the legacy
+  `SwitchController.parseValidBytes` and the H70BX connect read (`AfterConnectSuccessReadDeviceInfo.w`) do. A
+  devices.yaml row opts in with its wire `power.light_nonzero` (the connect read) or
+  `power.light_heartbeat_nonzero` (the aa 01 heartbeat, where the connect read takes 1: H1168's
+  `HeartControllerWithBattery`). As with a plug's `relay_on_mask`, the field is the rule the library's poll
+  follows, the heartbeat's where the row has one. Every other light still reads on only for a byte of 1
+  (`ControllerSwitch.Companion.c`), so no admitted SKU's decoded state changes. `parse.parse_light_power`
+  takes the profile's `wire_profile` for the rule (default: on at 1). The field covers the poll only: on such
+  a row an advertisement's switch byte still reads on only for 1 (`Device.advertised_on`), as the app's device
+  list decodes it for every light (`AbsBaseBleModel.z` over `BleUtil.parseBleBroadOnOff`), so a byte of 2
+  reads off in the advertisement and on in the poll.
+- **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
+  `segment_color_temp`): whether `Device.set_segment_color_temp` may send a colour temperature to a piece
+  selection, as the app's Part-tab Kelvin item sends one (`DelegateColorV2Part.Z0` ->
+  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below), but false on the SKUs
+  whose item widens every pick to whole zones (the field's docstring lists them). The generated table sets
+  it from the row; a profile built by hand keeps 1.x's behaviour. Where it is false, `set_segment_color_temp`
+  raises GoveeBleNotSupported before any I/O, and `set_color_temp` is the device's colour temperature. It
+  doesn't govern `set_zone_color_temp`, which needs SEGMENTS, COLOR_TEMP and a zone with segments, as in 1.6.1.
+  **For integrators:** SEGMENTS plus COLOR_TEMP in `capabilities` no longer means `set_segment_color_temp`
+  works. Gate a per-segment colour-temperature control on `profile.segment_color_temp` as well. A per-zone
+  one needs what `set_zone_color_temp` needs, SEGMENTS, COLOR_TEMP and a zone with segments; don't gate it
+  on the field. The Home Assistant
+  integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 42 released SKUs
+  listed under Changed their colour temperature would raise GoveeBleNotSupported.
+- **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
+  default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
+  standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
+  alive with an aa 01 heartbeat (fixed 2 s). H1162 / H1163 / H1167 match `AdjustActivity` (`Model.t`, cloud
+  gid <= 0), whose aa 01 reply is on at any non-zero byte (`SwitchController.parseValidBytes`, the rows' wire
+  `power.light_nonzero`). H1168 has no standalone screen: its row is the header switch of
+  `AcMusicFeastDetail4H1168` (`VM4MusicFeast.G4` -> `DeviceToggleController`; the screen class is set in
+  base.apk's `assets/base2home_config.properties`). Its aa 01 connect read is on at 1 (`Compose4ReadAllInfo`),
+  but the 2 s aa 01 heartbeat that replaces it is on at any non-zero byte (`VM4MusicFeast.onEventHeart`,
+  `HeartControllerWithBattery.parseValidBytes`), and the library's poll follows the heartbeat (the row's wire
+  `power.light_heartbeat_nonzero`). The Music Feast screen (group control, CLAUDE.md rule 5) is the documented
+  other path for H1162 / H1163 / H1167. The feast frames (`33 60`, `aa 60`), music, the battery and H1168's
+  `33 60 01` feast-effect toggle are not modelled. Not hardware-verified.
+- **H70B1** (h70b1 goodsType 134) and **H70BC** (h70bx goodsType 216), splicing panels on the H70BX screen,
+  admitted by default (`app_traced`) at pacts (1,1) and (2,1): power, brightness, RGB and colour temperature
+  on the h6006 frames, one piece, and the aa 00 keep-alive. Power is read back by the polled aa 01 read, on at
+  any non-zero byte as the screen's decoder reads it (`AfterConnectSuccessReadDeviceInfo.w`; the rows' wire
+  `power.light_nonzero`). That decoder was all the rows waited for; every core frame was traced. The app's
+  live `ee 30` power push is traced too (`power_live: [push_30]`), but the library doesn't read `ee 30` pushes
+  yet. Splicing, the aa 39 direction read and scenes are not modelled. Not hardware-verified.
+- **`DeviceProfile.segment_brightness_groups`** (keyword-only, default `()`): disjoint groups of segment
+  indices. On a profile with groups, `Device.set_segment_brightness` sends the `33 05 15 02` mask over every
+  segment of each group that holds a requested index, and folds the brightness into `state.segments` over that
+  same set. That is what the colour strips of these screens do before the write, with the groups {0-2}, {3-6},
+  {7-9} and {10-13}: `ColorMode14Rect4ReverseSelect.canClickBrightness`, `H605CColorMode.canClickBrightness`
+  and the H6097 `ColorMode.canClickBrightness`, via `DelegateColorV2Part.U` -> `DelegateColorV2.Z0` ->
+  `ColorViewModel.m0`. A devices.yaml row sets it with `segment_brightness_groups` (Spec, below). The new SKUs
+  of pact_h605b 120 / 142 / 243 / 360 and pact_h6099 191 / 273 / 327 (H605C, H6602, H6604 / H8604, H2A40 /
+  H2A41, H6099, H6097, H66A0 / H66A1 / R2A80 / R2A81) get it as they are admitted, and so do three released
+  SKUs (Fixed, below). No other profile has groups, so every other segment-brightness frame is unchanged.
+- **`DeviceProfile.device_info_reads`** (keyword-only, default True; the spec's status-row
+  `device_info_reads`): whether `Device.update` sends the device-info reads, `aa 06` / `aa 07 03` /
+  `aa 07 02`. The generated table sets it False on every status row at `none` (Changed, below): there the
+  library sends none of them, nor the re-read of a version that a firmware-gated fact waits for, and the
+  versions and device id come from each status reply's TLV 0x07 alone, as on the app's screen
+  (`Compose4BaseInfoSingleRead.w`). True keeps 1.x's reads, so a profile built by hand reads as before.
+
+### Changed
+- Tests: the cloud and field-test masking tests use example addresses from the documentation range
+  (RFC 7042, `00:00:5E:00:53:xx`) or locally administered ones. No library change.
+- Tests and docs: made-up example device identifiers and secret.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
@@ -642,15 +918,11 @@ model, from which the shipped readers are generated).
   leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. H1AA5 and H7066, second in theirs at 1.6.1, now
   come first in their own, so a `Device` built from H1AA5's or H7066's profile without `sku=` names itself
   after them, not H1AB2 or H7055 (`create_device` and `make_device` always pass the SKU). H1AB2's and H7055's
-  profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 82 have no
-  segment colour temperature (56 by default, 26 behind `allow_modelled`) and 40 keep it (17 by default, 23
-  behind `allow_modelled`); in all, 124 SKUs have none (96 / 28) and 61 keep it (35 / 26). The rows the
-  1.8.0 work adds or promotes are none of them list-d goodsTypes, so each says false: h60ax 235 / 302, h61d3
-  202 / 239 / 246, dreamcolorlightv1 204 and h7050 98 (H7061's two heads). None of them has zones. A row with
-  a `color_temp_control` (the `whole_device_kelvin` profiles, Added) must say false where it has segments, and
-  the resolver refuses true there, so `segment_color_temp` is the one fact an integrator gates a per-segment
-  Kelvin on. Source-traced (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its
-  Kelvin over all 15 segments only, so no hardware observation supports a masked Kelvin on these rows.
+  profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 72 have no
+  segment colour temperature (47 by default, 25 behind `allow_modelled`) and 40 keep it (17 by default, 23
+  behind `allow_modelled`); in all, 114 SKUs have none (87 / 27) and 61 keep it (35 / 26). Source-traced
+  (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15
+  segments only, so no hardware observation supports a masked Kelvin on these rows.
 - **H60A6 and H6047: no `set_segment_color_temp`, matching the app's Part-tab Kelvin** (the user's decision
   24, 2026-10-22). Both screens have the Part tab's Kelvin item (list d), but it widens every pick to a whole
   zone. On the H60A6 a selection that holds a ring piece goes to the whole ring 0-11, with piece 12 as picked
@@ -666,37 +938,21 @@ model, from which the shipped readers are generated).
   `Config.Yt`). A refusal only, with no frame change, so no bench run. An integration that gates on the
   field (the integrator note under Added) offers no segment colour temperature on the two; their zones keep
   it.
-- Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1) and
-  the segment brightness of H6098 / H8098 / H6690 are under Fixed, and the 42 SKUs without segment colour
-  temperature, the device-info reads of H60B1 / H7056 / H1630 / R1630 and H8015's colour-temperature pair are in
-  this section). Each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves
-  to the same profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames
-  and decoded state are unchanged. Where a new SKU has the same facts it joins that SKU's profile
-  (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3 with H6176
-  / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 / H6013 / H800B
-  (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099 and H61B0 come first in theirs, so a
-  `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
-  `make_device` always pass the SKU). The pact gate on the BK rows, on straightfloorlamp 69, on the h70b3 rows,
-  on h70b6 329 and on pact_tvlightv2 24 (Added) is new routing for new SKUs only: no SKU it covers was supported
-  at 1.6.1.
+- Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB and the segment
+  brightness of H6098 / H8098 / H6690 are under Fixed, and the 42 SKUs without segment colour temperature and
+  the device-info reads of H60B1 / H7056 / H1630 / R1630 are in this section). Each other SKU of the 104
+  admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its
+  rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged.
+  Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194
+  with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 /
+  H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C /
+  H617E / H617F / H6168. H6099 and H61B0 come first in theirs, so a `Device` built from one of those profiles
+  without `sku=` names itself after them (`create_device` and `make_device` always pass the SKU). The pact
+  gate on the BK rows, on straightfloorlamp 69, on the h70b3 rows, on h70b6 329 and on pact_tvlightv2 24
+  (Added) is new routing for new SKUs only: no SKU it covers was supported at 1.6.1.
 - `wire.build` drops the h6061 group-frame constants `H6061_GROUP_SIZE`, `H6061_MASK_BYTES` and
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
-- **H6071 / H6075 (h6071 57 / 67) send the app's empty `33 b2` check on every connect while no secret is set**
-  (the user's decision D4, 2026-10-22, an approved connect-byte change; `DeviceProfile.empty_secret_check`,
-  Added). Their screen puts `Controller4Secret.Companion.a` of the account's `secretCode` first in its connect
-  read with no secret test (`VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.initControllerNoEventList:126`,
-  `:184`), and `""` there (`DefInfo:106-110`) gives `33 b2`, 17 zero bytes and the xor
-  (`Encode.decryByBase64:29-40`, `BleUtils.p:1030-1041`). Every session without a secret sends that frame
-  after the handshake, before any other, where the library's account-locked rows sent no unlock without one. A device that refuses it fails the
-  session with GoveeBleAuthError, as the app's connect read fails; with a secret set the bytes are as before.
-  `read_secret()`'s pairing read sends none: the app's pairing screen (`h6071.add.PairAcV1`, an
-  `AbsPairAc4SecretV1`) reads the secret with no check (`AbsPairAc4SecretV1.T1:107-113`), so a session that
-  `read_secret()` sets up sends none, and the next other operation on it sends the empty check first, an
-  operation that overlaps the read included (it waits for the read). Both SKUs are new in this release (Added),
-  so no released SKU's frames change: every other account-locked row (the plugs, hollowlamp 27 / 37, and H6058
-  behind `allow_modelled`) still sends no unlock without a secret.
-  Source-modelled (Govee Home 7.7.02), not live-verified: no H6071 or H6075 is on the bench.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
   it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
@@ -713,13 +969,11 @@ model, from which the shipped readers are generated).
   `Bytes.G`; `_resolve.SEGMENT_BRIGHTNESS_SCHEMES`), not on the flag alone. H6071 / H6075 (h6071 57 / 67) keep
   their traced flag: the app shows the slider (`Config.I[57]` / `[67]`), but there is no relative-brightness
   version for them (no `Config.y` / `Config.z` entry), so it sends no frame and the one-piece lamps have no
-  segments. They are admitted on the `kelvin_v9` scheme with the Kelvin + brightness pair (Added). Every
-  admitted row with the flag before them is on `h60a6`, so no profile changes. Since the segment split
-  (Added) the tie is one way: a row with segments whose `color_functions` leaves the flag out offers no
-  segment brightness (h61d3 202).
+  segments. They stay without support until their colour-temperature scheme and the Kelvin + brightness pair
+  land. Every admitted row with the flag is on `h60a6`, so no profile changes.
 - **Every status row but the H60A6's and the H6076's takes its versions and device id from TLV 0x07 alone and
   sends no device-info reads**, as its screen does (the user's decision, 2026-10-22: "Skip them", option A of
-  the `status-row-versions-from-tlv07` decision). That is 77 SKUs: 60 admitted by default and 17 behind
+  the `status-row-versions-from-tlv07` decision). That is 76 SKUs: 57 admitted by default and 19 behind
   `allow_modelled`. **Four of them were released at 1.6.1 and change:** H60B1 (h60b1 300), H7056 (h7056 304),
   H1630 and R1630 (h1630 364) no longer send `aa 06` / `aa 07 03` / `aa 07 02` on their first poll, by the
   user's decision for these four (decision 22, 2026-10-22: "Match the app"; their screens send none, e.g.
@@ -747,11 +1001,8 @@ model, from which the shipped readers are generated).
       H6350 (374), H6850 (378), H6351 (392); h6800: H6800 (272); h70b6: H70B6 (329), H70B8 (341);
     - h7086: H7086 (293); h7057: H7057 / H8057 (274), H7058 (275), H7093 (289), H7094 (290), H8066 (305),
       H8067 (393), H3200 (353), H7087 (315), H3501 (339), H3500 (345); h7020: H7025 / H8025 (296); h7076:
-      H7076 (313); h3700: H3700 (383); h6092: H7071 (334), H7073 (333), H3860 (401);
-    - the status rows 1.8.0 admits or promotes: h60ax H60A4 / H80A4 (302), and h6092 H7070 (283), whose
-      `VM4LightH7070.T4` compose carries no controller list at any of its pacts (its callback `U4` takes the
-      versions from TLV 0x07).
-  - `none`, behind `allow_modelled`: h60ax H1270 (346), H1232 (356), H1252 (373); h61d3
+      H7076 (313); h3700: H3700 (383); h6092: H7071 (334), H7073 (333), H3860 (401).
+  - `none`, behind `allow_modelled`: h60ax H60A4 / H80A4 (302), H1270 (346), H1232 (356), H1252 (373); h61d3
     H703A / H703B (263); h1741 H1741 / R1741 (365); h70b3 H70B3 (229), H70B4 (230), H70B5 (231), H6810 (255),
     H6811 / H8811 (256); h705a H3401 (394); h7057 H3510 / H3511 (349); h7072 H7072 (294).
   - The catalogue snapshot routes H8069, H80D1, R617G, R618D, H8840, H8841, R6842, H8057, H8025, H3511 and
@@ -764,100 +1015,14 @@ model, from which the shipped readers are generated).
     firmware-gated fact, the four released ones included, so only their device-info fields can change.
   - `firmware`: H60A6, from the handlers in its sw 1.00.41 image, and H6076 / H8076 / R16D0, from the H6076
     bench (2026-10-21). They are the only status SKUs that send the reads.
-  - **What changes on a released SKU:** H60B1, H7056, H1630 and R1630 send three fewer reads on the first poll,
-    and their `DeviceState` device-info fields come from the status reply's TLV 0x07. If a unit's reply leaves
-    TLV 0x07 out, those fields stay None (the app would keep the account's versions; the library has none).
-    Their frames and decoded state are otherwise unchanged.
-  - Source-traced (Govee Home 7.7.02), not live-verified: none of the 77 SKUs is on the bench.
+  - **What changes on a released SKU:** H60B1, H7056, H1630 and R1630 send three fewer reads on the first
+    poll, and their `DeviceState` device-info fields come from the status reply's TLV 0x07. If a unit's reply
+    leaves TLV 0x07 out, those fields stay None (the app would keep the account's versions; the library has
+    none). Their frames and decoded state are otherwise unchanged.
+  - Source-traced (Govee Home 7.7.02), not live-verified: none of the 76 SKUs is on the bench.
   - README's `DeviceState` entry, and `DeviceState`'s device-info comment and `device_id` docstring, now say
     where device info comes from: the aa 06 / aa 07 03 / aa 07 02 reads, or on a status row the status
     reply's TLV 0x07, by the row's `device_info_reads`.
-
-- The `legacy_02` scheme changes no other SKU: each of the 309 the table admitted before it (235 by default,
-  74 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at
-  (99, 99) and at none, with and without `allow_modelled`; the 10 `legacy_02` SKUs (Added) are the only new
-  routes. One state rule it adds is not scheme-bound: a profile without `COLOR_TEMP` keeps an RGB pick that is a
-  Kelvin tint colour as `rgb_color`, though its frame is the colour-temperature form, as the colour page keeps
-  the picked colours (`ColorViewModel.u0`: `SubMode4Color.p`) and `syncKelvin` moves only an illumination tab
-  (rgblight `VM4Light.syncKelvin`). Of the SKUs admitted before, only H6113 at its BK pacts (h6113 39, the h6006
-  frames without colour temperature, the rgblight screen) has such a profile: after a pick of a tint colour in
-  [2000, 9000] its state now holds that colour where it held the Kelvin. Its frames are unchanged.
-- The colour-temperature work changes no other SKU: each of the 319 the table admitted before it (245 by
-  default, 74 behind `allow_modelled`) but H60A4 / H80A4 and H8015 (Changed, below) resolves to the same
-  profile, field by field, at every pact its rows list, at (99, 99) and at none, with and without
-  `allow_modelled` (`white_type="rgb_white"`, whose frames are as before byte for byte, `whole_device_kelvin`
-  and `kelvin_with_brightness` False, and an empty `mode_decode`). H60A4 / H80A4, behind `allow_modelled`
-  before, take the pair (Added), and so does H8015 (Changed, below).
-- For integrators: `Capability.SEGMENTS` with `Capability.COLOR_TEMP` no longer means the segment and zone Kelvin
-  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4, H8015, H6071 / H6075 and
-  H61D2-H61D6 by default; H61E5 / H61E6 and H60A1 / H80A1 behind `allow_modelled`) `set_segment_color_temp` and
-  `set_zone_color_temp` raise GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Every
-  such profile with segments also has `segment_color_temp=False` (its row says false, and the resolver refuses true
-  beside a `color_temp_control`), so a per-segment control gated on `profile.segment_color_temp` (the integrator
-  note under Added) offers none there, and none of them has zones, so a per-zone one (COLOR_TEMP and the profile's
-  zones) offers none either; hass-govee-ble-local's segment lights need that follow-up (they offer colour
-  temperature whenever the device has `COLOR_TEMP`). A profile built by hand with `whole_device_kelvin=True` is
-  refused too, whatever its `segment_color_temp`. Of the 1.6.1 SKUs only H8015 (no segments or zones, so nothing
-  else is refused: Changed, below) has `whole_device_kelvin=True`.
-- **H8015 (bulblightv3 328) sends the app's colour-temperature pair and is admitted by default
-  (`app_traced`)**, on the user's sign-off (2026-10-22: "Approve"). Since 1.6.1 it was served behind
-  `allow_modelled` with the Kelvin frame alone. Its screen's only colour-temperature control is the
-  illumination tab, which writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
-  (`View4IlluminationMode.I0`: `Config.N[2]` = `Config.GM` -> `Bytes.A`, then `BrightnessConfig.b` of
-  `illuminationCur()[0]`, the aa 04 brightness). Its row now says `color_temp_control: illumination`, so:
-  - `set_color_temp(4000)` with brightness 42 held sends `33 05 0d ff ff ff 0f a0 ff d5 a1 ...` and then
-    `33 04 2a ...`, each acked in order, where 1.6.1 sent the first frame alone;
-  - with the brightness unknown it reads aa 04 first, and with no reply it raises GoveeBleError and writes
-    nothing;
-  - `turn_on(kelvin=)` sends the Kelvin frame before its `33 04` (the given brightness, else the held one);
-  - the profile is `kelvin_with_brightness` and `whole_device_kelvin` (H8015 has no segments, so nothing else
-    is refused).
-
-  Every other frame, read and decode is as before. Source-traced (Govee Home 7.7.02), not live-verified: there
-  is no H8015 on the bench. Every other SKU of 1.6.1 keeps `kelvin_with_brightness=False` and its one-frame
-  colour-temperature write.
-- The read-back work changes no other SKU: each of the 323 the table admitted before it (247 by default, 76
-  behind `allow_modelled`) but H61A9 and H61C2 / H61C3 / H61C5 (Added) resolves to the same profile, field by
-  field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`
-  (`color_readback_ic_sections` and `detail_power_read` False). H7061 is a new route.
-- The transport reads a write's command through the frame reader (`wire.parse.write_command`, the write
-  counterpart of `request_command`), for the ack it waits for: `GoveeConnection.send` with `expect_ack`,
-  `send_many` and `send_once` check each frame with it before any I/O, and the ack-verified write takes its
-  command from it. A `33` frame of 2 bytes (the proType and the checksum: no command) now raises
-  `GoveeBleInvalidValue` before any I/O instead of being sent. No frame the library builds changes.
-- The device-list card's row type changes no other SKU: each of the 324 the table admitted before it (249 by
-  default, 75 behind `allow_modelled`) resolves to the same profile, field by field (`session="held"`), at every
-  pact its rows list, at (99, 99) and at none, with and without `allow_modelled`. `identify.parse_broadcast_onoff`
-  now reads the advert's switch byte through the spec (`power_state`, source `advert`) and gives the same on/off
-  as before for every SKU. H70B2, H6630, H8630 and H6631 are new routes.
-- The status read per pact changes no other SKU: each of the 328 the table admitted before it (253 by default,
-  75 behind `allow_modelled`) resolves to the same profile, field by field (`status_read_by_pact` empty), at
-  every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`, so its request is as
-  before. H7070 is a new route.
-- `kelvin_v9` changes no other SKU: each of the 329 the table admitted before it (254 by default, 75 behind
-  `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and
-  at none, with and without `allow_modelled`, and every builder's frames on the six schemes before it are as
-  before. `ColorScheme` (and `DeviceProfile.color_scheme`) gains the member, an additive change. H6071 and
-  H6075 are new routes.
-- The exact-pact pairing write changes no other SKU: each of the 331 the table admitted before it (256 by
-  default, 75 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows
-  list, at (99, 99) and at none, with and without `allow_modelled`; the routes read the pairing items only to
-  refuse H615A-E without a pact (no SKU a pairing item names was supported before). H615A-E join the profile
-  H6159 heads (`DeviceProfile.skus`), whose facts they share; H6159 stays first. The warning a Device logs
-  for a later pact none of its rows accepts no longer says the app takes another row there: it may run the
-  unit on other facts (H615A-E at (65535, 255)).
-- No SKU's resolved profile changes with the re-selection, and a Device whose advertised pact matches its
-  route keeps its profile and frames. Only a SKU with two routes whose profiles differ just in what a pact
-  picks can move: H6118, H6194 and H6179 (above). `Device.profile` is no longer fixed for the life of a Device
-  on those three; read it after a pact change (the callbacks fire).
-- For integrators: `Capability.SEGMENTS` no longer means `set_segment_brightness` works. Check
-  `device.supports_segment_brightness` before offering brightness on a segment or zone entity:
-  hass-govee-ble-local's segment and zone lights call `set_segment_brightness` for their brightness, and need
-  that follow-up before H61D2-H61D6 are set up. Every SKU admitted before has `segment_brightness=True`, and
-  each of the 336 the table admitted before the split (261 by default, 75 behind `allow_modelled`) but
-  H61D2-H61D6 resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at
-  none, with and without `allow_modelled`. H61D2-H61D6 change: `SEGMENTS`, `whole_device_kelvin`,
-  `segment_brightness=False`, and admitted by default; their whole-device frames are as before.
 
 ### Fixed
 - **H60A6 at pact (1,1) sends the app's whole-light 0x0d colour and Kelvin, and no longer offers segments or zone
@@ -893,8 +1058,7 @@ model, from which the shipped readers are generated).
     and refusal diff against master over every admitted SKU (with and without `allow_modelled`, at each listed
     pact and with none) changes H60A6 at (1,1) only. A `Device` built before its pact was heard keeps its profile
     when it then hears (1,1), and logs the existing warning that its profile's rows don't accept that pact
-    (`refuses_pact`; `reroute` doesn't follow it, as the two profiles' capabilities and zones differ); the next
-    `create_device` from the advertisement routes it.
+    (`refuses_pact`); the next `create_device` from the advertisement routes it.
   - **Evidence:** source-traced, not live-verified: there is no (1,1) unit on the bench. The reporter will test a
     build. This is the user's decision on hass #30 (match the app). It replaces the divergence the firmware
     session kept at (1,1) as a default (D3); the earlier G8 finding and its verification (batch 6) proposed the
@@ -972,8 +1136,8 @@ model, from which the shipped readers are generated).
   its only colour-temperature control. Only bytes 3-5 and the checksum of the `set_color_temp` /
   `turn_on(kelvin=)` frame change; RGB, the RGB pick of a tint colour, and the decoded state are as before.
   `DeviceProfile.color_scheme` for H6188 is now `"h6006"`. The `"h6188"` scheme keeps its name and frame for
-  H8015 (admitted by default since its pair, Changed), whose illumination tab sends it. Source-traced (Govee
-  Home 7.7.02), not live-verified: there is no H6188 on the bench.
+  H8015 (behind `allow_modelled`), whose illumination tab sends it. Source-traced (Govee Home 7.7.02), not
+  live-verified: there is no H6188 on the bench.
 - **H6061 whole-device RGB is now the app's one frame** (the user's decision, 2026-10-21: "Keep it, fix the
   frame"). The `h6061` scheme sent a colour as `ceil(n / 4)` `33 05 15 04 <group> RGB x4` frames (`Bytes.m`),
   which the app sends only for colour stripes (`ColorViewModel.O` -> `ColorModeControllerConfig.k`). The
@@ -1012,7 +1176,7 @@ model, from which the shipped readers are generated).
   `color_scheme`, `zones` or `capabilities` makes its pact a route (`_resolve.pact_routes`): the resolver resolves
   and checks the row with the branch's leaves, as `govee_reference.client_row` applies them, and with the wire
   layer's `by_pact` branch at that pact over its layer. The route is taken at that pact only, and only on an
-  advertised pact (`Route.needs_pact`); the row's own route serves its other pacts and an advertisement
+  advertised pact (`Route.pact_required`); the row's own route serves its other pacts and an advertisement
   without one. Where the branch drops `segments`, the row's `segment_color_temp` and `segment_brightness_groups`
   are left out. A wire `by_pact` branch at any other pact still raises, and so does a pact route on a row whose
   pacts are `any`. The two pins of D3's unread (1,1) branches, `_resolve._UNREAD_WIRE_BRANCHES` and
@@ -1037,28 +1201,13 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 207 with `support` (66), of them 168
-    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 98 without (118). 66 of the 207 had
-    support at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The
-    other 54 take it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069
-    284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the
-    six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target rows, the five
-    Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105, h6107, h6129, h6185,
-    h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the colour-temperature work,
-    which also promoted h60ax 302 to `app_traced`), h7050 98 (H7061's two heads; the aa 40 section sum
-    promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows (h70b2 185, h6630 285 /
-    286), h6092 283 (H7070's exact-pact status read), h6071 57 / 67 (the `kelvin_v9` scheme), stringlightv2 40
-    / 108 (the exact-pact pairing write) and h6057 104 (the light switch), all `app_traced` but h7072 294, h6119
-    44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`). The segment split promoted the trace's
-    h61d3 202 to `app_traced`.
-  - **`empty_secret_check`** (clientRow, `const` true, only with `account_lock: true`; devices.schema.json,
-    `tools/gen_devices.py` KEEP): the screen sends its 0xB2 check on every connect, empty when the account holds no
-    secret. Set on h6071 57 / 67, whose docs cite the connect list and say the library sends the empty check;
-    absent on the other `account_lock` rows (hollowlamp 27 / 37, `H605051NewDetailVm:163-169`, and the plugs).
-    Hollowlamp 59 (H6058) stays `modelled` without it: its screen sends the empty check too
-    (`H6058NewDetailVm.T4:128-135`), and its `doc` names that as the row's gap. `govee_ble_frame`
-    `secret_write` documents the empty check (`Controller4Secret.Companion.a("")`, `Encode.decryByBase64`,
-    `BleUtils.p`'s zero fill: the 8 secret bytes zero).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 187 with `support` (66), of them 147
+    `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 118 without (118). 66 of the 187 had
+    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 34 take it through the
+    library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383, h7076 313,
+    h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows (h6092
+    334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target rows and the five Glide panel rows (h6061
+    96 / 97 / 121 / 163 / 228), all `app_traced` but h7072 294, h6119 44 and the Glide panels (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -1068,28 +1217,26 @@ model, from which the shipped readers are generated).
     `LightCapabilitySpec` first (`LightColorCapabilityCenter.i3`), so the shipped path is unseen. Each row's
     `doc` says so; `devices.schema.json`'s `docRef` and the `source_app` line name
     `govee-apk-decompiled/sources/` as the 7.5.12 root of their doc-refs.
-  - **`pact_required`**, a new `clientRow` fact (`devices.schema.json`; `tools/gen_devices.py` KEEP): the row
-    is a route only for an advertisement that carries a pact, as a pact-conditioned reassignment's target row
-    is, because the app also accepts other pacts for its goodsType that run a path the row doesn't serve.
-    straightfloorlamp 69 and the five h70b3 rows set it (on both screens (1,1) runs the polled connect read),
-    and so do h70b6 329 (above (1,1) its status read adds 0x7D / 0x7E) and pact_tvlightv2 24 (at (1,1) its
-    colour write is `33 05 0b`, `Bytes.c`). The resolver marks its routes with the one flag that also marks a
-    reassignment's target routes, each route of a SKU a pairing write names and a pact route
-    (`_resolve.Route.needs_pact`, read by `profile._accepts`), and refuses `pact_required` on a row whose
-    pacts are `any`. `govee_reference.ble_rows` skips such a row without a pact (its self-test checks H6076).
+  - **`pact_required`**, a new `clientRow` fact (`devices.schema.json`; `tools/gen_devices.py` KEEP;
+    `_resolve.Route.pact_required`): the row is a route only for an advertisement that carries a pact, as a
+    pact-conditioned reassignment's target row is, because the app also accepts other pacts for its goodsType
+    that run a path the row doesn't serve. straightfloorlamp 69 and the five h70b3 rows set it (on both
+    screens (1,1) runs the polled connect read), and so do h70b6 329 (above (1,1) its status read adds 0x7D
+    / 0x7E) and pact_tvlightv2 24 (at (1,1) its colour write is `33 05 0b`, `Bytes.c`).
+    `govee_reference.ble_rows` skips such a row without a pact (its self-test checks H6076), and the resolver
+    refuses one whose pacts are `any`.
   - h6113 39 (H6113) names colour scheme `h6006`, the colour tab's `Config.J[2] = bu` frames its screen sends,
     not `h6188`, whose white-slot CCT (the illumination tab's `Bytes.A`) the screen never sends. The row has
     no colour temperature, and both schemes send the same RGB and tint-pick bytes, so only H6113's
     `DeviceProfile.color_scheme` changes (a new SKU).
-  - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
-    brightness, RGB, colour temperature [2000, 9000], 15 segments and `15 02` segment brightness. Its one
-    device-reported fact, the aa 40 section sum that sizes the app's connect aa a5 walk (`VM4Light.N5`), was
-    read as 0 on the bench H61C3 (`BENCH_20261021_h6076_h61c3.md`), so the app walks the row's 15 pieces; the
-    user accepted that reading for H61C2 / H61C5, which were not on the bench (the library now sizes the walk
-    from the live sum, as the app does: the section-sum entry under Added). Left out: gradual (the app reads
-    no aa a3 here), the `33 09` time sync and scenes (no catalog). The library sends the app's connect reads in
-    its own fixed poll order: aa 05 before aa 40, and the device-info reads last rather than first. The row's
-    `doc` records this. Control is not hardware-verified.
+  - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)):
+    power, brightness, RGB, colour temperature [2000, 9000], 15 segments and `15 02` segment brightness. Its
+    one device-reported fact, the aa 40 section sum that sizes the app's connect aa a5 walk (`VM4Light.N5`),
+    was read as 0 on the bench H61C3 (`BENCH_20261021_h6076_h61c3.md`), so the app walks the row's 15 pieces;
+    the user accepted that reading for H61C2 / H61C5, which were not on the bench. Left out: gradual (the app
+    reads no aa a3 here), the `33 09` time sync and scenes (no catalog). The library sends the app's connect
+    reads in its own fixed poll order: aa 05 before aa 40, and the device-info reads last rather than first.
+    The row's `doc` records this. Control is not hardware-verified.
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
   - Spec corrections the trace made inside family blocks change no admitted SKU. For example, H6171 is off
     barelightv1 17 (it reads aa 40 there, which the row's other SKUs don't), H6119 is off h7090 44 (h7090's
@@ -1203,12 +1350,11 @@ model, from which the shipped readers are generated).
   holds. C2 falls back, as no supported goodsType has a capability spec (only fanlight 359 / 368 register one),
   to `SupportPartColorTemConfig.b`: list d, 112 at pact (2,1), H7022 / H7024 at goodsType 0
   (`SupportPartColorTemConfig.java:36-55,71-91`). The All tab's Kelvin covers every piece
-  (`DelegateColorV2.G0`). Each of the 113 rows with support that keeps `segments` and `color_temp` after its
-  colour scheme's drops now states it, 32 true and 81 false, with that doc-ref. The resolver requires it on
-  exactly those rows and refuses it on any other, and refuses true beside a `color_temp_control`, whose Kelvin
-  covers every piece. Four list-d rows say false, because their Part-tab Kelvin item widens every pick to
-  whole zones: h60ax 303 and h6047 119 by the user's decision 24 (Changed), and the held h60ax 356 / 373
-  (H1232 / H1252, behind `allow_modelled`; `ColorModeH1232.canClickColorTem:486-508`,
+  (`DelegateColorV2.G0`). Each of the 108 rows with support that keeps `segments` and `color_temp` after its
+  colour scheme's drops now states it, 32 true and 76 false, with that doc-ref. The resolver requires it on
+  exactly those rows and refuses it on any other. Four list-d rows say false, because their Part-tab Kelvin
+  item widens every pick to whole zones: h60ax 303 and h6047 119 by the user's decision 24 (Changed), and the
+  held h60ax 356 / 373 (H1232 / H1252, behind `allow_modelled`; `ColorModeH1232.canClickColorTem:486-508`,
   `ColorModeH1252.canClickColorTem:562-584`) by its extension (the user's decision 25, D11). Docs
   corrected where they said a non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360,
   h7050 157), or called the missing refusal a library gap (h6047 277). pact_h605b 142 / 243 now say their Part
@@ -1235,126 +1381,29 @@ model, from which the shipped readers are generated).
   SKU's request or decoded state changes. Only the frame analyzer's labels do (`write/cmd_4b`, where it said
   `write/cmd=0x4b`).
   - h6092 283 / 334 / 333 / 401 read TLV 0x41 as the power-off memory, so a burst whose 0x41 is shorter than
-    two bytes applies nothing, and mark an empty TLV 0x05 as the app's failed read (the library reads past that
-    one, as on H60A6): their screens read 0x41's byte 1 and 0x05's byte 0 unguarded (`VM4LightH7070.X4`,
-    `Info4DetailH7070.H`, `VM4LightH3860.U4`, `Info4DetailH3860.I`). h6092 283 (H7070) now states its status read,
-    whose pacts (1,2) and (2,1) add 0x42; it is admitted on the exact-pact status read (Added), and the
-    reference self-test checks its read at each pact (`client_row`).
+    two bytes applies nothing, and mark an empty TLV 0x05 as the app's failed read (the library reads past
+    that one, as on H60A6): their screens read 0x41's byte 1 and 0x05's byte 0 unguarded (`VM4LightH7070.X4`,
+    `Info4DetailH7070.H`, `VM4LightH3860.U4`, `Info4DetailH3860.I`). h6092 283 (H7070) now states its status
+    read; it stays held because pacts (1,2) and (2,1) add 0x42, a pact branch the library can't follow.
   - `write_check_ic` (0x42) also names the H7073 effect-change switch that 333's status read requests
     (`GET_NECESSARY_INFO` / `controller_type_lamp_effect_change`, `VM4LightH7070.X4`); its value is untyped.
   - A known gap, named in the rows' `doc`: the same handlers read byte 0 of TLV 0x42 (333), 0x45 (401), 0x39
     (h70b6 329 / 341) and 0x7D / 0x7E (341), and H7073's 0x0c layout (`OperateModeInfoH7070.E`), unguarded, so
     an empty or short value fails the app's whole status read, while the library, with no form for them, still
     applies the burst's power and brightness.
-- **h6061: the whole-device RGB pick is `Bytes.l`.** The family's new `color_write` opcode records it, with the
-  path above; `color_group_write` (`Bytes.m`) is now labelled the colour-stripe path, and `color_temp_write`
-  cites the slider's own path (`ColorViewModel.U` -> `c` -> `Zt`). The resolver checks that an `h6061` row with
-  RGB or colour temperature carries the `f_15_01: kelvin` form (it checked `f_15_04: rgb_group` for RGB).
-  - The family's rows are re-cut from the trace (h6061.md), not from its patch, which withdrew H6061: 96 / 97 /
-    121 / 163 / 228 get their own traced rows (`modelled`, above), and 51 keeps `app_traced`, names the
-    inferred panel count and the user's decision, and drops `scenes` from `capabilities` (an `untraced` dialect
-    claims nothing; the resolver already dropped it, so the profile is unchanged).
-  - `specs.segments`, `wire.doc`, the `aa a5` read and the per-goodsType opcode (now `color_write_per_goodstype`)
-    say what the app sizes from the stored layout L and what the row's count stands in for; the brightness
-    opcode cites the screen's `BrightnessConfig.b`, not the device-list `Support.getBrightnessRange`.
-- **`color_02_write` (govee_ble_frame) is the `legacy_02` scheme's frame**, now citing the writer the library
-  follows (`Config.fu` -> `Bytes.a` / `Bytes.o`, from `ColorViewModel.U` / `p0`), and its `white_flag` takes a
-  new enum, `color_02_flag` (`rgb` = Bytes.a, `white_tint` = Bytes.o / Bytes.y). `spec/govee_reference.py`
-  checks that `govee_commands.build_color_legacy` reads back as both forms.
-- **devices.yaml**: `color_scheme: legacy_02` and `support: app_traced` on h6105, h6107, h6129, h6185,
-  h73101217, h7318 and h6165 "0"; `specs.kelvin_range: [2000, 9000]` on h73101217, h7318 and h6165 (the range of
-  `fu`'s Kelvin-tint test, `KelvinConfig.Config.i[0]` = `P1` = 0; those screens have no colour temperature). The
-  resolver now requires a `kelvin_range` on a row with `rgb` under every scheme with a colour-temperature mode
-  (all but h61a8), not only under `color_temp`: each of their writers (`Config.Yt` / `bu` / `Zt` / `fu`) runs
-  `KelvinConfig.i` on every pick whatever the screen offers, and without the range the library would send a
-  tint pick as plain RGB. Every row already has one, so no profile changes. devices.schema.json lists the six
-  colour schemes as `color_scheme`'s enum.
-- **devices.yaml, the held colour-version-4 rows** (bulblightv3 0 for H6001 below its pact gate, h6159 0, h6160
-  0, h6104, h6113 0, h6114 0, h6127 0, h613839 0, h6181 0, h6182 0, chassislightv1 11): their docs no longer say that no library
-  scheme builds the `Config.fu` 0x02 frames, which are now `legacy_02`'s. Each names the gaps that still hold it:
-  routing below the gate, the `rgb_flag_tint` (h6104: `rgb_flagnz_tint_02`) read-back that `parse.mode_color`
-  does not fold, the ffe0 / ffe1 GATT service, the soft-version route, chip-gated brightness, or firmware-gated
-  colour. Docs only: no row, value or profile changes. h6101's 0x02 frame stays a gap: it echoes the reported
-  tint (`SubModeColor.getWriteBytes`), which `legacy_02` doesn't.
-- **`white_type`** (devices.schema.json clientRow; `rgb_black`, `rgb_white`, `rgb_self_tem_color`, absent =
-  `rgb_white`): the white type the colour page hands `Bytes.r`, not `Config.P` read raw (the rgbiclight colour
-  page passes 1, so goodsType 176, `Config.P` 0, stays `rgb_white`; RGB_SELF builds as `rgb_white`). The
-  govee_ble_frame `op15_color` `color` field documents the slot per white type. h61d3 239 / 246 state
-  `rgb_self_tem_color`; h705a 180 states `rgb_black` and the `kelvin_tint` form, and stays without support (its
-  aa a1 0b piece count and its Kelvin read-back are still gaps). The reference self-test reads a `rgb_black` and
-  a partial `rgb_self_tem_color` frame.
-- **`color_temp_control`** (devices.schema.json clientRow; `illumination` or `whole_device`, absent = the
-  colour page's one-frame write over the selected pieces). `whole_device` needs the color_temp capability; h61d3
-  239 / 246 state it (`ColorMode.canClickColorTem` returns every piece for `H61D3Support.i0`). For
-  `illumination` the resolver needs the color_temp and brightness capabilities, percent brightness with no pact
-  branch, and the h60a6, h6188 or kelvin_v9 scheme (the three whose colour-temperature frame is a `Config.N`
-  builder: `Bytes.C`, `Bytes.A`, `Bytes.D`), and then lets the colour page's `color_temperature` flag be
-  off. h60ax 302 (with
-  `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) states it and is `app_traced`; h60ax 235
-  states it too (`modelled`), and so does bulblightv3 328 (H8015), now `app_traced` on the user's sign-off
-  (Changed).
-- **`color_functions` and segment brightness** (devices.schema.json descriptions): `segment_brightness` needs
-  `segments` on a scheme with the `15 02` frame, and a row with segments offers segment brightness only where
-  it is listed or `color_functions` is absent. h61d3 202 gets `segments`, `color_temp_control: whole_device`
-  and `support: app_traced` (was `modelled`, segments withheld).
-- **A pairing item's `pact`** (devices.schema.json `assignedGoodsType`): required on a `bind` item, and documented
-  as the one advertised pact the write is made at; the generated table keeps it (`tools/gen_devices.py`), which
-  prints the pairing routes for review. stringlightv2 40 / 108 get `support: app_traced` and full rows (`doc`,
-  `doc-ref`) at their (2,1) facts, and the reference self-test checks H615E's route at (2,1) and none at
-  (65535, 255).
-- **`kelvin_v9`** is a `color_scheme` (devices.schema.json's enum and its description), and the spec's
-  `op15_kelvin_v9` now cites its selection path (`Config.N[9]` = `JM`, `Config.x[57]` / `[67]`, the colour
-  page's `Config.J[9]` = `hu`). h6071's `client_profile` names it, and rows 57 / 67 get `support: app_traced` and
-  `color_temp_control: illumination`, citing the bundled mode list `[10, 13]` and `ShareVM.C3` / `Y3`.
-- h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No
-  `.ksy` change: govee_state already reads an aa 05 reply with the profile's `mode` decode, and its empty-value
-  rule only for a status TLV.
-- **The aa 40 section sum.** `govee_state` `ic_count` gains `segment_2_signed` and `section_sum` (bytes 2 and 5
-  as Java bytes, absent where the sectioned IC-pair reader `ControllerIcNum.d` throws, `app_pair_fails`), and
-  devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it.
-- **Command 0x34 is `cmd_34` (was `swap_light`), overloaded by the new `form_34`:** H6047's `33 34` bar swap (an
-  empty write) and H6057's `aa 34` device detail (`form_34: device_detail`). `govee_profile` gains `f_34`, and
-  `govee_state` the `cmd_34_state` / `device_detail` types (`[switch flags][battery][music flags][music code]
-  [volume][brightness]`, with `light_open`, `white_noise_playing` and `main_switch_on`). Only the generated enum
-  name changes for existing readers (`Command.swap_light` -> `Command.cmd_34`; nothing in the library used it).
-  The h6092 rows' `status_read` follows the rename. devices.schema.json: `power_read` gains `aa34_detail`, the
-  wire forms `f_34`; the h6057 wire gains `f_34: device_detail`.
-- **The H6057 light switch is its own `form_30` member, `light_switch`** (govee_common; `33 30 <1 / 0>`,
-  `BleProtocol.command_light_switch`, `H6057DetailVM.h5`), with the write type `light_switch_write`
-  (govee_ble_frame `cmd_30_write`, `state` a `light_power`), where `light_direction` had listed it with the
-  H6038 direction and the H71xx chart report. `device_detail.light_open` cites `Controllers.d` and names that
-  switch as its write; `cmd_30_state` notes that `light_switch` has no 0x30 read. The h6057 wire's `f_30` is
-  `light_switch` (was `light_direction`), and devices.schema.json's `f_30` enum gains it.
-  `spec/govee_commands.py`'s `build_h6057_light_switch` is the reference the library's `build.light_switch` is
-  checked against.
-- **`power_write`, a clientRow fact** (devices.schema.json; `tools/gen_devices.py` KEEP): the whole-device
-  power write where it isn't the `33 01` main switch. `light_switch` is the only value: the resolver needs
-  `power_read: aa34_detail` with it, and the other way round (the light flag is that switch's state), wire
-  `f_30: light_switch`, and no zones. h6057 104 states it and gets `support: app_traced`; its doc records both
-  header switches, the user's choice and what `turn_off` leaves playing. `power_read: aa34_detail` now reads
-  `device_detail.light_open`, not `main_switch_on` (the schema description says so).
-- **The device-list card's session, as spec vocabulary.**
-  - `clientRow.session`: `held` (absent; the control screen's) or `per_command` (the card's:
-    `CardCommManagerProxy.comm2Device` -> `u` -> `triggerBleCmd$2`).
-  - `power_read: advert`: no GATT read, the advert's switch byte as the card reads it, and
-    `heartbeat: none`: no keep-alive on a path that holds no link (the card's null heart message). A
-    `heartbeat_timing` beside `none` is refused by the schema.
-  - `timing.per_command`: the 1100 ms spacing, the 29.5 s command bound, the client, the send and the close,
-    with the library's deviations (it reads the reply for a refusal) and the citations.
-  - The advert's on/off is a `govee_state` `power_state` source, `advert`: the manufacturer data's
-    `device_state` read as the power byte, on at 1 for a light (`AbsBaseBleModel.z`) and by the
-    `govee_profile` `power_rule.advert_on_mask` for a plug (h5080 `Model.z` / `Model4Plug2.z`).
-    `identify.parse_broadcast_onoff` reads both through it (the same decodes as before, now from the spec).
-  - The resolver serves `per_command` only on a row that reads nothing, writes nothing on connect, holds no
-    link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
-    row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
-    later join a `per_command` row (design review R3).
-- **h70b2 185 and h6630 285 / 286 get `support: app_traced`** on the card's path (`session: per_command`,
-  `power_read: advert`, `heartbeat: none`, `brightness_range: [1, 100]`), with the card trace in `doc` and
-  `doc-ref` (card registration, model and BLE object, the frame builders, the slider gate, the session, the
-  advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
-  285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
-  self-test checks their routes and session.
+- **h6061: the whole-device RGB pick is `Bytes.l`.** The family's new `color_write` opcode records it, with
+  the path above; `color_group_write` (`Bytes.m`) is now labelled the colour-stripe path, and
+  `color_temp_write` cites the slider's own path (`ColorViewModel.U` -> `c` -> `Zt`). The resolver checks that
+  an `h6061` row with RGB or colour temperature carries the `f_15_01: kelvin` form (it checked
+  `f_15_04: rgb_group` for RGB).
+  - The family's rows are re-cut from the trace (h6061.md), not from its patch, which withdrew H6061: 96 / 97
+    / 121 / 163 / 228 get their own traced rows (`modelled`, above), and 51 keeps `app_traced`, names the
+    inferred panel count and the user's decision, and drops `scenes` from `capabilities` (an `untraced`
+    dialect claims nothing; the resolver already dropped it, so the profile is unchanged).
+  - `specs.segments`, `wire.doc`, the `aa a5` read and the per-goodsType opcode (now
+    `color_write_per_goodstype`) say what the app sizes from the stored layout L and what the row's count
+    stands in for; the brightness opcode cites the screen's `BrightnessConfig.b`, not the device-list
+    `Support.getBrightnessRange`.
 
 ## [1.6.1] — 2026-10-21
 
@@ -2520,7 +2569,7 @@ model, from which the shipped readers are generated).
 ## [1.4.0] — 2026-10-18
 
 ### Added
-- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
+- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `0A:A6:02:00:5E:00:53:56`), read
   with `aa 07 02`. An alias of `serial_number`, which holds the same value.
 - `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
 - New exceptions, defined in `govee_ble_local.exceptions` and exported in `govee_ble_local.__all__`:

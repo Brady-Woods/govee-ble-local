@@ -31,11 +31,12 @@ from fake_ble import FakeGovee, ble_device, frame, virtual_time
 ADDR = "AA:BB:CC:DD:EE:FF"
 
 # A real H60A6 status burst (live capture): chunks 00..08 + FF terminator.
+# Device ids and MACs in it are made-up examples (checksums recomputed).
 H60A6_BURST = [bytes.fromhex(h) for h in [
     "ac000a000c0300010100040164050415010a8c5b",
-    "ac010707065774f453e75c0711105674f453e7f0",
-    "ac025cdb2d0100290104030000070d115ce753d9",
-    "ac03f474560100290104031104001e0f0f120749",
+    "ac010707065753005e00020711105653005e00ae",
+    "ac0202a60a0100290104030000070d1102005e69",
+    "ac030053560100290104031104001e0f0f12079a",
     "ac04ff640000800f00231000000080000000808f",
     "ac0500000080000000804102020130020000a57e",
     "ac06110164ffae5464ffae5464ffae5464ffaeee",
@@ -380,7 +381,7 @@ async def test_secret_is_masked_in_frame_capture(monkeypatch, fast, caplog) -> N
 
     caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
     fake = FakeGovee()
-    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    secret = bytes([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF])
     c = _make(monkeypatch, fake, unlock_frames=lambda: [frame(0x33, 0xB2, *secret)])
     await c.connect()
     assert fake.received[0][2:10] == secret  # the device still gets the real key
@@ -395,7 +396,7 @@ async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encry
 
     caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
     fake = FakeGovee(encrypted=encrypted)
-    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    secret = bytes([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF])
     unlock = frame(0x33, 0xB2, *secret)
     c = _make(monkeypatch, fake, unlock_frames=lambda: [unlock])
     await c.connect()
@@ -423,7 +424,7 @@ async def test_secret_is_masked_in_jsonl_frame_log(
     the 33 b2 secret must be masked in BOTH its plain and wire fields, as in the frames logger."""
     path = tmp_path / "cap.jsonl"
     fake = FakeGovee(encrypted=encrypted)
-    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    secret = bytes([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF])
     c = _make(monkeypatch, fake, unlock_frames=lambda: [frame(0x33, 0xB2, *secret)],
               frame_log=str(path))
     await c.connect()

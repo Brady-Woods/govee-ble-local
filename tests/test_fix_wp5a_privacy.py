@@ -7,6 +7,7 @@ import dataclasses
 import importlib
 import json
 import os
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -20,8 +21,8 @@ from govee_ble_local import DeviceState
 from govee_ble_local.exceptions import GoveeBleConnectionError, GoveeBleTimeout
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
-ADDR = "98:17:3C:B1:A2:D1"
-WIFI = "98:17:3C:B1:A2:D0"    # the Wi-Fi MAC the device derives: BLE MAC minus one
+ADDR = "00:00:5E:00:53:D1"
+WIFI = "00:00:5E:00:53:D0"    # the Wi-Fi MAC the device derives: BLE MAC minus one
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def _identifying(text: str) -> list[str]:
     forms: list[str] = []
     for mac in (ADDR.lower(), WIFI.lower()):
         tail = mac.split(":")[3:]
-        forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", "")]
+        forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", ""), "".join(tail[1:])]
     return [f for f in forms if f in text.lower()]
 
 
@@ -63,12 +64,12 @@ def _identifying(text: str) -> list[str]:
 def test_mask_text_masks_the_address_in_every_form(masking: ModuleType, text: str) -> None:
     out = masking.mask_text(text, ADDR)
     assert _identifying(out) == [], out
-    assert "98" in out.upper() and "3C" in out.upper()   # the vendor prefix stays, for diagnosis
+    assert "00005E" in re.sub(r"[:_-]", "", out.upper())   # the vendor prefix stays, for diagnosis
 
 
 def test_mask_text_masks_any_mac_shaped_token_and_the_macos_uuid(masking: ModuleType) -> None:
-    other = "11:22:33:44:55:66 dev_AA_BB_CC_DD_EE_FF 2D:DB:5C:E7:53:F4:74:56"
-    assert masking.mask_text(other) == "11:22:33:xx:xx:xx dev_AA_BB_CC_xx_xx_xx 2D:DB:5C:xx:xx:xx:xx:xx"
+    other = "11:22:33:44:55:66 dev_AA_BB_CC_DD_EE_FF 0A:A6:02:00:5E:00:53:56"
+    assert masking.mask_text(other) == "11:22:33:xx:xx:xx dev_AA_BB_CC_xx_xx_xx 0A:A6:02:xx:xx:xx:xx:xx"
     uuid = "A1B2C3D4-1111-2222-3333-444455556666"
     assert masking.mask_text(f"{uuid.lower()}: gone", uuid) == "A1B2C3D4-…: gone"
     keep = "33 05 15 01 ff d5 a1, 2026-10-15T12:00:00, v1.00.13, 0x05"
@@ -80,7 +81,7 @@ def test_mask_text_masks_any_mac_shaped_token_and_the_macos_uuid(masking: Module
 def test_describe_error(masking: ModuleType) -> None:
     err = GoveeBleTimeout(f"{ADDR}: no ack for write 0x05 after 3 attempts")
     assert masking.describe_error(err, ADDR) == (
-        "GoveeBleTimeout: 98:17:3C:xx:xx:xx: no ack for write 0x05 after 3 attempts")
+        "GoveeBleTimeout: 00:00:5E:xx:xx:xx: no ack for write 0x05 after 3 attempts")
 
 
 # --- error texts in the report ----------------------------------------------------------------
@@ -141,12 +142,12 @@ def test_send_readback_and_restore_errors_are_scrubbed(
     rep = json.loads(text)
     assert rc == 0 and rep["result"] == "completed"
     assert rep["steps"][0]["sent"] == (
-        "error: GoveeBleTimeout: 98:17:3C:xx:xx:xx: no ack for write 0x01 after 3 attempts")
+        "error: GoveeBleTimeout: 00:00:5E:xx:xx:xx: no ack for write 0x01 after 3 attempts")
     assert rep["steps"][0]["readback"].startswith("error: GoveeBleConnectionError:")
-    assert "dev_98_17_3C_xx_xx_xx" in rep["steps"][0]["readback"]
-    assert rep["restore"].startswith("error: GoveeBleTimeout: 98:17:3C:xx:xx:xx: restore failed")
+    assert "dev_00_00_5E_xx_xx_xx" in rep["steps"][0]["readback"]
+    assert rep["restore"].startswith("error: GoveeBleTimeout: 00:00:5E:xx:xx:xx: restore failed")
     assert _identifying(text) == [] and "A2D1" not in text.upper()
-    assert rep["device"] == {"address": "98:17:3C:xx:xx:xx", "name": "ihoment_H9995_xxxx",
+    assert rep["device"] == {"address": "00:00:5E:xx:xx:xx", "name": "ihoment_H9995_xxxx",
                              "encryption": "aes_rc4_psk"}
 
 
@@ -190,7 +191,7 @@ def test_discovery_masks_names_and_skips_a_device_identified_as_another_sku(
         return SimpleNamespace(local_name=name, manufacturer_data={}, rssi=rssi)
 
     seen = [  # an H6006 whose name happens to end in 6188 is the strongest signal around
-        (SimpleNamespace(address="98:17:3C:00:61:88", name=None), adv("ihoment_H6006_6188", -40)),
+        (SimpleNamespace(address="00:00:5E:00:53:88", name=None), adv("ihoment_H6006_6188", -40)),
         (SimpleNamespace(address=ADDR, name=None), adv("ihoment_H6188_A2D1", -70)),
     ]
 
@@ -211,7 +212,7 @@ def test_discovery_masks_names_and_skips_a_device_identified_as_another_sku(
     dev, _adv, heard, sku = asyncio.run(runner.discover(None, None))
     assert dev.address == ADDR and sku == "H6188"
     assert sorted(e["name"] for e in heard) == ["ihoment_H6006_xxxx", "ihoment_H6188_xxxx"]
-    assert {e["address"] for e in heard} == {"98:17:3C:xx:xx:xx"}
+    assert {e["address"] for e in heard} == {"00:00:5E:xx:xx:xx"}
 
 
 # --- snapshots --------------------------------------------------------------------------------
@@ -224,7 +225,7 @@ def test_snapshot_redacts_every_identifying_device_state_field(masking: ModuleTy
     names += [n for n, v in vars(DeviceState).items() if isinstance(v, property)]
     identifying = {n for n in names if "mac" in n or "serial" in n or n.endswith("_id")}
     assert {"serial_number", "device_id", "wifi_mac", "ble_mac"} <= identifying <= set(REDACTED_KEYS)
-    st = DeviceState(is_on=True, serial_number="2D:DB:5C:E7:53:F4:74:56", wifi_mac=WIFI, ble_mac=ADDR)
+    st = DeviceState(is_on=True, serial_number="0A:A6:02:00:5E:00:53:56", wifi_mac=WIFI, ble_mac=ADDR)
     snap = masking.snapshot(st, ("is_on", *sorted(identifying)))
     assert snap == {"is_on": True, "ble_mac": "<redacted>", "device_id": "<redacted>",
                     "serial_number": "<redacted>", "wifi_mac": "<redacted>"}
@@ -249,18 +250,18 @@ def test_redaction_drops_every_wire_field_and_status_burst_payloads(
         {"ts": 3, "addr": ADDR, "dir": "tx", "plain": "aa0101" + "00" * 17, "wire": "5a" * 20, "enc": "aes"},
         {"ts": 4, "addr": ADDR, "dir": "tx", "plain": "ac" + "00" * 19, "wire": "77" * 20, "enc": "aes"},
         {"ts": 5, "addr": ADDR, "dir": "rx", "plain": burst0, "wire": "66" * 20, "enc": "aes"},
-        {"ts": 6, "addr": ADDR, "dir": "rx", "plain": "acff" + "98173cb1a2d0" + "00" * 12, "wire": "55" * 20},
+        {"ts": 6, "addr": ADDR, "dir": "rx", "plain": "acff" + "00005e0053d0" + "00" * 12, "wire": "55" * 20},
     ]
     _write_jsonl(frames, rows)
     assert masking.redact_frames(frames, ADDR) == 6
     out = [json.loads(line) for line in frames.read_text().splitlines()]
     assert all(r["wire"] is None for r in out)                     # no ciphertext, no handshake
-    assert all(r["addr"] == "98:17:3C:xx:xx:xx" for r in out)
+    assert all(r["addr"] == "00:00:5E:xx:xx:xx" for r in out)
     assert out[2]["plain"] == rows[2]["plain"] and out[3]["plain"] == rows[3]["plain"]   # tx kept
     assert out[4]["plain"] == "ac000200060302" + "0" * 26 and out[4]["redacted"] == "status-burst payload"
     assert out[5]["plain"] == "acff" + "0" * 36
     raw = frames.read_text().lower()
-    assert "abab" not in raw and "cdcd" not in raw and "1122334455" not in raw and "a2d0" not in raw
+    assert "abab" not in raw and "cdcd" not in raw and "1122334455" not in raw and "53d0" not in raw
 
 
 def test_redaction_never_writes_through_a_planted_temp_file_symlink(
@@ -273,7 +274,7 @@ def test_redaction_never_writes_through_a_planted_temp_file_symlink(
     os.symlink(victim, frames.with_suffix(".tmp"))         # the old, predictable temp name
     assert masking.redact_frames(frames, ADDR) == 1
     assert victim.read_text() == "precious\n"
-    assert json.loads(frames.read_text())["addr"] == "98:17:3C:xx:xx:xx"
+    assert json.loads(frames.read_text())["addr"] == "00:00:5E:xx:xx:xx"
 
 
 def test_redaction_does_not_read_a_capture_that_is_a_symlink(
@@ -362,4 +363,4 @@ def test_the_capture_is_redacted_only_after_the_frame_log_reached_the_disk(
     text = (tmp_path / "h9993-frames-T.jsonl").read_text()
     records = [json.loads(line) for line in text.splitlines()]
     assert rep["frames_redacted"] == len(records) == 3    # initial, step and final read-backs
-    assert ADDR not in text and all(r["addr"] == "98:17:3C:xx:xx:xx" for r in records)
+    assert ADDR not in text and all(r["addr"] == "00:00:5E:xx:xx:xx" for r in records)
