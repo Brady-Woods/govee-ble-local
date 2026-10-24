@@ -46,25 +46,25 @@ def masking(ft: ModuleType) -> ModuleType:
 
 def test_masks_address_serial_and_wifi_mac(masking: ModuleType, tmp_path: Path) -> None:
     frames = tmp_path / "f.jsonl"
-    info = "aa0710" + "5ce753f47457" + "1122334455" + "00" * 4   # device-info reply: MAC + serial
+    info = "aa0710" + "02005e005357" + "1122334455" + "00" * 4   # device-info reply: MAC + serial
     rows = [
-        {"ts": 1, "addr": "5C:E7:53:F4:74:57", "dir": "tx", "plain": "aa0710" + "00" * 17,
+        {"ts": 1, "addr": "02:00:5E:00:53:57", "dir": "tx", "plain": "aa0710" + "00" * 17,
          "wire": "aa0710" + "00" * 17, "enc": "none"},
-        {"ts": 2, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": info, "wire": info, "enc": "none"},
-        {"ts": 3, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": "aa04fe" + "00" * 17,
+        {"ts": 2, "addr": "02:00:5E:00:53:57", "dir": "rx", "plain": info, "wire": info, "enc": "none"},
+        {"ts": 3, "addr": "02:00:5E:00:53:57", "dir": "rx", "plain": "aa04fe" + "00" * 17,
          "wire": "aa04fe" + "00" * 17, "enc": "none"},
     ]
     frames.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-    assert masking.redact_frames(frames, "5C:E7:53:F4:74:57") == 3
+    assert masking.redact_frames(frames, "02:00:5E:00:53:57") == 3
     out = [json.loads(line) for line in frames.read_text().splitlines()]
-    assert {r["addr"] for r in out} == {"5C:E7:53:xx:xx:xx"}
+    assert {r["addr"] for r in out} == {"02:00:5E:xx:xx:xx"}
     assert out[1]["plain"] == "aa0710" + "0" * (len(info) - 6) and out[1]["wire"] is None
     assert out[0]["plain"] == rows[0]["plain"] and out[2]["plain"] == rows[2]["plain"]  # untouched
     assert all(r["wire"] is None for r in out)   # wire bytes (ciphertext, handshake) are never kept
     raw = frames.read_text().lower()
-    assert "5ce753f47457" not in raw and "f4:74:57" not in raw and "1122334455" not in raw
+    assert "02005e005357" not in raw and "00:53:57" not in raw and "1122334455" not in raw
     assert masking.redact_frames(tmp_path / "missing.jsonl", "x") == 0
-    assert masking.mask_address("5c-e7-53-f4-74-57") == "5C-E7-53-xx-xx-xx"
+    assert masking.mask_address("02-00-5e-00-53-57") == "02-00-5E-xx-xx-xx"
     assert masking.mask_address("A1B2C3D4-1111-2222-3333-444455556666") == "A1B2C3D4-…"
     assert masking.mask_address(None) is None
     # a plug's secret given to the run is scrubbed as hex, in either case, from every report text

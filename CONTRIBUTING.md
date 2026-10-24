@@ -23,6 +23,12 @@ lean on dependencies.
   Don't put upper bounds on HA-shipped dependencies either: HA installs requirements under its own
   `package_constraints.txt`, so a ceiling only causes conflicts when HA moves (issue #8).
 - **Typing:** the package ships `py.typed`; keep `mypy --strict` clean.
+- **No real device identifiers or secrets in the repository.** The repository is public. Tests, fixtures, docs and
+  docstrings use made-up values: MACs from the documentation range (RFC 7042, `00:00:5E:00:53:xx`) or locally
+  administered ones (`02:…`), and made-up secrets and device ids. A test or tool that needs a real secret code + MAC
+  pair (a bench, live or field-test run) reads it from a git-ignored file with mode 0600 on the host that runs it.
+  It refuses a file that group or others can read, skips when the file is absent, and never prints or logs the
+  values.
 
 ## Dev setup & quality gates
 

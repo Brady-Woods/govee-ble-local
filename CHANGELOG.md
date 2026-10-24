@@ -9,6 +9,120 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
+- **`tools/field_test`: the release-gate pass over every Govee device in range (dev tool only; nothing under
+  `src/` changes, no new dependency).** `--list` scans and lists every device heard (a keyed 6-digit ref, SKU,
+  tier `default` / `modelled` / `unsupported`, pact, kind, plan), then the plugs with their outlets, and
+  connects to nothing. `--all` tests each supported device (`--allow-modelled`: the opt-in rows too) one at a
+  time over its own connection, lights first, then card rows, then plugs; unsupported devices are listed only.
+  - **Generic plan** (`generic.py`) for every SKU without a hand-written plan, built from its profile and
+    Device API: power, brightness 25 / 100 %, RGB, colour temperature at the range's min, mid and max, an RGB
+    pick of the mid Kelvin's tint, segment colour and brightness on the first and last segment, zone power /
+    colour / Kelvin, the first catalog scene, the gradual flag, and the refusals the library must make before
+    any I/O (`set_segment_color_temp` where `segment_color_temp` is False, among others) as passes when
+    `GoveeBleNotSupported` is raised with nothing sent. Hand-written plans still win for their SKUs
+    (`--generic` forces the generic one).
+  - **Verdicts without false passes** (`readback.py`): each step's fields are compared with what the library
+    intended (`Device.snapshot()` after the action) only where the row reads that field back, a reply
+    carrying it came back in that poll, as seen on the `govee_ble_local.frames` logger (a status burst's TLV
+    tags, the `aa 05` sub-mode under the spec's mode-colour parse), and the poll set the field in the
+    device's state (`readback.poll` records the assignments), so a reply the library dropped or rejected
+    proves nothing. A write step's field intended as it already was proves nothing by matching, and an RGB
+    read after a colour-temperature write proves nothing on a report with no Kelvin (`rgb_kelvin_0d_nocct`),
+    where a colour the library itself read from the report (a Kelvin tint read as its colour temperature)
+    counts, as does the "no RGB" a colour temperature above 0 brings. Segments are judged only where the poll
+    set them: a status burst's colour groups are merged over the segments held, so one whose group no reply
+    carried keeps a write's intent (`readback.Poll.segments`: the segment objects the poll made new). A
+    hand-written plan's check (`expect`) is judged only on fields the poll read back: one that reads a field
+    it didn't leaves the step `unverifiable` (`readback_unread` in the report; `readback_matches` still records
+    the check on the library's state). Otherwise the step is `unverifiable`, and `--ask unverifiable` (the
+    `--all` default) asks the tester only there. A segment-brightness step expects the whole groups the row's
+    strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped when no
+    start was read for it; a gradual flag nobody read is noted in the restore (`gradual: unknown`).
+  - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
+    levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
+    `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
+    re-activated by code), `partial`, `failed`, `unverified` or `not_needed`. A scene start is put back as the
+    library activates one, by name with its upload where it needs one, after the segment levels the run
+    changed. A `close` restore of something the run wrote and could never put back (a start colour,
+    brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`
+    a partial or failed restore is tried twice more after a fresh scan and connect; a device still not back
+    is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a
+    hand-written plan's restore is followed by the generic one from the captured start. One Ctrl-C restores the device wherever it lands: in a step (also
+    between a command's frame and its ack, so the device counts as written to before the send), during the
+    restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
+    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`), and the device is
+    printed `NOT RESTORED` with what the run changed. SIGHUP (a closed terminal, a dropped SSH session) and
+    SIGTERM do what the first Ctrl-C does, and nothing is asked after either (nothing printed after SIGHUP);
+    once a first interrupt is under way, either signal cancels nothing, so the restore carries on: only a
+    second Ctrl-C (counted) abandons it. Console output never raises, so a closed tty or a broken pipe can't
+    skip a restore, and the end of the input on a terminal (a tab closed under a prompt, Ctrl-D) is no answer;
+    one at the start question or at "go on with the next device?" stops the run with the rest listed `not run
+    (interrupted)`, exit 130. The restore polls first, since a write cut short applies nothing to the
+    library's state.
+  - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
+    (each shown by its advertised name as its label shows it, and its signal, on the console only; what it
+    powers is asked and never stored; its ref typed to allow the toggle) and given a secret
+    (the secrets file, or a hidden prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
+    plug's power write sets every outlet (`33 01 FF / F0`, the H5089's `33 02`), so it toggles only when the
+    first `aa 01` read finds its outlets all on or all off (all off where the row doesn't say which relay bits
+    are outlets, listed as `2+ outlets`); its restore is checked outlet by outlet.
+  - **Daytime guard** (`guard.py`): visible writes only from 07:00 to 22:00 local time (`--day-start`,
+    `--day-end`, `--force-hours`, `--read-only`); listing and read steps run at any hour, and a restore is
+    never gated. `--all`'s start confirmation (or `--yes`) is the whole run's: a run started outside the window
+    without `--yes` stays read-only, even once the window opens. A row whose every connect makes a visible
+    write, read from its profile's connect writes (`DeviceProfile.light_effect_stop`: the `33 25` effect stop
+    of the goodsType 342 bulbs H14A1, R14A1, H14C2 and R14C2, which stops a running effect), is not connected
+    to outside the window or on a read-only run, checked at its turn and again right before every connect
+    attempt (the re-scans and back-offs before one can carry a run past the window's end); once the window
+    closes on it while connected, its remaining read steps and the last poll are skipped too, since a link it
+    dropped would be re-opened with that write (its restore still runs), and a device the run never connected
+    to gets no last poll either. `--list` and the summary mark it `skipped: its connect sends 33 25 (effect
+    stop), a visible change, outside the window` (or `on a read-only run`). Inside the window it runs as any
+    other device; the handshake, a plug's unlock and its time sync still go out at any hour. A hand-written
+    step that sends nothing is a read step (the H6047's `segment_readback_count`), so night and read-only
+    runs keep it.
+  - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
+    verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`, where a write step
+    nothing verified, a skipped one, a device skipped for its connect, a device whose row needs a secret
+    tested without one (`no_secret`: every plug, allow-listed or not, since its `33 b2` unlock is then never
+    sent; not a row whose connect sends the app's empty `33 b2` check, once that check is acked) or a Ctrl-C
+    keeps a device from `pass`; totals count the skipped and the `no_secret` devices)
+    beside each device's report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug
+    secrets are scrubbed from every file. The library writes each capture under a hidden `.….jsonl.raw` name
+    that only its redaction turns into the capture, so a killed run leaves no raw capture under an attachable
+    name, and the next start redacts any it left. A run with no terminal on stdin, one device or `--all`,
+    writes nothing visible unless `--unattended` (recorded in the summary and every report). `--library checkout` / `installed` and `--expect-version` pick and
+    pin the library under test; `installed` refuses a source tree or an editable install. `TOOL_VERSION`
+    is 3.
+  - **Changes for one device:** with no hand-written plan for the SKU (and none heard without `--sku`), the
+    generic plan runs instead of "no test plan"; `--sku` accepts any SKU; a hand-written plan's restore runs
+    only once a write step was sent, so a run outside the window writes nothing. The exit code stays 0 for a
+    completed run and 1 for one that could not complete (a device skipped for its connect among them);
+    `--all` exits with its gate: 0 `pass`, 1 `fail` (a failed step, an aborted device, a partial or failed
+    restore), 4 `incomplete` (a device not reached or skipped, a write skipped by the window or not verified,
+    a device whose row needs a secret, every plug, tested without one). Both exit 2 with nothing to test, 3
+    when refused and 130 when interrupted (`tools/README.md`'s exit-code table).
+  - **Secrets and the ref key stay owner-only, outside the checkout.** The secrets file (JSON `{ref or
+    address: hex secret}`) defaults to `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file`
+    or `GOVEE_FIELD_TEST_SECRETS` elsewhere; `field-test-secrets*.json` is git-ignored). One group or others
+    can read is refused (exit 3), saying why and printing no value; no file is no failure (a device that
+    needs a secret and is given none stays read-only, the gate `incomplete`). The ref key
+    (`~/.cache/govee-ble-local/field-test-ref.key`) is made 0600, and one group or others can read is refused.
+  - Under pytest (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real
+    scan and connect (bleak's `BleakScanner`; a library connect while `establish_connection` is bleak's), so a
+    test reaches only a fake whatever its tree's conftest sets. The suite sets `GOVEE_FIELD_TEST_NO_SCAN`, a
+    session ref key, an absent session secrets file and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every
+    test (`tests/conftest.py`), and under pytest the default secrets file is never read; the clock pin is
+    honoured only while pytest runs a test, and a real run that finds it exported says it is ignored.
+  - The one-device field-test runs in the suite pass `--unattended` (pytest's stdin is no terminal).
+  - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
+    rows too; the visible connect write the tool reads is what the library's connect sends) and
+    `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE: an H6047
+    simulator, the H5083 firmware image, an H14A1, a modelled and an unsupported row).
+
+## [1.7.0] — 2026-10-23
+
+### Added
 - **`bound_advertisement(advertisement_data, sku, *, fallback_name=None)`, in `__all__`.** It reads an
   advertisement's pact and encrypt flag from its Govee manufacturer data whatever the local name, for a caller
   that has no `Device` yet. It returns the public `GoveeAdvertisement` (`.pact`, `.encrypted`,
@@ -290,118 +404,11 @@ model, from which the shipped readers are generated).
   library sends none of them, nor the re-read of a version that a firmware-gated fact waits for, and the
   versions and device id come from each status reply's TLV 0x07 alone, as on the app's screen
   (`Compose4BaseInfoSingleRead.w`). True keeps 1.x's reads, so a profile built by hand reads as before.
-- **`tools/field_test`: the release-gate pass over every Govee device in range (dev tool only; nothing under
-  `src/` changes, no new dependency).** `--list` scans and lists every device heard (a keyed 6-digit ref, SKU,
-  tier `default` / `modelled` / `unsupported`, pact, kind, plan), then the plugs with their outlets, and
-  connects to nothing. `--all` tests each supported device (`--allow-modelled`: the opt-in rows too) one at a
-  time over its own connection, lights first, then card rows, then plugs; unsupported devices are listed only.
-  - **Generic plan** (`generic.py`) for every SKU without a hand-written plan, built from its profile and
-    Device API: power, brightness 25 / 100 %, RGB, colour temperature at the range's min, mid and max, an RGB
-    pick of the mid Kelvin's tint, segment colour and brightness on the first and last segment, zone power /
-    colour / Kelvin, the first catalog scene, the gradual flag, and the refusals the library must make before
-    any I/O (`set_segment_color_temp` where `segment_color_temp` is False, among others) as passes when
-    `GoveeBleNotSupported` is raised with nothing sent. Hand-written plans still win for their SKUs
-    (`--generic` forces the generic one).
-  - **Verdicts without false passes** (`readback.py`): each step's fields are compared with what the library
-    intended (`Device.snapshot()` after the action) only where the row reads that field back, a reply
-    carrying it came back in that poll, as seen on the `govee_ble_local.frames` logger (a status burst's TLV
-    tags, the `aa 05` sub-mode under the spec's mode-colour parse), and the poll set the field in the
-    device's state (`readback.poll` records the assignments), so a reply the library dropped or rejected
-    proves nothing. A write step's field intended as it already was proves nothing by matching, and an RGB
-    read after a colour-temperature write proves nothing on a report with no Kelvin (`rgb_kelvin_0d_nocct`),
-    where a colour the library itself read from the report (a Kelvin tint read as its colour temperature)
-    counts, as does the "no RGB" a colour temperature above 0 brings. Segments are judged only where the poll
-    set them: a status burst's colour groups are merged over the segments held, so one whose group no reply
-    carried keeps a write's intent (`readback.Poll.segments`: the segment objects the poll made new). A
-    hand-written plan's check (`expect`) is judged only on fields the poll read back: one that reads a field
-    it didn't leaves the step `unverifiable` (`readback_unread` in the report; `readback_matches` still records
-    the check on the library's state). Otherwise the step is `unverifiable`, and `--ask unverifiable` (the
-    `--all` default) asks the tester only there. A segment-brightness step expects the whole groups the row's
-    strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped when no
-    start was read for it; a gradual flag nobody read is noted in the restore (`gradual: unknown`).
-  - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
-    levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
-    `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
-    re-activated by code), `partial`, `failed`, `unverified` or `not_needed`. A scene start is put back as the
-    library activates one, by name with its upload where it needs one, after the segment levels the run
-    changed. A `close` restore of something the run wrote and could never put back (a start colour,
-    brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`
-    a partial or failed restore is tried twice more after a fresh scan and connect; a device still not back
-    is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a
-    hand-written plan's restore is followed by the generic one from the captured start. One Ctrl-C restores the device wherever it lands: in a step (also
-    between a command's frame and its ack, so the device counts as written to before the send), during the
-    restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
-    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`), and the device is
-    printed `NOT RESTORED` with what the run changed. SIGHUP (a closed terminal, a dropped SSH session) and
-    SIGTERM do what the first Ctrl-C does, and nothing is asked after either (nothing printed after SIGHUP);
-    once a first interrupt is under way, either signal cancels nothing, so the restore carries on: only a
-    second Ctrl-C (counted) abandons it. Console output never raises, so a closed tty or a broken pipe can't
-    skip a restore, and the end of the input on a terminal (a tab closed under a prompt, Ctrl-D) is no answer;
-    one at the start question or at "go on with the next device?" stops the run with the rest listed `not run
-    (interrupted)`, exit 130. The restore polls first, since a write cut short applies nothing to the
-    library's state.
-  - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
-    (each shown by its advertised name as its label shows it, and its signal, on the console only; what it
-    powers is asked and never stored; its ref typed to allow the toggle) and given a secret
-    (the secrets file, or a hidden prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
-    plug's power write sets every outlet (`33 01 FF / F0`, the H5089's `33 02`), so it toggles only when the
-    first `aa 01` read finds its outlets all on or all off (all off where the row doesn't say which relay bits
-    are outlets, listed as `2+ outlets`); its restore is checked outlet by outlet.
-  - **Daytime guard** (`guard.py`): visible writes only from 07:00 to 22:00 local time (`--day-start`,
-    `--day-end`, `--force-hours`, `--read-only`); listing and read steps run at any hour, and a restore is
-    never gated. `--all`'s start confirmation (or `--yes`) is the whole run's: a run started outside the window
-    without `--yes` stays read-only, even once the window opens. A row whose every connect makes a visible
-    write, read from its profile's connect writes (`DeviceProfile.light_effect_stop`: the `33 25` effect stop
-    of the goodsType 342 bulbs H14A1, R14A1, H14C2 and R14C2, which stops a running effect), is not connected
-    to outside the window or on a read-only run, checked at its turn and again right before every connect
-    attempt (the re-scans and back-offs before one can carry a run past the window's end); once the window
-    closes on it while connected, its remaining read steps and the last poll are skipped too, since a link it
-    dropped would be re-opened with that write (its restore still runs), and a device the run never connected
-    to gets no last poll either. `--list` and the summary mark it `skipped: its connect sends 33 25 (effect
-    stop), a visible change, outside the window` (or `on a read-only run`). Inside the window it runs as any
-    other device; the handshake, a plug's unlock and its time sync still go out at any hour. A hand-written
-    step that sends nothing is a read step (the H6047's `segment_readback_count`), so night and read-only
-    runs keep it.
-  - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
-    verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`, where a write step
-    nothing verified, a skipped one, a device skipped for its connect, a device whose row needs a secret
-    tested without one (`no_secret`: every plug, allow-listed or not, since its `33 b2` unlock is then never
-    sent; not a row whose connect sends the app's empty `33 b2` check, once that check is acked) or a Ctrl-C
-    keeps a device from `pass`; totals count the skipped and the `no_secret` devices)
-    beside each device's report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug
-    secrets are scrubbed from every file. The library writes each capture under a hidden `.….jsonl.raw` name
-    that only its redaction turns into the capture, so a killed run leaves no raw capture under an attachable
-    name, and the next start redacts any it left. A run with no terminal on stdin, one device or `--all`,
-    writes nothing visible unless `--unattended` (recorded in the summary and every report). `--library checkout` / `installed` and `--expect-version` pick and
-    pin the library under test; `installed` refuses a source tree or an editable install. `TOOL_VERSION`
-    is 3.
-  - **Changes for one device:** with no hand-written plan for the SKU (and none heard without `--sku`), the
-    generic plan runs instead of "no test plan"; `--sku` accepts any SKU; a hand-written plan's restore runs
-    only once a write step was sent, so a run outside the window writes nothing. The exit code stays 0 for a
-    completed run and 1 for one that could not complete (a device skipped for its connect among them);
-    `--all` exits with its gate: 0 `pass`, 1 `fail` (a failed step, an aborted device, a partial or failed
-    restore), 4 `incomplete` (a device not reached or skipped, a write skipped by the window or not verified,
-    a device whose row needs a secret, every plug, tested without one). Both exit 2 with nothing to test, 3
-    when refused and 130 when interrupted (`tools/README.md`'s exit-code table).
-  - **Secrets and the ref key stay owner-only, outside the checkout.** The secrets file (JSON `{ref or
-    address: hex secret}`) defaults to `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file`
-    or `GOVEE_FIELD_TEST_SECRETS` elsewhere; `field-test-secrets*.json` is git-ignored). One group or others
-    can read is refused (exit 3), saying why and printing no value; no file is no failure (a device that
-    needs a secret and is given none stays read-only, the gate `incomplete`). The ref key
-    (`~/.cache/govee-ble-local/field-test-ref.key`) is made 0600, and one group or others can read is refused.
-  - Under pytest (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real
-    scan and connect (bleak's `BleakScanner`; a library connect while `establish_connection` is bleak's), so a
-    test reaches only a fake whatever its tree's conftest sets. The suite sets `GOVEE_FIELD_TEST_NO_SCAN`, a
-    session ref key, an absent session secrets file and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every
-    test (`tests/conftest.py`), and under pytest the default secrets file is never read; the clock pin is
-    honoured only while pytest runs a test, and a real run that finds it exported says it is ignored.
-  - The one-device field-test runs in the suite pass `--unattended` (pytest's stdin is no terminal).
-  - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
-    rows too; the visible connect write the tool reads is what the library's connect sends) and
-    `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE: an H6047
-    simulator, the H5083 firmware image, an H14A1, a modelled and an unsupported row).
 
 ### Changed
+- Tests: the cloud and field-test masking tests use example addresses from the documentation range
+  (RFC 7042, `00:00:5E:00:53:xx`) or locally administered ones. No library change.
+- Tests and docs: made-up example device identifiers and secret.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
@@ -2129,7 +2136,7 @@ model, from which the shipped readers are generated).
 ## [1.4.0] — 2026-10-18
 
 ### Added
-- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
+- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `0A:A6:02:00:5E:00:53:56`), read
   with `aa 07 02`. An alias of `serial_number`, which holds the same value.
 - `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
 - New exceptions, defined in `govee_ble_local.exceptions` and exported in `govee_ble_local.__all__`:
