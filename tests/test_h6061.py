@@ -359,6 +359,8 @@ def test_update_queries_power_brightness_mode_then_the_groups_to_the_first_miss(
     # aa 01 / aa 04 without a selector byte, as the app sends them; the groups are steps of the connect
     # compose, which the first unanswered one ends (AbsComposeControllerWithOpResult.onOvertime)
     assert q == ["aa0100", "aa0400", "aa0501", "aaa501", "aaa502", "aaa503"]
+    # the walk still counts its 20 pieces, so the 8 red ones it brought show no colour over the report
+    assert d.state.rgb_color == (1, 2, 3)
 
 
 def test_update_reads_panel_colours_from_the_group_replies() -> None:
