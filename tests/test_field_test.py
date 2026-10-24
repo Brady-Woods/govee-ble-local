@@ -255,7 +255,8 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     nothing back, whose refusal steps raise GoveeBleNotSupported before any I/O, and whose other steps the
     library accepts (a fake connection: writes acked, reads answered with nothing). A segment-brightness step
     judges no segment the library dimmed as unchanged (the strip's groups widen the write), and the gradual
-    toggle waits for a start the first poll read. A poll that brings every reply but sets nothing (the library
+    toggle waits for a start the first poll read. A scene start is restored by name, after the segment levels.
+    A poll that brings every reply but sets nothing (the library
     dropped or rejected them) reads nothing back, and a poll answered by nobody sets nothing. The visible
     write the tool reads from each profile's connect writes is what the library's every connect sends but a
     plug's time sync. One property over the table, not a test per SKU; then what a read-back proves: an RGB
@@ -268,6 +269,7 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     from govee_ble_local import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
     from govee_ble_local.devices import profile as table
     from govee_ble_local.devices.device import Device
+    from govee_ble_local.models import Segment
 
     generic = importlib.import_module("field_test.generic")
     guard = importlib.import_module("field_test.guard")
@@ -326,6 +328,21 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
         gradual = [s for s in steps if s.name.startswith("gradual_")]
         if getattr(profile, "gradual", False) and not all(s.skip for s in gradual):
             bad.append(f"{sku}: a gradual toggle from a start nobody read")
+        try:
+            listed = list(dev.scene_names)
+        except GoveeBleError:
+            listed = []
+        if listed:   # a scene start is put back by name (its upload with it), after the segment levels
+            state = dev.snapshot()
+            state.scene_code, state.segments = 1, [Segment(0, None, 100)]
+            scened = restore.StartState(state, frozenset({"scene_code", "segments"}), kind,
+                                        active_scene=listed[0])
+            acts = restore._colour_actions(dev, scened, restore.Outcome(), False)
+            levels = "segments" in {str(c) for c in dev.capabilities} and getattr(
+                dev, "supports_segment_brightness", True)
+            if acts[-1][1:] != (dev.set_scene_by_name, (listed[0],)) or (
+                    levels and acts[0][1] != dev.set_segment_brightness):
+                bad.append(f"{sku}: a scene start restored by {[a[0] for a in acts]}")
         if kind != "card" and profile.readback != "none":
             try:
                 _, seen = await readback.poll(dev)
@@ -608,14 +625,59 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert cut["devices"][0]["restore"]["result"] == "exact"
     assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
     assert sorted(p.name for p in cut_out.iterdir() if "frames" in p.name) == ["h6047-01-frames-T.jsonl"]
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
 
-    # the gate: a write step nothing verified (no read-back carried it, no answer) leaves it incomplete
+    # a restore the light ignores at first (a dropout) is tried again and ends exact; one it ignores for good
+    # is NOT RESTORED after its retries, and the run (no prompts) stops there; under the H6047's own plan the
+    # generic restore follows the plan's
+    def ignore_the_restored_brightness(client: Any, plain: bytes) -> None:
+        if main["restoring"] and plain[:2] == b"\x33\x04" and main["ignore"]:
+            main["ignore"] -= 1
+            return client.push(frame(0x33, 0x04, 0), 0.005)   # acked, not applied
+        return answer(client, plain)
+
+    def restoring(*a: Any, **k: Any) -> Any:
+        main["restoring"] = True
+        return real_restore(*a, **k)
+
+    light.on_write = ignore_the_restored_brightness
+    monkeypatch.setattr(runner, "restore_start", restoring)
+    capsys.readouterr()
+    for plan, ignore, retries, left in (("--generic", 1, 1, []),
+                                        ("--generic", 3, 2, ["brightness: start 50, now 100"]),
+                                        ("--force-hours", 0, 0, [])):
+        main.update(restoring=False, ignore=ignore)
+        rc, again, again_out = run_all("--all", plan, "--force-hours", "--no-prompt", "--yes", "--unattended",
+                                       "--only", f"{entries[0].ref},{entries[4].ref}")
+        bars = again["devices"][0]
+        assert (bars["restore"]["retries"], bars["not_restored"]) == (retries, left), (plan, ignore)
+        stopped = f"not run (stopped: {entries[0].ref} was not restored)"
+        assert (again["devices"][1]["result"] == stopped) is bool(left)
+        sim.pct = start[2]
+    shown = capsys.readouterr().out
+    assert f"NOT RESTORED: {entries[0].ref} H6047 (light): brightness: start 50, now 100" in shown
+    actions = json.loads((again_out / bars["report"]).read_text())["restore_check"]["actions"]
+    assert actions[0] == "the plan's restore" and "power on" in actions
+    assert bars["plan"] == "hand" and bars["counts"]["fail"] == 0 and bars["restore"]["result"] == "exact"
+    assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+    monkeypatch.setattr(runner, "restore_start", real_restore)
+
+    # the gate: a write step nothing verified (no read-back carried it, no answer) leaves it incomplete, as
+    # does a close restore of something the run wrote and could never put back; an unverified one fails
     summary = importlib.import_module("field_test.summary")
+    restore = importlib.import_module("field_test.restore")
     ok = {"result": "completed", "counts": {"pass": 1}, "steps": [{"kind": "write", "verdict": "pass"}]}
     unverified = {**ok, "steps": [{"kind": "write", "verdict": "unverifiable"}]}
     failed = {**ok, "counts": {"pass": 0, "fail": 1}}
-    assert [summary.gate_verdict({"devices": [d]}) for d in (ok, unverified, failed)] == [
-        "pass", "incomplete", "fail"]
+    lost = restore.unrestorable_written(["colour: not read", "brightness: unknown", "relay: unknown"],
+                                        {"colour", "power"})
+    assert lost == ["colour: not read", "relay: unknown"]
+    close, blind = ({**ok, "restore": {"result": r, "unrestorable_written": lost}}
+                    for r in ("close", "unverified"))
+    kept = {**ok, "restore": {"result": "close", "unrestorable_written": []}}
+    cases = (ok, unverified, failed, close, blind, kept)
+    assert [summary.gate_verdict({"devices": [d]}) for d in cases] == [
+        "pass", "incomplete", "fail", "incomplete", "fail", "pass"]
     assert [runner._exit_code({"devices": [d]}, False) for d in (ok, unverified, failed)] == [0, 4, 1]
     for path in (*out.iterdir(), *listed.iterdir(), *lit_out.iterdir(), *cut_out.iterdir()):
         text = path.read_text()

@@ -15,9 +15,6 @@ from typing import Any
 
 from .masking import json_default, mask_text_all, write_text_atomic
 
-RESTORE_OK = ("exact", "close", "not_needed", "unverified")
-
-
 def counts(steps: Iterable[dict[str, Any]]) -> dict[str, int]:
     out = {"pass": 0, "fail": 0, "unverifiable": 0, "skipped": 0}
     for rec in steps:
@@ -27,11 +24,21 @@ def counts(steps: Iterable[dict[str, Any]]) -> dict[str, int]:
     return out
 
 
+def left_changed(dev: dict[str, Any]) -> list[str]:
+    """What the run wrote that its restore can never put back (``restore.unrestorable_written``: a start
+    colour, brightness or power never read)."""
+    return list((dev.get("restore") or {}).get("unrestorable_written") or [])
+
+
 def device_failed(dev: dict[str, Any]) -> bool:
+    """A failed step, an aborted run, a partial or failed restore, or a restore nothing could verify after
+    the run wrote what it can never put back."""
     restore = (dev.get("restore") or {}).get("result")
     result = str(dev.get("result") or "")
     failed_run = result.startswith(("aborted", "auth failed", "not created"))
-    return dev.get("counts", {}).get("fail", 0) > 0 or failed_run or restore in ("partial", "failed")
+    unverifiable_loss = restore == "unverified" and bool(left_changed(dev))
+    return (dev.get("counts", {}).get("fail", 0) > 0 or failed_run or restore in ("partial", "failed")
+            or unverifiable_loss)
 
 
 def device_completed(dev: dict[str, Any]) -> bool:
@@ -48,10 +55,12 @@ def unverified_writes(dev: dict[str, Any]) -> int:
 def device_passed(dev: dict[str, Any]) -> bool:
     """Completed, nothing failed, every write step ran and was verified (by a read-back or the tester), its
     row's unlock was sent where the row needs a secret (``no_secret``: every plug, tested without its
-    secret, is not a pass), and no Ctrl-C reached it (one during its restore lets the restore finish, but the
-    tester stopped the run)."""
+    secret, is not a pass), its restore put back everything the run wrote (a ``close`` restore that left
+    a colour, brightness or power changed for good is not a pass), and no Ctrl-C reached it (one during its
+    restore lets the restore finish, but the tester stopped the run)."""
     return (device_completed(dev) and not device_failed(dev) and not dev.get("counts", {}).get("skipped", 0)
-            and not unverified_writes(dev) and not dev.get("no_secret") and not dev.get("interrupted"))
+            and not unverified_writes(dev) and not dev.get("no_secret") and not dev.get("interrupted")
+            and not left_changed(dev))
 
 
 def device_skipped(dev: dict[str, Any]) -> bool:
@@ -73,14 +82,17 @@ def totals(data: dict[str, Any]) -> dict[str, int]:
     return {"heard": len(data.get("heard", [])), "tested": len(tested), "passed": len(passed),
             "failed": len(failed), "unverified": len([d for d in tested if unverified_writes(d)]),
             "no_secret": len([d for d in tested if d.get("no_secret")]),
+            "left_changed": len([d for d in tested if left_changed(d)]),
+            "not_restored": len([d for d in tested if d.get("not_restored")]),
             "not_reached": len(tested) - len(reached), "skipped": len(skipped), "not_run": len(not_run),
             "listed_only": len([h for h in data.get("heard", []) if h.get("ref") not in tested_refs])}
 
 
 def gate_verdict(data: dict[str, Any]) -> str:
-    """``fail`` (a step failed, a device aborted, a restore partial or failed), ``incomplete`` (a device not
-    reached, not run or skipped, a write skipped or unverified, a device whose row needs a secret tested
-    without one, a Ctrl-C, nothing tested), else ``pass``."""
+    """``fail`` (a step failed, a device aborted, a restore partial or failed, or unverified after the run
+    wrote what it can never put back), ``incomplete`` (a device not reached, not run or skipped, a write
+    skipped or unverified, a device whose row needs a secret tested without one, a close restore that left a
+    write in place for good, a Ctrl-C, nothing tested), else ``pass``."""
     devices = data.get("devices", [])
     if any(device_failed(d) for d in devices):
         return "fail"

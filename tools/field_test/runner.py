@@ -70,7 +70,16 @@ from .masking import (
 )
 from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step
 from .readback import FrameWatch, Judgement, carried, judge, judge_fields, outlet_mask, poll
-from .restore import Outcome, RestoreCheck, StartState, capture_start, check_restore, restore_start
+from .restore import (
+    CHANGES,
+    Outcome,
+    RestoreCheck,
+    StartState,
+    capture_start,
+    check_restore,
+    restore_start,
+    unrestorable_written,
+)
 from .summary import Summary, console_table, counts, gate_verdict
 
 if TYPE_CHECKING:
@@ -86,6 +95,8 @@ TOOL_VERSION = 3
 SCAN_SECONDS = 15.0
 FRAME_LOG_FLUSH_SECONDS = 2.0
 CONNECT_BACKOFF = (2.0, 5.0, 10.0)
+RESTORE_RETRY_BACKOFF = (2.0, 5.0)   # a partial or failed restore is tried again after each
+RESTORE_FAILED = ("partial", "failed")
 CARD_RESCAN_SECONDS = 4.0
 KIND_ORDER = {"light": 0, "card": 1, "plug": 2}
 EXIT_OK, EXIT_FAIL, EXIT_NOTHING, EXIT_REFUSED, EXIT_INCOMPLETE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -567,12 +578,34 @@ class _Run:
     target: _survey.Heard | None = None
     connected: bool = False     # the tool's connect held (nothing polls a device it never connected to)
 
+    def describe(self, err: BaseException) -> str:
+        """A failure as written to the report (:func:`_err`: the address, names and secrets scrubbed)."""
+        return _err(err, self.address, self.names, self.secrets)
+
     def connect_skip(self) -> str | None:
         """Why nothing that could connect this device may be sent now: its connect writes visibly and writes
         are not allowed (``Policy.connect_skip_reason``). A poll on a link the device dropped re-opens it,
         connect writes and all, so once the window closes on such a device the tool polls it no more (its
         restore aside, which is never gated)."""
         return None if self.target is None else self.policy.connect_skip_reason(self.target)
+
+
+def _changes(step: Step) -> list[str]:
+    """What a write step changes (``restore.CHANGES`` of its fields); a step judged on no field (the tester's
+    answer, a hand-written plan's) may change any colour or brightness."""
+    if not step.fields:
+        return ["brightness", "colour"]
+    return sorted({CHANGES.get(f, "other") for f in step.fields})
+
+
+def _written(steps: list[dict[str, Any]]) -> set[str]:
+    """What the run's sent write steps changed (a write cut short or refused by an error may have landed)."""
+    out: set[str] = set()
+    for rec in steps:
+        sent = rec.get("sent")
+        if rec.get("kind") == "write" and sent is not None and not str(sent).startswith("refused"):
+            out.update(rec.get("changes") or ())
+    return out
 
 
 def _skip_reason(step: Step, run: _Run) -> str | None:
@@ -602,6 +635,8 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     """Send one step, read the state back, judge it, maybe ask the tester: the step's record."""
     dev, policy = run.dev, run.policy
     rec: dict[str, Any] = {"step": step.name, "kind": step.kind, "note": step.note or None}
+    if step.kind == "write" and step.refusal is None:
+        rec["changes"] = _changes(step)
     skip = _skip_reason(step, run)
     if skip is not None:
         rec.update(sent=None, writes=0, fields={}, verdict="skipped", basis=None, reason=skip)
@@ -743,10 +778,47 @@ async def _carry_on(aw: Coroutine[Any, Any, T], run: _Run) -> T:
                   "Ctrl-C abandons them) ...")
 
 
-async def _plan_restore(run: _Run, initial: Snapshot) -> Outcome:
-    """A hand-written plan's restore as an :class:`Outcome`."""
+async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None) -> Outcome:
+    """A hand-written plan's restore as an :class:`Outcome`, then (``start``: ``--all``, once the start was
+    captured) the generic restore from that start, which puts back what the plan's own restore doesn't (the
+    H6062's segment levels, the H6061's mixed colours)."""
     result = await _restore_with(run.plan, run.dev, initial, run.address, run.names)
-    return Outcome(["the plan's restore"], [] if result == "ok" else [result])
+    out = Outcome(["the plan's restore"], [] if result == "ok" else [result])
+    if start is not None and getattr(run.dev, "profile", None) is not None:
+        generic = await restore_start(run.dev, start, run.describe)
+        out.actions += generic.actions
+        out.errors += generic.errors
+        out.unrestorable += generic.unrestorable
+    return out
+
+
+async def _reconnect(run: _Run, wait: float) -> None:
+    """Before a restore's retry: wait, scan for the device afresh (its BLEDevice and advertisement handed to
+    the Device) and connect, each best effort (the restore's writes connect on their own). Never gated: a
+    restore only puts the start back."""
+    await asyncio.sleep(wait)
+    target = run.target
+    if target is not None:
+        seen, target.seen_at = target.seen_at, 0.0   # a fresh scan for its BLEDevice and advertisement
+        found = False
+        with contextlib.suppress(Exception):
+            found = await _survey.acquire(target, 1)
+        if found:
+            with contextlib.suppress(Exception):
+                run.dev.update_ble_device(target.ble)
+                run.dev.ingest_advertisement(target.adv)
+        else:   # not heard: the advertisement it had is still the latest
+            target.seen_at = seen
+    with contextlib.suppress(Exception):
+        await run.dev.connect()
+
+
+def not_restored(check: RestoreCheck) -> list[str]:
+    """What a ``partial`` or ``failed`` restore left changed: its fields' start and end, and its errors."""
+    if check.result not in RESTORE_FAILED:
+        return []
+    out = [f"{field}: start {d.get('start')!r}, now {d.get('end')!r}" for field, d in check.diffs.items()]
+    return out + list(check.errors) or [check.result]
 
 
 def _abandoned(report: dict[str, Any]) -> None:
@@ -764,6 +836,10 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
     redaction runs even if disconnecting fails, and the flush is best effort: if it fails (say the
     library's frame-log internals changed), the capture is redacted straight away rather than left raw.
 
+    Under ``--all`` a partial or failed restore is tried again (:data:`RESTORE_RETRY_BACKOFF`, each after a
+    fresh scan and connect), and a hand-written plan's restore is followed by the generic one from the
+    captured start (:func:`_plan_restore`).
+
     One Ctrl-C at any point here (or before, in a step) still restores the device: the restore, the
     disconnect and the flush run through :func:`_carry_on`, and one at the check's poll or its question
     leaves that check unverified. A second Ctrl-C abandons the restore (``restore: abandoned``)."""
@@ -779,40 +855,57 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
             _say("\nInterrupted: the question is left unanswered; the run stops after this device.")
             return None
 
+    def restore() -> Coroutine[Any, Any, Outcome] | None:
+        if run.generic and start is not None:
+            return restore_start(dev, start, run.describe)
+        if not run.generic and initial is not None:
+            return _plan_restore(run, initial, start if run.policy.gate else None)
+        return None
+
+    async def check_it(outcome: Outcome) -> RestoreCheck:
+        if start is None:
+            return RestoreCheck("failed" if outcome.errors else "unverified", errors=list(outcome.errors))
+        try:
+            return await check_restore(dev, start, outcome, run.watch,
+                                       ask=ask if run.policy.prompts else None)
+        except asyncio.CancelledError:
+            if not _absorb(run):
+                raise
+            cut = "not checked: a Ctrl-C cut the check's poll short"
+            return RestoreCheck("unverified", [*outcome.unrestorable, cut], errors=list(outcome.errors),
+                                actions=list(outcome.actions))
+        except Exception as err:
+            return RestoreCheck("failed", list(outcome.unrestorable),
+                                errors=[*outcome.errors, _err(err, run.address, run.names)])
+
     try:
-        restore: Coroutine[Any, Any, Outcome] | None = None
-        if run.abandon:
-            pass
-        elif run.generic and start is not None and run.wrote:
-            restore = restore_start(dev, start, lambda e: _err(e, run.address, run.names, run.secrets))
-        elif not run.generic and initial is not None and run.wrote:
-            restore = _plan_restore(run, initial)
-        if restore is not None:
+        first = None if run.abandon or not run.wrote else restore()
+        if first is not None:
             _say("  restoring the start state ...")
-            outcome = await _carry_on(restore, run)
-            joined = "; ".join(outcome.errors)
-            report["restore"] = ("ok" if not outcome.errors
-                                 else f"error: {joined}" if run.generic else joined)
+            outcome = await _carry_on(first, run)
         if run.abandon:
             _abandoned(report)
         else:
-            check = RestoreCheck("not_needed")
-            if outcome is not None and start is not None:
-                try:
-                    check = await check_restore(dev, start, outcome, run.watch,
-                                                ask=ask if run.policy.prompts else None)
-                except asyncio.CancelledError:
-                    if not _absorb(run):
-                        raise
-                    cut = "not checked: a Ctrl-C cut the check's poll short"
-                    check = RestoreCheck("unverified", [*outcome.unrestorable, cut],
-                                         errors=list(outcome.errors), actions=list(outcome.actions))
-                except Exception as err:
-                    check = RestoreCheck("failed", list(outcome.unrestorable),
-                                         errors=[*outcome.errors, _err(err, run.address, run.names)])
-            elif outcome is not None:
-                check = RestoreCheck("failed" if outcome.errors else "unverified",
-                                     errors=list(outcome.errors))
+            check = RestoreCheck("not_needed") if outcome is None else await check_it(outcome)
+            # --all: a partial or failed restore is tried again (a dropout, a missed ack), with a fresh scan
+            # and connect, backing off, before the run moves on; what is still not back is reported, plugs
+            # first. One device: the tester is there, and sees the NOT RESTORED line.
+            for n, wait in enumerate(RESTORE_RETRY_BACKOFF if run.policy.gate else (), 1):
+                if run.abandon or outcome is None or check.result not in RESTORE_FAILED:
+                    break
+                again = restore()
+                if again is None:
+                    break
+                _say(f"  restore {check.result}: trying again in {wait:.0f} s ({n} of "
+                     f"{len(RESTORE_RETRY_BACKOFF)}) ...")
+                await _carry_on(_reconnect(run, wait), run)
+                outcome = await _carry_on(again, run)
+                check = await check_it(outcome)
+                report["restore_retries"] = n
+            if outcome is not None:
+                joined = "; ".join(outcome.errors)
+                report["restore"] = ("ok" if not outcome.errors
+                                     else f"error: {joined}" if run.generic else joined)
             report["restore_check"] = check.as_dict()
             notes = f" ({'; '.join(check.unrestorable)})" if check.unrestorable else ""
             _say(f"  restore: {check.result}{notes}")
@@ -888,6 +981,13 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         rec["counts"] = counts(report["steps"])
         rc = report.get("restore_check") or {}
         rec["restore"] = {k: rc.get(k) for k in ("result", "unrestorable", "diffs", "errors")} if rc else None
+        if rec["restore"] is not None:
+            # what the run wrote and can never put back: a close or unverified restore doesn't clear the gate
+            rec["restore"]["unrestorable_written"] = unrestorable_written(
+                list(rc.get("unrestorable") or []), _written(report["steps"]))
+            rec["restore"]["retries"] = report.get("restore_retries", 0)
+        rec["not_restored"] = [mask_text(w, address, names, secrets)
+                               for w in not_restored(RestoreCheck(**rc))] if rc else []
         if not result.startswith(("completed", "interrupted", "skipped")):
             rec["errors"].append(rec["result"])
         return rec
@@ -1072,10 +1172,17 @@ async def list_devices(args: argparse.Namespace, out_dir: Path, stamp: str) -> i
     return EXIT_OK if heard else EXIT_NOTHING
 
 
-def _not_run(target: _survey.Heard) -> dict[str, Any]:
+def _not_run(target: _survey.Heard, why: str = "interrupted") -> dict[str, Any]:
     return {"ref": target.ref, "sku": target.sku, "tier": target.tier, "kind": target.kind,
-            "plan": target.plan, "result": "not run (interrupted)", "counts": counts([]), "steps": [],
+            "plan": target.plan, "result": f"not run ({why})", "counts": counts([]), "steps": [],
             "restore": None, "errors": []}
+
+
+def _say_not_restored(devices: Collection[dict[str, Any]]) -> None:
+    """A prominent ``NOT RESTORED`` line per device whose restore still differs or failed after its retries,
+    plugs first (a plug left off may cut what it powers)."""
+    for d in sorted((d for d in devices if d.get("not_restored")), key=lambda d: d.get("kind") != "plug"):
+        _say(f"NOT RESTORED: {d.get('ref')} {d.get('sku')} ({d.get('kind')}): {'; '.join(d['not_restored'])}")
 
 
 async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: Window,
@@ -1138,18 +1245,26 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     summary.data["options"]["writes_off"] = policy.writes_off
     summary.save()
     interrupted = False
+    stopped: str | None = None   # a device left not restored: the rest are not run unless the tester goes on
     for n, target in enumerate(order, 1):
-        if interrupted:
-            summary.add_device(_not_run(target))
+        if interrupted or stopped:
+            summary.add_device(_not_run(target, "interrupted" if interrupted else stopped or ""))
             continue
         if not window.allows_writes() and not policy.read_only and not policy.writes_off:
             _say(f"\n({window.banner()})")
         rec = await run_device(target, n, args, out_dir, stamp, policy, lib)
         summary.add_device(rec)
         interrupted = bool(rec.get("interrupted"))
+        if rec.get("not_restored") and not interrupted and n < len(order):
+            _say_not_restored([rec])
+            reply = await _ask(f"{target.ref} is NOT RESTORED (see above): go on with the next device?",
+                               policy.prompts)
+            if reply != "yes":
+                stopped = f"stopped: {target.ref} was not restored"
     summary.save()
     _say("\nSummary")
     _say(console_table(summary.data, summary.path))
+    _say_not_restored(summary.data["devices"])
     _say("\nAttach the summary (and any device's report and frame capture): addresses, names, serials, "
           "Wi-Fi MACs and secrets are masked.")
     return _exit_code(summary.data, interrupted)
@@ -1214,6 +1329,7 @@ async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Wi
     summary.add_device(rec)
     _say("\nSummary")
     _say(console_table(summary.data, summary.path))
+    _say_not_restored([rec])
     _say("\nPlease attach the report and the frame capture (and the summary) to the GitHub issue "
           f"(addresses, serial and Wi-Fi MAC are masked):\n  {out_dir / str(rec['report'])}\n"
           f"  {out_dir / str(rec['frames'])}")

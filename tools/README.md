@@ -57,8 +57,8 @@ its `expect` (`True` pass, `False` fail, `None` unverifiable) and the tester's a
 a loop binds its loop values with `functools.partial` (or `state_is`), not `lambda x=x:`. Optional
 `SkuPlan` fields: `snapshot_keys` (state attributes to record; the serial number, device id, Wi-Fi MAC
 and BLE MAC are always redacted), `restore(dev, initial_snapshot)` (default: brightness, then scene /
-colour temperature / RGB, then power; it runs only once a write step was sent, and the generic restore
-check polls after it), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
+colour temperature / RGB, then power; it runs only once a write step was sent, under `--all` the generic
+restore from the captured start follows it, and the generic restore check polls after them), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
 already matched from the name and the SKU's own digits). Test it offline next to
 `tests/test_field_test.py` with a fake device, within the suite's test budget.
 
@@ -88,7 +88,8 @@ never at the same time.
    back.
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
-   was partial or failed) or `incomplete` (a device not reached, a device skipped because its connect
+   was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close
+   restore of such a write, a device not reached, a device skipped because its connect
    writes visibly, a write skipped by the window, a write step nothing verified: no read-back and no
    answer, as with `--no-prompt` or an `s`; a device whose row needs a secret tested without one: every
    plug, allow-listed or not, since its `33 b2` unlock is then never sent; an interrupted run). Only
@@ -135,18 +136,29 @@ Notes:
   brightness step expects the whole groups the row's strip dims (`segment_brightness_groups`), and the
   gradual toggle is skipped when the first poll read no start for it.
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
-  scene is re-activated by code, or the start colour was never read back), `partial` (fields differ),
-  `failed`, `unverified` (nothing to compare), or `not_needed`.
+  scene the catalog doesn't list is re-activated by code, or the start colour was never read back),
+  `partial` (fields differ), `failed`, `unverified` (nothing to compare), or `not_needed`. A scene start is
+  put back as the library activates one: by its catalog name, with its upload where it needs one, after
+  the segment levels the run changed; in a scene the check compares the segments' levels, not their
+  colours (the scene paints them). When the run wrote something it can never put back (a start colour,
+  brightness or power never read: the summary's `restore.unrestorable_written`), a `close` restore leaves
+  the gate `incomplete` and an `unverified` one fails it.
+- Under `--all` a `partial` or `failed` restore is tried twice more (2 s, then 5 s, each after a fresh scan
+  and connect). A device still not back is printed as `NOT RESTORED: <ref> <sku> (<kind>): <what>`, plugs
+  first, again at the end, and the run asks whether to go on (with `--no-prompt` it stops: the rest are
+  `not run (stopped: <ref> was not restored)`). Under `--all` a hand-written plan's restore is followed by
+  the generic one from the captured start, which puts back what the plan's own doesn't (the H6062's
+  segment levels, the H6061's mixed colours).
 
 ### Exit codes
 
 | Code | One device | `--all` |
 |---|---|---|
 | 0 | The plan completed (its verdicts are in the report and the summary). | `gate` `pass`. |
-| 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, or a partial or failed restore. |
+| 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, a partial or failed restore, or an unverified restore after a write it can never put back. |
 | 2 | No device found, or no plan for it. | Nothing to test. |
 | 3 | Refused: the wrong library or version, a bad `--secrets-file`. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
-| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one. |
+| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
 | 130 | Interrupted (Ctrl-C, SIGHUP, SIGTERM). | Interrupted (Ctrl-C, SIGHUP, SIGTERM), whatever the gate. |
 
 ## Capturing a BLE session (for ground-truth traffic)

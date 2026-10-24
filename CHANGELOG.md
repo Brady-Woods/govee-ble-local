@@ -315,8 +315,14 @@ model, from which the shipped readers are generated).
     (`segment_brightness_groups`), and the gradual toggle is skipped when no start was read for it.
   - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
-    `exact`, `close` (what can't be restored exactly is listed, such as a scene re-activated by code), `partial`,
-    `failed`, `unverified` or `not_needed`. One Ctrl-C restores the device wherever it lands: in a step (also
+    `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
+    re-activated by code), `partial`, `failed`, `unverified` or `not_needed`. A scene start is put back as the
+    library activates one, by name with its upload where it needs one, after the segment levels the run
+    changed. A `close` restore of something the run wrote and could never put back (a start colour,
+    brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`
+    a partial or failed restore is tried twice more after a fresh scan and connect; a device still not back
+    is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a
+    hand-written plan's restore is followed by the generic one from the captured start. One Ctrl-C restores the device wherever it lands: in a step (also
     between a command's frame and its ack, so the device counts as written to before the send), during the
     restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
     summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`). SIGHUP (a closed

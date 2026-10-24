@@ -5,9 +5,13 @@ really read back (:func:`.readback.carried`), a plug's relay bits, the advertise
 else tells it, the tester's answer. :func:`restore_start` polls once (a write cut short by a Ctrl-C or an
 error applies nothing to the library's state, though its frame may have landed), then puts back power,
 brightness, colour (a scene, per-bar Kelvin, whole-device Kelvin, per-segment colours and levels, or a
-whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest;
+whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest. A scene is put
+back the way the library activates one: by its catalog name (``set_scene_by_name``, with its upload where it
+needs one), by code only where the catalog doesn't list it, after the segment levels the run changed.
 :func:`check_restore` polls once more and compares what that poll reads back with the start (a plug: its
-outlets' relay bits too).
+outlets' relay bits too; in a scene, the segments' levels but not their colours, which the scene paints).
+Each unrestorable entry starts with what it is about (``colour:``, ``scene:``, ``brightness:``, ``power:``,
+``relay:``): :func:`unrestorable_written` tells which the run's writes changed.
 """
 from __future__ import annotations
 
@@ -18,8 +22,16 @@ from typing import Any
 
 from .readback import FIELDS, FrameWatch, carried, outlet_mask, poll, relay_bits
 
-SCENE_NOTE = ("scene: re-activated by code; its animation restarts, and a DIY or uploaded effect shows "
-              "whatever the device now holds for that code")
+SCENE_NOTE = ("scene: re-activated by code (the bundled catalog doesn't list it at this scene set), so a DIY "
+              "or uploaded effect shows whatever the device now holds for that code")
+# What each unrestorable entry is about (its prefix), as the state a write step changes (runner: a step's
+# ``changes``, from its fields).
+CHANGES: dict[str, str] = {
+    "rgb_color": "colour", "color_temp_kelvin": "colour", "segments": "colour", "scene_code": "colour",
+    "zone_color_temp_kelvin": "colour", "brightness": "brightness", "segment_brightness": "brightness",
+    "is_on": "power", "zone_power": "power", "gradual": "gradual"}
+_ABOUT = {"colour": "colour", "scene": "colour", "brightness": "brightness", "power": "power",
+          "relay": "power"}
 Ask = Callable[[str], Awaitable[str | None]]
 Describe = Callable[[BaseException], str]
 
@@ -168,8 +180,15 @@ def _colour_actions(dev: Any, start: StartState, out: Outcome, fresh: bool) -> l
     if not caps & {"rgb", "color_temp", "scenes"}:
         return []
     if "scene_code" in read and st.scene_code is not None and "scenes" in caps:
+        # The segment levels the run changed first, then the scene, as the library activates it: by name
+        # (with its upload) where the catalog lists the start's scene, else by code.
+        levels = _segment_levels(dev, start, fresh) if "segments" in read else []
+        name = start.active_scene
+        if name and name in _listed_scenes(dev):
+            return [*levels, (f"scene {name!r} by name (uploaded where it needs it)", dev.set_scene_by_name,
+                              (name,))]
         out.unrestorable.append(SCENE_NOTE)
-        return [(f"scene {st.scene_code}", dev.set_scene, (int(st.scene_code),))]
+        return [*levels, (f"scene {st.scene_code} by code", dev.set_scene, (int(st.scene_code),))]
     actions: list[Action] = []
     segs = [s for s in (st.segments or []) if s.rgb is not None]
     if getattr(p, "bar_switch", False) and "zone_color_temp_kelvin" in read and st.zone_color_temp_kelvin:
@@ -199,6 +218,14 @@ def _colour_actions(dev: Any, start: StartState, out: Outcome, fresh: bool) -> l
     return actions
 
 
+def _listed_scenes(dev: Any) -> list[str]:
+    """The scene names the device lists now (``Device.scene_names``), or none where it can't say."""
+    try:
+        return list(dev.scene_names)
+    except Exception:
+        return []
+
+
 def _segment_levels(dev: Any, start: StartState, fresh: bool) -> list[Action]:
     """Per-segment brightness back where it was read and the run changed it (every level, when the
     restore's first poll failed)."""
@@ -226,7 +253,8 @@ class RestoreCheck:
         return dataclasses.asdict(self)
 
 
-def _differs(field: str, want: Any, got: Any, raw: bool) -> bool:
+def _differs(field: str, want: Any, got: Any, raw: bool, *, colours: bool = True) -> bool:
+    """``colours``: compare the segments' colours too (not in a scene, which paints them)."""
     if field == "brightness" and raw and isinstance(want, int) and isinstance(got, int):
         return abs(want - got) > 1
     if field == "segments":
@@ -235,7 +263,7 @@ def _differs(field: str, want: Any, got: Any, raw: bool) -> bool:
             now = have.get(seg.index)
             if now is None:
                 continue
-            if seg.rgb is not None and (now.rgb is None or tuple(now.rgb) != tuple(seg.rgb)):
+            if colours and seg.rgb is not None and (now.rgb is None or tuple(now.rgb) != tuple(seg.rgb)):
                 return True
             if seg.brightness is not None and now.brightness is not None and now.brightness != seg.brightness:
                 return True
@@ -274,13 +302,14 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
         return check
     now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned)
     raw = bool(getattr(profile, "brightness_range", None) or getattr(profile, "brightness_by_pact", ()))
+    in_scene = "scene_code" in start.read and start.state.scene_code is not None
     compared = 0
     for field in FIELDS:
         if field not in start.read or now.get(field) is not None:
             continue
         compared += 1
         want, got = getattr(start.state, field, None), getattr(post, field, None)
-        if _differs(field, want, got, raw):
+        if _differs(field, want, got, raw, colours=not in_scene):
             check.diffs[field] = {"start": _show(field, want), "end": _show(field, got)}
     end_bits = relay_bits(watch.window(mark)) if watch is not None else None
     if start.kind == "plug" and start.relay_bits is not None and end_bits is not None:
@@ -305,3 +334,10 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
     elif check.unrestorable:
         check.result = "close"
     return check
+
+
+def unrestorable_written(unrestorable: list[str], written: set[str]) -> list[str]:
+    """The entries of ``unrestorable`` about state the run's writes changed (``written``: :data:`CHANGES`
+    values): what the run left changed for good, which keeps a restore that is only ``close`` (or
+    ``unverified``) from clearing the gate."""
+    return [u for u in unrestorable if _ABOUT.get(u.split(":", 1)[0]) in written]
