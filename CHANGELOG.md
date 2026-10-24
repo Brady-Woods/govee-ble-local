@@ -804,8 +804,8 @@ model, from which the shipped readers are generated).
   - **Rows** (Changed, below): straightfloorlamp 69 (H6076 / H8076 / R16D0: aa 05 then groups 1-2 over 7 pieces,
     applied), h6069 284 (H6069 / H8069: aa 05 then groups 1-35 over 140 pieces, read and not applied: a
     one-piece colour tab; 140 is the screen's count when no shape layout is stored, which the library has none of,
-    where with a stored layout of n shapes the app sends groups 1 .. ceil(n / 4), `CubeVM4Light.l5`, an open
-    question for the user), rgbiclight 351 / 352 (H617G / R617G, H618G / R618D: aa 05 then groups 1-4 over 15 pieces,
+    where with a stored layout of n shapes the app sends groups 1 .. ceil(n / 4), `CubeVM4Light.l5`, kept until
+    the stored-IC release reads the layout, the user's decision 26 (D10)), rgbiclight 351 / 352 (H617G / R617G, H618G / R618D: aa 05 then groups 1-4 over 15 pieces,
     applied), h61d3 263 (H703A / H703B, behind `allow_modelled`: aa 05 then group 1 over its one piece, not
     applied); and with no re-read, as their `J3` sets the switch alone, h7086 293 (H7086), h7020 296 (H7025 /
     H8025), h7076 313 (H7076) and h3700 383 (H3700). The fields are ignored on a zoned profile (the reply is the one
@@ -1011,8 +1011,9 @@ model, from which the shipped readers are generated).
   - `Device.segment_count`, the profile's `segments` and the panel bound go from 23 to 20 (a count above 20 from
     `Device.set_segment_count` is refused at write time, as one above 23 was).
 
-  `wire.build`'s `h6061` default count (`H6061_MAX_PANELS`) is 20 too. H6061's profile now also serves H6067 and
-  H6065 (Added), whose facts it shares at 20 panels (`DeviceProfile.skus`, a grouping change). A smaller layout
+  `wire.build`'s `h6061` default count (`H6061_MAX_PANELS`) is 20 too. H6061's profile now also serves H6067,
+  H6065 and H6063 (Added; H6063 by the user's decision 27), whose facts it shares at 20 panels
+  (`DeviceProfile.skus`, a grouping change). A smaller layout
   is exact only with the account's layout (D10, a later release). Source-traced, not live-verified: no H6061 is
   on the bench.
 - **On the screens whose 0x0d report the app decodes as `[r, g, b][kelvin]` with no Kelvin test
@@ -1302,15 +1303,25 @@ model, from which the shipped readers are generated).
   `Config.Yt`). A refusal only, with no frame change, so no bench run. An integration that gates on the
   field (the integrator note under Added) offers no segment colour temperature on the two; their zones keep
   it.
-- Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1), the
-  segment brightness of H6098 / H8098 / H6690 and the h61d3 IC-sized rows' live mask, decision 2, are under Fixed,
-  and the 42 SKUs without segment colour temperature, the device-info reads of H60B1 / H7056 / H1630 / R1630,
-  H8015's colour-temperature pair and a reported tint colour, which now reads as colour temperature on the stock
-  colour page (31 of these SKUs, starred in the stock colour page entry), are in this section; H61B8 / H61B9 /
-  H61F2 / H61F5 / H61F6, behind `allow_modelled` at 1.6.1, take the live mask and are admitted by default, Added).
-  Each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same
-  profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames and decoded
-  state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`):
+- Nothing else for existing SKUs. What changes for the SKUs admitted at 1.6.1:
+  - under Fixed: H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1), the segment brightness
+    of H6098 / H8098 / H6690, a refused or unacked live `33 b2` check on the account-locked SKUs, and decision 2's
+    live mask, which changes the whole-device colour, colour-temperature and segment frames of the 13 h61d3
+    IC-sized SKUs admitted by default at 1.6.1 (H6641, H6640, H61B3, H61B6, H1A42, H1A43, H1A44, H1AA2, H1AA5,
+    H1AB1, H1AB2, H1AB3, H1B6A) and H6641's `DeviceProfile.segments` (16 -> 14);
+  - in this section: the 42 SKUs without segment colour temperature, the device-info reads of H60B1 / H7056 /
+    H1630 / R1630, H8015's colour-temperature pair, a reported tint colour, which now reads as colour temperature
+    on the stock colour page (31 of these SKUs, starred in the stock colour page entry; the user's decisions 25
+    and 27), H6061's 20 panels (its whole-device masks `ff ff 7f` -> `ff ff 0f` and a 5-group read-back, the
+    user's decision 25, D1), and the segment state after a whole-device colour or Kelvin write on every profile whose state holds
+    segments (55a5c20, the user's decision 26);
+  - and H61B8 / H61B9 / H61F2 / H61F5 / H61F6, behind `allow_modelled` at 1.6.1, take the live mask and are admitted
+    by default (Added).
+
+  Beyond these, each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`; computed
+  from a v1.6.1 export) resolves to the same profile at every pact its rows list and at none, with and without
+  `allow_modelled`, so its frames and decoded state are unchanged, the segment state after a whole-device write
+  aside. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`):
   H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3 and thirteen dreamcolorlightv1 71 /
   123 SKUs (H618C / H619B / H619C / H619D / H619E / H61A3 / H61A5 / H6172 / H6173 / H618E / H618F / H61B2 / H80B5)
   with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 / H6013 /
@@ -1322,11 +1333,11 @@ model, from which the shipped readers are generated).
 - `wire.build` drops the h6061 group-frame constants `H6061_GROUP_SIZE`, `H6061_MASK_BYTES` and
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
-- **The released status rows on the aa 01 keep-alive follow it, as their screens do** (the user's decision 17,
-  "Match the app"; `heartbeat_power`, Added). **H6076 / H8076 / R16D0** (straightfloorlamp 69), **H6069 / H8069**
-  (h6069 284), **H617G / R617G** (rgbiclight 351), **H618G / R618D** (352), **H7086** (h7086 293), **H7025 / H8025**
-  (h7020 296), **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default since PR #45, read the status
-  on every poll until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out:
+- **The status rows on the aa 01 keep-alive that the device list admits (Added) follow it, as their screens do**
+  (the user's decision 17, "Match the app"; `heartbeat_power`, Added). **H6076 / H8076 / R16D0** (straightfloorlamp
+  69), **H6069 / H8069** (h6069 284), **H617G / R617G** (rgbiclight 351), **H618G / R618D** (352), **H7086** (h7086
+  293), **H7025 / H8025** (h7020 296), **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default since
+  PR #45, read the status on every poll until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out:
   the power there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On
   69, 284, 351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then
   the `aa a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read and not
@@ -1372,8 +1383,8 @@ model, from which the shipped readers are generated).
   brightness kept (`_fold.fill_segments`), as the newdetail colour page's whole-strip pick selects every piece at
   that colour (`DelegateCurMode.createView:185-203` -> `DelegateColorV2.F0:220-235` / `G0:241-253` ->
   `ColorModeUtil.e:140-146`). A segment the state doesn't hold stays unknown, and a later segment read-back
-  replaces them as before. This holds on every profile whose state holds segments, released ones included; no
-  frame changes.
+  replaces them as before. This holds on every profile whose state holds segments, released ones included (the
+  user's decision 26, "Keep for all", 2026-10-22); no frame changes. State only, not live-verified.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind (but on a `heartbeat_power` row, Added): the
   poll's own power read stands in for it, aa 01 on a polled row and the status read's TLV 0x01 on a status row.
@@ -1564,9 +1575,11 @@ model, from which the shipped readers are generated).
   changes; only the profiles' `status_decode` does. Every other SKU the table had before the status rows' IC
   reads resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at none, with
   and without `allow_modelled`, but H3401 and H3510 / H3511 (Added) and H6671 / H6672 (above).
-- For integrators: on a `DeviceProfile.color_writes_live_ic` profile (H6641 and every other IC-sized row,
-  Fixed below) `Device.segment_count` follows the device from the first poll on, where it was the profile's
-  static count, and the library refuses a segment index at or past it. hass-govee-ble-local builds one segment
+- For integrators: `Device.segment_count` follows the device from the first poll on, and the library refuses a
+  segment index at or past it, on a `DeviceProfile.color_writes_live_ic` profile (H6641 and every other IC-sized
+  row, Fixed below, where it was the profile's static count), on the H707A strings (`status_segment_count`,
+  Added), on the h7020 bulb strings (`light_num_per_unit`, Added) and, behind `allow_modelled`, on H706A / H706B /
+  H706C / H806A / H806C (the `ac a1` special-info read, Added). hass-govee-ble-local builds one segment
   entity per `profile.segments`; it needs to size them from `device.segment_count` after the first refresh
   (and reload when the count changes): until then a strip shorter than the profile's count shows entities
   whose writes raise GoveeBleInvalidValue, and H6641's `segment_14` / `segment_15` entities (its count is now
@@ -1730,9 +1743,12 @@ model, from which the shipped readers are generated).
   count). A unit at its rule's cap sends the bytes it sent before, but H6641, whose old 16 was above its cap:
   its `DeviceProfile.segments` is now 14, the most its rule gives (`H61D3Support.s` / `e`), where it was 16, a
   library bound. H61E5 / H61E6 (239 / 246, the same screen) take the live mask too; they are `app_traced` with
-  their segment-brightness gate (`ColorMode.canClickBrightness`) named (Added). The reads are unchanged: one aa 40 per poll, in its place. Source-traced,
-  not live-verified: the visible check on the bench H6641 (one whole-device colour with the live mask) is to
-  follow.
+  their segment-brightness gate (`ColorMode.canClickBrightness`) named (Added). The reads are unchanged: one aa 40
+  per poll, in its place. Live-verified on the bench H6641 on 2026-10-22, on 3885c57 (not re-run on a later
+  head): IC 42, so 9 pieces, and one whole-device colour, a Kelvin tint, went out as the
+  `33 05 15 01` tint frame with the live mask `ff 01` where 1.6.1 sent `ff ff`; the device acked it and applied it,
+  and the start state was restored. The other h61d3 rows, and H6641's segment and Kelvin paths, are source-traced
+  only.
 - **H6098 / H8098 (pact_h6099 203) and H6690 (336): segment brightness now covers the app's groups.** Their
   screen's colour strip, the `ColorMode14Rect4ReverseSelect` that pact_h6099's `DetailConfig` builds for 191 /
   203 / 327 / 336, widens any piece selection to whole groups {0-2}, {3-6}, {7-9} and {10-13} before the
@@ -1991,10 +2007,12 @@ model, from which the shipped readers are generated).
   - h61d3 264: H61B0's IC count is unknown (no catalogue entry, no bench unit); its writes take the live count
     (decision 2's live mask, Fixed), so only the count before the first read, the row's 15, assumes it has at
     least 15, as H61B3 / H61B6 do.
-  - h61d3 263 (H703A / H703B) is `modelled` for the screen's unmodelled re-read on a switch change alone: it now
-    reads its colour from TLV 0xA5's one record and follows the aa 01 keep-alive (`heartbeat_power`, Added). Its
-    doc doesn't give the unasked base TLVs as a reason: they hold on every status row, the `app_traced` ones
-    included, and set no row's level.
+  - h61d3 263 (H703A / H703B) is `modelled` because the keep-alive re-read's aa a5 group is read and not applied,
+    where the app shows that piece's colour, and because the one-record TLV 0xA5 tint fold waits for the next
+    release (the user's decisions 27 / 29). It reads its colour from TLV 0xA5's one record and follows the aa 01
+    keep-alive, its re-read included (`heartbeat_power`, `heartbeat_reread`, Added). Its doc doesn't give the
+    unasked base TLVs as a reason: they hold on every status row, the `app_traced` ones included, and set no row's
+    level.
   - Three doc-ref line ranges past their file's end are corrected: h60ax 302's
     `VM4Light$afterConnectedSingleReadDeviceInfo$1.java` (176 lines), pact_tvlightv3 112's
     `MTURequestManager.java` (54 lines) and bulblightstringv1 3's `ControllerBrightness.java` (76 lines; now
@@ -2200,8 +2218,9 @@ model, from which the shipped readers are generated).
   `reader` (a `status_command`, the request's command, which the first chunk echoes) after the profile, and
   reads the status read's TLV stream or the special-info read's `segment_ic`, the new `segment_ic_info` record
   (`num_segments`, `ic_per_segment`, Java bytes; `app_read_fails` for an empty payload). No `aa a1` reply is
-  typed: no app path reads one, and H707A's status TLV 0xA1, which its screen reads with its own reader
-  (`H707AInfo4Detail.G0`: unsigned, IC / 3), stays untyped. devices.schema.json: `connect_reads` items are a
+  typed: no app path reads one. H707A's status TLV 0xA1, which its screen reads with its own reader
+  (`H707AInfo4Detail.G0`: unsigned, IC / 3), is typed separately (`form_a1` `segment_info`, below).
+  devices.schema.json: `connect_reads` items are a
   `connectRead`, a command id or `special_info`.
   The reference's self-test joins a two-packet reply and reads it. Corrections: the read is `ac a1` on proType
   0xAC, not `aa a1 0b` (0x0B is only the reply's sub), and it has callers (`govee_commands.read_special_info_a1`

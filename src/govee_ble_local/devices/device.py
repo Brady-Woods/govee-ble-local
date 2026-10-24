@@ -2255,9 +2255,9 @@ class Device:
           GoveeBleTimeout raised, with the device lock free and the connection ready for the next
           operation. When that wait would run past the operation's ``const.OPERATION_TIMEOUT`` (a
           ``connect_timeout`` above ``OPERATION_TIMEOUT`` - ``DISCONNECT_TIMEOUT``, 40 s, or a later
-          connect of the same operation, such as the pending unlock's write retry), the deadline ends
-          it instead: GoveeBleTimeout ("operation exceeded 45s") is raised at the deadline, and the
-          teardown is left to its abandon at its own ``DISCONNECT_TIMEOUT`` bound, as on any
+          connect of the same operation, such as the pending unlock's reconnect after an unacked check),
+          the deadline ends it instead: GoveeBleTimeout ("operation exceeded 45s") is raised at the
+          deadline, and the teardown is left to its abandon at its own ``DISCONNECT_TIMEOUT`` bound, as on any
           deadline. A call cancelled by its caller during that wait gives the lock up at once,
           leaving the teardown to the same abandon. A connect cancelled inside bleak is cleaned up by
           the BLE backend, which only ``const.OPERATION_TIMEOUT`` bounds (the lock is held until it is
