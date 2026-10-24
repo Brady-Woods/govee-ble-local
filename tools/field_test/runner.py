@@ -898,7 +898,11 @@ async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None, 
     result, notes = await _restore_with(run.plan, run.dev, st, run.address, run.names)
     out = Outcome(["the plan's restore"], [] if result == "ok" else [result], notes)
     if follow and start is not None and getattr(run.dev, "profile", None) is not None:
-        check = await check_restore(run.dev, start, out, run.watch, changed=run.changed)
+        try:
+            check = await check_restore(run.dev, start, out, run.watch, changed=run.changed)
+        except Exception as err:   # nothing known to be off: the restore check after this one says what is
+            out.errors.append(f"the plan's restore check: {run.describe(err)}")
+            check = RestoreCheck("failed")
         off = frozenset(check.diffs) | frozenset(check.unread)
         out.actions.append(f"the plan's restore checked: {check.result}"
                            + (f", the generic restore puts back {', '.join(sorted(off))}" if off else ""))

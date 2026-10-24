@@ -69,7 +69,8 @@ model, from which the shipped readers are generated).
     is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a
     hand-written plan's restore is checked with one poll and, where that isn't exact, followed by the generic
     one from the captured start for only the fields it found off or didn't read back (nothing after an exact
-    one: an off-start light is no longer flashed on and off after its plan put it back). Every restore write
+    one: an off-start light is no longer flashed on and off after its plan put it back; an error in that
+    check is recorded as the restore's, which the check after it then retries). Every restore write
     puts a start field back: none is a power-on only to light a light for its colour or brightness, and a
     light that started off and reads off is never lit. One Ctrl-C restores the device wherever it lands: in a step (also
     between a command's frame and its ack, so the device counts as written to before the send), during the

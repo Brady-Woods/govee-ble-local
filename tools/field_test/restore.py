@@ -62,11 +62,11 @@ CHANGES: dict[str, str] = {
     "rgb_color": "colour", "color_temp_kelvin": "colour", "segments": "colour", "scene_code": "colour",
     "zone_color_temp_kelvin": "colour", "brightness": "brightness", "segment_brightness": "brightness",
     "is_on": "power", "zone_power": "power", "gradual": "gradual"}
-# What a run's writes change in each state field the restore check compares (``segments``: their colours and
-# their levels).
 # The state fields a restore's colour actions put back (one group: a scene start's segment colours, levels
 # and scene go out together).
 COLOUR_FIELDS = ("rgb_color", "color_temp_kelvin", "scene_code", "segments", "zone_color_temp_kelvin")
+# What a run's writes change in each state field the restore check compares (``segments``: their colours and
+# their levels).
 _CHANGED_BY: dict[str, frozenset[str]] = {
     **{field: frozenset({about}) for field, about in CHANGES.items()},
     "segments": frozenset({"colour", "brightness"})}
