@@ -19,8 +19,8 @@ from govee_ble_local.exceptions import GoveeBleConnectionError
 from fake_ble import ble_device
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
-ADDR = "98:17:3C:B1:A2:D1"
-WIFI = "98:17:3C:B1:A2:D0"    # the Wi-Fi MAC the device derives: BLE MAC minus one
+ADDR = "00:00:5E:00:53:D1"
+WIFI = "00:00:5E:00:53:D0"    # the Wi-Fi MAC the device derives: BLE MAC minus one
 BLUEZ_PATH = f"/org/bluez/hci0/dev_{ADDR.replace(':', '_')}"
 
 
@@ -91,17 +91,17 @@ def test_mask_text_masks_the_given_names_whatever_their_shape(masking: ModuleTyp
     text = f"{ADDR} - Light_A2D1: Failed to connect"
     assert "A2D1" in masking.mask_text(text, ADDR)   # not a Govee name shape: only known by name
     assert masking.mask_text(text, ADDR, ("Light_A2D1", None)) == (
-        "98:17:3C:xx:xx:xx - Light_xxxx: Failed to connect")
+        "00:00:5E:xx:xx:xx - Light_xxxx: Failed to connect")
     err = GoveeBleConnectionError(text)
     assert masking.describe_error(err, ADDR, ["Light_A2D1"]) == (
-        "GoveeBleConnectionError: 98:17:3C:xx:xx:xx - Light_xxxx: Failed to connect")
+        "GoveeBleConnectionError: 00:00:5E:xx:xx:xx - Light_xxxx: Failed to connect")
 
 
 def test_mask_text_leaves_step_names_alone_even_when_the_mac_ends_in_their_digits(
     masking: ModuleType,
 ) -> None:
     keep = '"step": "color_temp_2700", "segment_mid_brightness_20", rgb_pick_equal_to_4000k_tint'
-    assert masking.mask_text(keep, "98:17:3C:B1:27:00", ("ihoment_H6188_2700",)) == keep
+    assert masking.mask_text(keep, "02:00:00:00:27:00", ("ihoment_H6188_2700",)) == keep
 
 
 # --- the report -------------------------------------------------------------------------------
@@ -160,8 +160,8 @@ def test_a_failed_connect_with_the_name_in_its_text_is_scrubbed(
     rc, text = _run(ft, runner, monkeypatch, tmp_path, dev, name, "H9992")
     rep = json.loads(text)
     assert rc == 1 and rep["result"] == (
-        "aborted: GoveeBleConnectionError: 98:17:3C:xx:xx:xx: connect failed: 98:17:3C:xx:xx:xx - "
-        f"98:17:3C:xx:xx:xx - {masked} -> /org/bluez/hci0: Failed to connect after 4 attempt(s): "
+        "aborted: GoveeBleConnectionError: 00:00:5E:xx:xx:xx: connect failed: 00:00:5E:xx:xx:xx - "
+        f"00:00:5E:xx:xx:xx - {masked} -> /org/bluez/hci0: Failed to connect after 4 attempt(s): "
         "le-connection-abort-by-local")
     assert _identifying(text) == [], text
     assert rep["device"]["name"] == masked
@@ -175,7 +175,7 @@ def test_a_failed_reconnect_mid_run_is_scrubbed(
     rc, text = _run(ft, runner, monkeypatch, tmp_path, dev, name, "H9991")
     rep = json.loads(text)
     assert rc == 0 and rep["steps"][0]["sent"].startswith(
-        "error: GoveeBleConnectionError: 98:17:3C:xx:xx:xx: connect failed:")
+        "error: GoveeBleConnectionError: 00:00:5E:xx:xx:xx: connect failed:")
     assert _identifying(text) == [], text
 
 
