@@ -35,8 +35,14 @@ model, from which the shipped readers are generated).
     where a colour the library itself read from the report (a Kelvin tint read as its colour temperature)
     counts, as does the "no RGB" a colour temperature above 0 brings. Segments are judged only where the poll
     set them: a status burst's colour groups are merged over the segments held, so one whose group no reply
-    carried keeps a write's intent (`readback.Poll.segments`: the segment objects the poll made new). A
-    hand-written plan's check (`expect`) is judged only on fields the poll read back: one that reads a field
+    carried keeps a write's intent (`readback.Poll.segments`: the segment objects the poll made new). On a
+    walk row (one `aa a5` read per group of segments: H6047, H6097, H61A8) a lost group reply leaves that
+    group's segments out of the read-back: a touched segment missing is not read (`unverifiable`, which
+    `--ask unverifiable` asks about), never a failure, so a flaky bench fails no gate on it, and a
+    whole-device colour read through the segments counts every segment held before the step, so it no
+    longer passes on the segments one poll happened to return. A
+    hand-written plan's check (`expect`) is judged only on fields the poll read back (the segments too where
+    some held before the step are missing): one that reads a field
     it didn't leaves the step `unverifiable` (`readback_unread` in the report; `readback_matches` still records
     the check on the library's state). Otherwise the step is `unverifiable`, and `--ask unverifiable` (the
     `--all` default) asks the tester only there. A segment-brightness step expects the whole groups the row's

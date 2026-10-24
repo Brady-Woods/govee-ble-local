@@ -533,6 +533,14 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     all_blue = SimpleNamespace(segments=[Segment(0, blue, 100), Segment(1, blue, 100)], rgb_color=blue)
     assert readback.judge_fields(rgb_step, None, all_blue, all_blue, all_blue, carries)[0] == {
         "rgb_color": f"not read: {readback.UNCHANGED}"}
+    # a walk row whose aa a5 group reply was lost leaves that group's segments out of the read-back: a touched
+    # one missing is not read (never a fail), a whole-device colour counts every segment held before the step,
+    # not only the ones returned, and so does a hand-written plan's check of the segments
+    walked = SimpleNamespace(segments=[Segment(1, blue, 100)], rgb_color=blue)
+    for step, field in ((seg_step, "segments"), (rgb_step, "rgb_color")):
+        assert readback.judge_fields(step, None, segs, segs, walked, carries) == ({field: unset(0)}, [])
+    assert [readback.unread({"segments"}, carries, walked, None, was) for was in ((), {0, 1})] == [
+        [], ["segments"]]
     # in a scene its segments' colours are the colour-mode memory (aa a5 reads it, the scene leaves it): a
     # restore check compares them too, unless the restore noted it can't write them, and nothing of a scene
     # the catalog doesn't list; only the segments its poll set; a plug's relay is put back unless the

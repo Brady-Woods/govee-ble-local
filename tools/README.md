@@ -178,9 +178,13 @@ Notes:
   matching, and an RGB read after a colour-temperature write proves nothing on a report that can't show
   one (`rgb_kelvin_0d_nocct`, `rgb`): such a step is `unverifiable`, and the tester is asked. Segments are
   judged (and a restore checked) only where the poll set them: a status burst's colour groups are merged
-  over the segments held, so one whose group no reply carried still holds a write's intent. A hand-written
-  plan's check reads the same state: a check that reads a field the poll didn't read back leaves the step
-  `unverifiable` (the report's `readback_unread`). A segment brightness step expects the whole groups the
+  over the segments held, so one whose group no reply carried still holds a write's intent. A walk row (one
+  `aa a5` read per group of segments: H6047, H6097, H61A8) whose group reply is lost leaves that group's
+  segments out of the read-back: a touched segment missing is not read (the step `unverifiable`, which
+  `--ask unverifiable` asks about), never a failure, and a whole-device colour read through the segments
+  counts every segment held before the step, not only the ones returned. A hand-written
+  plan's check reads the same state: a check that reads a field the poll didn't read back (the segments
+  where some are missing too) leaves the step `unverifiable` (the report's `readback_unread`). A segment brightness step expects the whole groups the
   row's strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped
   when the first poll read no start for it.
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a

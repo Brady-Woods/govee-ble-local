@@ -761,7 +761,8 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
                     # must be one this poll read back, or its holding proves nothing (readback.unread).
                     reads = Reads(rec["readback"])
                     rec["readback_matches"] = step.expect(reads)
-                    rec["readback_unread"] = unread(reads.used, carried_map, st, segments) or None
+                    was = {seg.index for seg in getattr(run.pre, "segments", None) or []}
+                    rec["readback_unread"] = unread(reads.used, carried_map, st, segments, was) or None
             except Exception as err:
                 rec["readback"] = _err(err, run.address, run.names, run.secrets)
                 rec["readback_matches"] = False

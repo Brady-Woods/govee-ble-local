@@ -506,14 +506,17 @@ class Reads(dict[str, Any]):
 
 
 def unread(keys: Iterable[str], carried_map: Mapping[str, str | None], post: Any,
-           segments: Collection[int] | None) -> list[str]:
+           segments: Collection[int] | None, expected: Collection[int] = ()) -> list[str]:
     """Of the state fields among ``keys`` (what a plan's ``expect`` read, :class:`Reads`), the ones this poll
-    didn't read back (:func:`carried`), ``segments`` too where it set only some of the segments held: a
-    check that reads one proves nothing by holding (the step is unverifiable, and the tester is asked)."""
+    didn't read back (:func:`carried`), ``segments`` too where it set only some of the segments held, or of
+    the ``expected`` ones (those held before the step: a walk row's lost group reply leaves its segments out
+    of the read-back): a check that reads one proves nothing by holding, nor fails by missing one (the step
+    is unverifiable, and the tester is asked)."""
     keys = set(keys)
     out = {k for k in keys if k in FIELDS and carried_map.get(k, NOT_SEEN) is not None}
-    if "segments" in keys and segments is not None and \
-            {s.index for s in getattr(post, "segments", None) or []} - set(segments):
+    held = {s.index for s in getattr(post, "segments", None) or []}
+    got = held if segments is None else held & set(segments)
+    if "segments" in keys and (held | set(expected)) - got:
         out.add("segments")
     return sorted(out)
 
@@ -564,7 +567,9 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str,
     """A segment step: the touched indices as intended, the others as they read before the step, each judged
     only where the poll set it (``read``, :attr:`Poll.segments`; None: every segment held). Touched segments
     that already read as intended before it prove nothing by reading so again, and a touched segment the
-    poll didn't set proves nothing at all."""
+    poll didn't set proves nothing at all, one missing from the read-back too: a walk row's ``aa a5`` read
+    whose group reply was lost leaves that group's segments out (H6047, H6097, H61A8), which is not read,
+    never a failure."""
     held, wanted, before = _segments(post), _segments(intent), _segments(pre)
     after = held if read is None else {i: s for i, s in held.items() if i in read}
     if not after:
@@ -578,9 +583,6 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str,
         if want is not None and not _same(attr, tuple(want) if attr == "rgb" else want,
                                           tuple(got) if attr == "rgb" and got else got, raw=False):
             bad.append(f"segment {i}: {got} (wanted {want})")
-    missing = [i for i in step.touched if i not in held]
-    if missing:
-        bad.append(f"segments {missing} missing from the read-back")
     if bad:
         return "fail", "; ".join(bad[:4])
     unset = [i for i in step.touched if i not in after]
@@ -614,7 +616,8 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
             continue
         reason = carried_map.get(field, "not a state field")
         if field == "rgb_color" and reason is not None and carried_map.get("segments") is None:
-            # read back through the segment colours: every segment the colour the library intended
+            # read back through the segment colours: every segment the colour the library intended, the
+            # segments the device has (every one it held before the step, or holds now) all read
             want = getattr(intent, "rgb_color", None)
             held = _segments(post)
             segs = held if segments is None else {i: s for i, s in held.items() if i in segments}
@@ -623,11 +626,12 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                 continue
             off = [i for i, s in segs.items() if s.rgb is None or tuple(s.rgb) != tuple(want)]
             was = _segments(pre)
+            expected = set(held) | set(was) | set(_segments(intent))
             if off:
                 out[field] = "fail"
                 fails.append(f"rgb_color (segments): {len(off)} of {len(segs)} segments not {tuple(want)}")
-            elif len(segs) < len(held):   # the whole device was written: a segment not read proves nothing
-                out[field] = f"not read: {not_set(set(held) - set(segs))}"
+            elif expected - set(segs):   # the whole device was written: a segment not read proves nothing
+                out[field] = f"not read: {not_set(expected - set(segs))}"
             elif step.kind == "write" and was and all(
                     s.rgb is not None and tuple(s.rgb) == tuple(want) for s in was.values()):
                 out[field] = f"not read: {UNCHANGED}"
