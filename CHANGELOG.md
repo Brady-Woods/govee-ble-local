@@ -163,8 +163,10 @@ model, from which the shipped readers are generated).
   the empty check (a non-zero status) fails the session with GoveeBleAuthError, as the app's connect read fails
   on it (`AbsControllerNoEvent4Single.onResult:229-230` -> `AbsComposeControllerWithOpResult.onResult:330-334`),
   at session setup and when the next operation after a `read_secret()` sends it: either way the session ends,
-  so no later frame goes out on that link unchecked and the next setup sends the check again (source-modelled);
-  a missing ack is logged and the session goes on. Screens that test the secret first send none
+  and the next setup sends the check again (source-modelled); a missing ack is logged and the session goes on.
+  **Known issue:** an operation that overlaps the refused check (two calls at once) can still send its frame on
+  that link before the session ends, and a plug's time sync can follow a refused check. A refused check means a
+  wrong or stale secret, and the device has just rejected the session. The next release fixes it. Screens that test the secret first send none
   (`H605051NewDetailVm:163-169`: H6050 / H6051), and nor do the plugs. Set on H6071 / H6075 (h6071 57 / 67,
   Changed), the user's decision D4 (2026-10-22). H6058 (hollowlamp 59) stays behind `allow_modelled` without
   it in this release: its screen sends the same empty check, and the row's `doc` names that as its gap.
