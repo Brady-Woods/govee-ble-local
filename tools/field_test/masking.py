@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 _MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 # A MAC-shaped token inside free text: 6 or more hex pairs joined by ONE separator (``:``, ``-``, or
-# ``_`` as in BlueZ's ``/org/bluez/hci0/dev_98_17_3C_B1_A2_D1``); 8 pairs is a Govee device id.
+# ``_`` as in BlueZ's ``/org/bluez/hci0/dev_00_00_5E_00_53_D1``); 8 pairs is a Govee device id.
 _MAC_TOKEN_RE = re.compile(
     r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}([:_-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4,}(?![0-9A-Fa-f])")
 _HEX4_TAIL_RE = re.compile(r"[0-9A-Fa-f]{4}$")
