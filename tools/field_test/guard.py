@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import os
 from typing import Any
 
 # The writes every connect of a row sends after the handshake and any unlock (its devices.yaml
@@ -26,8 +27,10 @@ VISIBLE_CONNECT_WRITES: dict[str, str] = {"light_effect_stop": "33 25 (effect st
 
 
 def now() -> _dt.datetime:
-    """Local wall-clock time (a function, so a test can fake the hour)."""
-    return _dt.datetime.now()
+    """Local wall-clock time (a function, so a test can fake the hour). ``GOVEE_FIELD_TEST_NOW`` (an ISO 8601
+    time, which the test suite sets) pins it, so the suite's runs don't depend on the hour they run at."""
+    pinned = os.environ.get("GOVEE_FIELD_TEST_NOW")
+    return _dt.datetime.fromisoformat(pinned) if pinned else _dt.datetime.now()
 
 
 def parse_hhmm(text: str) -> _dt.time:
