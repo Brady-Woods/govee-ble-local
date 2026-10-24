@@ -78,10 +78,14 @@ never at the same time.
    what each powers.
 3. `/tmp/gate/bin/python tools/field_test --all --library installed --expect-version X.Y.Z
    --toggle-plugs <ref>[,<ref>] --out gate-X.Y.Z` (add `--allow-modelled` to include the opt-in rows).
-   The tool lists every device, asks what each allow-listed plug powers and whether to toggle it (the
-   answer is never stored), asks for its secret unless `--secrets-file` (JSON `{ref: hex}`, mode 0600)
-   has it (every other device whose row needs a secret, every plug among them, takes it from that file
-   only, and without one it can't pass), then asks once before the first visible change. That answer (or
+   The tool lists every device, shows each allow-listed plug by its ref, its advertised name as the Govee
+   app and the plug's label show it (with its MAC digits, on the console only, never in a file) and its
+   signal, asks what it powers (the answer is never stored) and has you type that plug's ref to let it
+   toggle (anything else keeps it read-only), asks for its secret unless `--secrets-file` (JSON
+   `{ref: hex}`, mode 0600) has it (every other device whose row needs a secret, every plug among them,
+   takes it from that file only, and without one it can't pass, unless its connect sends the app's empty
+   `33 b2` check and that check is acked: H6071 / H6075, H6058 on 1.9.0), then asks once before the first
+   visible change. That answer (or
    `--yes`) is the whole run's: a run started before the window opens without `--yes` stays read-only to
    its end, even once the window opens. Each device then runs over its own connection, one at a time, and is restored before the next
    starts. With `--ask unverifiable` (the `--all` default) the tester answers only where nothing was read

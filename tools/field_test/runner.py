@@ -464,8 +464,10 @@ def _wanted(h: _survey.Heard, keys: Collection[str]) -> bool:
 async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace, policy: Policy,
                          file_secrets: dict[str, bytes]) -> None:
     """Fill ``policy.toggle`` and ``policy.secrets``: an allow-listed plug toggles only once the tester has
-    said what it powers (free text, never stored) and confirmed; its secret comes from the secrets file or
-    a hidden prompt (Enter: none, so its toggle steps are skipped)."""
+    said what it powers (free text, never stored) and confirmed it by typing its ref; its secret comes from
+    the secrets file or a hidden prompt (Enter: none, so its toggle steps are skipped). Each plug is shown
+    with what tells two of one SKU apart, on the console only (never in a file): its advertised name as the
+    Govee app and its label show it (the MAC digits it ends in) and its signal strength."""
     allow = _keys(args.toggle_plugs)
     for h in targets:
         for key in (h.ref.upper(), h.address.upper()):
@@ -478,7 +480,8 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
     for h in targets:
         if h.kind != "plug" or not _wanted(h, allow):
             continue
-        line = f"  {h.ref} {h.sku} {mask_name(h.name)} {mask_address(h.address)}"
+        rssi = f"{h.rssi} dBm" if h.rssi is not None else "? dBm"
+        line = f"  {h.ref} {h.sku} {h.name or '?'} (rssi {rssi}) {mask_address(h.address)}"
         if outlet_mask(_survey.classify(h.sku, h.pact)[2]) != 0x01:
             line += (f" ({h.outlets} outlets, switched together: it toggles only if they all start on, or "
                      "all off)")
@@ -486,9 +489,11 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
             _say(f"{line}: allow-listed, but a relay toggle needs the run-time confirmation: read-only")
             continue
         _say(f"{line}: allow-listed for a relay toggle")
-        await _ask("What is plugged into it? (not saved anywhere)", True, free_text=True)
-        if await _ask("Toggle it off and back on?", True) != "yes":
-            _say("    read-only")
+        await _ask(f"What is plugged into {h.ref}? (not saved anywhere)", True, free_text=True)
+        typed = await _readline(f"    ? Type its ref ({h.ref}) to toggle it off and back on, Enter for "
+                                "read-only: ")
+        if typed.strip().lower() != h.ref.lower():
+            _say(f"    {h.ref}: read-only")
             continue
         policy.toggle.add(h.address.upper())
         if h.address.upper() not in policy.secrets:
@@ -1026,7 +1031,9 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     kind = device_kind(profile) if profile is not None else "light"
     rec["kind"], rec["plan"] = kind, "generic" if is_generic else "hand"
     # A row that needs a secret (every plug) tested without one: its 33 b2 unlock is never sent, so the
-    # device can't pass the gate (summary.device_passed), whatever its read steps say.
+    # device can't pass the gate (summary.device_passed), whatever its read steps say; a row whose connect
+    # sends the app's empty 33 b2 check without one (empty_secret_check) is no such device once that check
+    # was acked (_empty_check_held).
     rec["no_secret"] = bool(getattr(profile, "requires_secret", False)) and not secret
     report.update(kind=kind, plan={"sku": plan.sku, "title": plan.title}, plan_kind=rec["plan"],
                   ref=target.ref, device={"address": mask_address(address), "name": mask_name(target.name)})
@@ -1096,8 +1103,18 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
             run.abandon = run.interrupted = True
         watch.detach()
     report["result"] = result
+    if rec["no_secret"] and _empty_check_held(profile, watch):
+        rec["no_secret"] = False
     _print_steps(report)
     return done(result, interrupted=run.interrupted)
+
+
+def _empty_check_held(profile: Any, watch: FrameWatch) -> bool:
+    """A row that sends the app's empty ``33 b2`` check when it has no secret (``empty_secret_check``, read
+    with ``getattr``: older wheels have none) sent it and got its ack: its connect holds without one, as the
+    app's does, so the run needs no secret for it."""
+    return bool(getattr(profile, "empty_secret_check", False)) and watch.sent("33b2") \
+        and watch.acked("33b2") is not None
 
 
 def _print_steps(report: dict[str, Any]) -> None:

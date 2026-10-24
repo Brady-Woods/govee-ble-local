@@ -388,7 +388,8 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     --list and the summary mark it skipped, as does a read-only run by day, and the run exits 4 (incomplete).
     Inside the window it connects as normal; when the window closes during its turn, it gets no connect after
     (in its re-scan) or no poll after (once connected). A plug tested without its secret (its unlock never
-    sent) keeps the gate incomplete (exit 4) on its own. --force-hours lifts the window. A Ctrl-C (the main
+    sent) keeps the gate incomplete (exit 4) on its own; an allow-listed one toggles only once its ref is
+    typed. --force-hours lifts the window. A Ctrl-C (the main
     task cancelled, as asyncio.run does) as the H6047's restore begins, with the terminal gone (every write to
     it fails), lets that restore finish and marks the devices after it not run; a SIGHUP after the first
     write went out, before its ack, still restores the H6047 and leaves no raw capture. With no terminal on
@@ -540,6 +541,20 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
     rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref)   # the plug alone, no secret
     assert rc == 4 and lone["gate"] == "incomplete" and lone["devices"][0]["result"] == "completed"
+
+    # an allow-listed plug is shown by its name as its label shows it, and its signal (on the console only),
+    # and toggles only once its own ref is typed: another answer keeps it read-only
+    async def tester(prompt: str, _reader: Any = None) -> str:
+        return "a desk lamp" if "plugged" in prompt else "nope" if "Type its ref" in prompt else "s"
+
+    capsys.readouterr()
+    with monkeypatch.context() as m:
+        m.setattr(runner, "_readline", tester)
+        rc, typed, _ = run_all("--all", "--only", entries[1].ref, "--toggle-plugs", entries[1].ref)
+    shown = capsys.readouterr().out
+    assert f"{entries[1].ref} H5083 {entries[1].name} (rssi {entries[1].rssi} dBm)" in shown
+    assert f"{entries[1].ref}: read-only" in shown and typed["options"]["toggle_plugs"] == 0
+    assert "write_tx power" not in plug.sim.requests()
 
     # the window closes during the H14A1's turn: in its re-scan (21:59:50 to 22:00:30), so its connect is
     # not made; or once it is connected, so nothing polls it after (a dropped link would reconnect)
