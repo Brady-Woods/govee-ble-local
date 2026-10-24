@@ -546,6 +546,9 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     walked = SimpleNamespace(segments=[Segment(1, blue, 100)], rgb_color=blue)
     for step, field in ((seg_step, "segments"), (rgb_step, "rgb_color")):
         assert readback.judge_fields(step, None, segs, segs, walked, carries) == ({field: unset(0)}, [])
+    # and where the poll before lost that group too, every segment a poll of the run set is still expected
+    assert readback.judge_fields(rgb_step, None, walked, walked, walked, carries, seen={0, 1}) == (
+        {"rgb_color": unset(0)}, [])
     assert [readback.unread({"segments"}, carries, walked, None, was) for was in ((), {0, 1})] == [
         [], ["segments"]]
     # in a scene its segments' colours are the colour-mode memory (aa a5 reads it, the scene leaves it): a

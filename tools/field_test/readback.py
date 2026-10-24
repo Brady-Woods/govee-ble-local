@@ -509,9 +509,10 @@ def unread(keys: Iterable[str], carried_map: Mapping[str, str | None], post: Any
            segments: Collection[int] | None, expected: Collection[int] = ()) -> list[str]:
     """Of the state fields among ``keys`` (what a plan's ``expect`` read, :class:`Reads`), the ones this poll
     didn't read back (:func:`carried`), ``segments`` too where it set only some of the segments held, or of
-    the ``expected`` ones (those held before the step: a walk row's lost group reply leaves its segments out
-    of the read-back): a check that reads one proves nothing by holding, nor fails by missing one (the step
-    is unverifiable, and the tester is asked)."""
+    the ``expected`` ones (those held before the step and every one a poll of the run set: a walk row's lost
+    group reply leaves its segments out of the read-back, in two polls running too): a check that reads one
+    proves nothing by holding, nor fails by missing one (the step is unverifiable, and the tester is
+    asked)."""
     keys = set(keys)
     out = {k for k in keys if k in FIELDS and carried_map.get(k, NOT_SEEN) is not None}
     held = {s.index for s in getattr(post, "segments", None) or []}
@@ -597,9 +598,12 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str,
 
 def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                  carried_map: Mapping[str, str | None],
-                 segments: Collection[int] | None = None) -> tuple[dict[str, str], list[str]]:
+                 segments: Collection[int] | None = None, *,
+                 seen: Collection[int] = ()) -> tuple[dict[str, str], list[str]]:
     """``{field: "pass" | "fail" | "not read: <reason>"}`` for the step's fields, and the failures. A segment
-    is judged only where the poll set it (``segments``, :attr:`Poll.segments`; None: every one held)."""
+    is judged only where the poll set it (``segments``, :attr:`Poll.segments`; None: every one held).
+    ``seen``: every segment a poll of the run set, which a whole-device colour read through the segments
+    expects too (a group lost in this poll and the one before leaves no other trace of its segments)."""
     out: dict[str, str] = {}
     fails: list[str] = []
     raw = _raw_brightness(dev)
@@ -617,7 +621,8 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
         reason = carried_map.get(field, "not a state field")
         if field == "rgb_color" and reason is not None and carried_map.get("segments") is None:
             # read back through the segment colours: every segment the colour the library intended, the
-            # segments the device has (every one it held before the step, or holds now) all read
+            # segments the device has (every one it held before the step, holds now, or a poll of the run
+            # set) all read
             want = getattr(intent, "rgb_color", None)
             held = _segments(post)
             segs = held if segments is None else {i: s for i, s in held.items() if i in segments}
@@ -626,7 +631,7 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                 continue
             off = [i for i, s in segs.items() if s.rgb is None or tuple(s.rgb) != tuple(want)]
             was = _segments(pre)
-            expected = set(held) | set(was) | set(_segments(intent))
+            expected = set(held) | set(was) | set(_segments(intent)) | set(seen)
             if off:
                 out[field] = "fail"
                 fails.append(f"rgb_color (segments): {len(off)} of {len(segs)} segments not {tuple(want)}")

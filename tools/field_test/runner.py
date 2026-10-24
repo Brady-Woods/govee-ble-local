@@ -644,6 +644,9 @@ class _Run:
     warnings: list[str] = dataclasses.field(default_factory=list)
     target: _survey.Heard | None = None
     connected: bool = False     # the tool's connect held (nothing polls a device it never connected to)
+    # every segment a poll of the run set (the first one's too): what a segment read is expected to return,
+    # so a group reply lost in two polls running still leaves its segments missing, not unexpected
+    seen_segments: set[int] = dataclasses.field(default_factory=set)
 
     def describe(self, err: BaseException) -> str:
         """A failure as written to the report (:func:`_err`: the address, names and secrets scrubbed)."""
@@ -655,6 +658,13 @@ class _Run:
         connect writes and all, so once the window closes on such a device the tool polls it no more (its
         restore aside, which is never gated)."""
         return None if self.target is None else self.policy.connect_skip_reason(self.target)
+
+
+def _saw(run: _Run, state: Any, segments: Collection[int] | None) -> None:
+    """Add the segments a poll set (``segments``, :attr:`.readback.Poll.segments`; where it can't tell, the
+    ones the state holds) to :attr:`_Run.seen_segments`."""
+    run.seen_segments.update(segments if segments is not None
+                             else (s.index for s in getattr(state, "segments", None) or []))
 
 
 def _changes(step: Step) -> list[str]:
@@ -753,6 +763,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
             try:
                 st, assigned, segments = await poll(dev)
                 post = st
+                _saw(run, st, segments)
                 carried_map = carried(dev, run.watch.window(rmark), run.warnings, assigned=assigned,
                                       segments=segments)
                 rec["readback"] = snapshot(st, run.plan.snapshot_keys, run.extra())
@@ -762,7 +773,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
                     # must be one this poll read back, or its holding proves nothing (readback.unread).
                     reads = Reads(rec["readback"])
                     rec["readback_matches"] = step.expect(reads)
-                    was = {seg.index for seg in getattr(run.pre, "segments", None) or []}
+                    was = {seg.index for seg in getattr(run.pre, "segments", None) or []} | run.seen_segments
                     rec["readback_unread"] = unread(reads.used, carried_map, st, segments, was) or None
             except Exception as err:
                 rec["readback"] = _err(err, run.address, run.names, run.secrets)
@@ -773,7 +784,8 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     field_results: dict[str, str] = {}
     fails: list[str] = []
     if step.fields and post is not None and intent is not None:
-        field_results, fails = judge_fields(step, dev, run.pre, intent, post, carried_map, segments)
+        field_results, fails = judge_fields(step, dev, run.pre, intent, post, carried_map, segments,
+                                            seen=run.seen_segments)
     check: Any = None
     if step.check is not None:
         verdict, why = step.check()
@@ -1192,6 +1204,7 @@ async def _run_device(target: _survey.Heard, n: int | None, args: argparse.Names
         report["device"]["encryption"] = str(getattr(dev, "encryption", None))
         mark = watch.mark()
         st, assigned, segments = await poll(dev)
+        _saw(run, st, segments)
         start = await capture_start(dev, target.adv, watch.window(mark), kind=kind, polled=st,
                                     assigned=assigned, segments=segments,
                                     ask=_ask_yes_no if policy.prompts else None)

@@ -184,9 +184,11 @@ Notes:
   `aa a5` read per group of segments: H6047, H6097, H61A8) whose group reply is lost leaves that group's
   segments out of the read-back: a touched segment missing is not read (the step `unverifiable`, which
   `--ask unverifiable` asks about), never a failure, and a whole-device colour read through the segments
-  counts every segment held before the step, not only the ones returned. A hand-written
+  counts every segment held before the step or set by any poll of the run (a group lost in two polls
+  running too), not only the ones returned. A hand-written
   plan's check reads the same state: a check that reads a field the poll didn't read back (the segments
-  where some are missing too) leaves the step `unverifiable` (the report's `readback_unread`). A segment brightness step expects the whole groups the
+  where some are missing too, against the same expected segments) leaves the step `unverifiable` (the
+  report's `readback_unread`). A segment brightness step expects the whole groups the
   row's strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped
   when the first poll read no start for it.
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
