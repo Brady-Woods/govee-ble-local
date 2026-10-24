@@ -1305,23 +1305,28 @@ model, from which the shipped readers are generated).
   it.
 - Nothing else for existing SKUs. What changes for the SKUs admitted at 1.6.1:
   - under Fixed: H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1), the segment brightness
-    of H6098 / H8098 / H6690, a refused or unacked live `33 b2` check on the account-locked SKUs, and decision 2's
-    live mask, which changes the whole-device colour, colour-temperature and segment frames of the 13 h61d3
-    IC-sized SKUs admitted by default at 1.6.1 (H6641, H6640, H61B3, H61B6, H1A42, H1A43, H1A44, H1AA2, H1AA5,
-    H1AB1, H1AB2, H1AB3, H1B6A) and H6641's `DeviceProfile.segments` (16 -> 14);
+    of H6098 / H8098 / H6690, a refused or unacked live `33 b2` check on the account-locked plugs (H5080, H5082,
+    H5083, H5085, H5089, H5160, H5161), and decision 2's live mask, which changes the whole-device colour,
+    colour-temperature and segment frames of the 13 h61d3 IC-sized SKUs admitted by default at 1.6.1 (H6641,
+    H6640, H61B3, H61B6, H1A42, H1A43, H1A44, H1AA2, H1AA5, H1AB1, H1AB2, H1AB3, H1B6A) and H6641's
+    `DeviceProfile.segments` (16 -> 14);
   - in this section: the 42 SKUs without segment colour temperature, the device-info reads of H60B1 / H7056 /
-    H1630 / R1630, H8015's colour-temperature pair, a reported tint colour, which now reads as colour temperature
-    on the stock colour page (31 of these SKUs, starred in the stock colour page entry; the user's decisions 25
-    and 27), H6061's 20 panels (its whole-device masks `ff ff 7f` -> `ff ff 0f` and a 5-group read-back, the
-    user's decision 25, D1), and the segment state after a whole-device colour or Kelvin write on every profile whose state holds
-    segments (55a5c20, the user's decision 26);
+    H1630 / R1630, H8015's colour-temperature pair and its admission by default (it was behind `allow_modelled` at
+    1.6.1), the stock colour page's reading of a reported colour on 31 of these SKUs (starred in the stock colour
+    page entry: a tint colour reads as colour temperature, the user's decisions 25 and 27, and a black one as
+    (1, 1, 1); on H60A6 and H6061 the same read's segments take part, decisions 29 and 30), H6061's 20 panels (its
+    whole-device masks `ff ff 7f` -> `ff ff 0f` and a 5-group read-back, the user's decision 25, D1), and the
+    segment state after a whole-device colour or Kelvin write on every profile whose state holds segments
+    (55a5c20, the user's decision 26);
   - and H61B8 / H61B9 / H61F2 / H61F5 / H61F6, behind `allow_modelled` at 1.6.1, take the live mask and are admitted
     by default (Added).
 
-  Beyond these, each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`; computed
-  from a v1.6.1 export) resolves to the same profile at every pact its rows list and at none, with and without
-  `allow_modelled`, so its frames and decoded state are unchanged, the segment state after a whole-device write
-  aside. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`):
+  Beyond these, each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to
+  the same profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames and
+  decoded state are unchanged, the segment state after a whole-device write aside. This list was computed from a
+  v1.6.1 export: each of the 104 SKUs' profiles at every pact either tree lists, at an unknown one and at none,
+  with and without `allow_modelled`, and the frames and decoded state of a poll and write sequence over nine reply
+  sets. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`):
   H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3 and thirteen dreamcolorlightv1 71 /
   123 SKUs (H618C / H619B / H619C / H619D / H619E / H61A3 / H61A5 / H6172 / H6173 / H618E / H618F / H61B2 / H80B5)
   with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 / H6013 /
