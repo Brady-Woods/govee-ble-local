@@ -53,7 +53,7 @@ model, from which the shipped readers are generated).
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
     `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
     which is not re-activated, since the app sends no bare `33 05 04` for one, and whose colour is then not
-    compared), `partial` (a field differs, or a start field the run changed didn't read back
+    compared: its segment levels, which are brightness, are still put back and checked), `partial` (a field differs, or a start field the run changed didn't read back
     after the restore: a lost or rejected reply, a start segment no reply set, recorded as `unread`, so an
     acked write the device didn't apply is retried and printed `NOT RESTORED`, never passed as `exact`; a
     hand-written plan's step, judged on no field, counts as changing colour, brightness and power, and the

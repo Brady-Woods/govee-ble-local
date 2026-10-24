@@ -457,14 +457,15 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
             for name, want, notes, read in (
                     (listed[0], order, [] if "segments" in caps else [restore.SEGMENT_COLOURS_NOTE],
                      {"scene_code", "segments"}),
-                    (None, [], [restore.scene_unlisted(1)], {"scene_code", "segments"}),
+                    (None, [dev.set_segment_brightness] if levels else [], [restore.scene_unlisted(1)],
+                     {"scene_code", "segments"}),
                     (listed[0], [dev.set_scene_by_name], unread if "segments" in caps else [],
                      {"scene_code"})):
                 noted = restore.Outcome()
                 scened = restore.StartState(state, frozenset(read), kind, active_scene=name)
                 acts = restore._colour_actions(dev, scened, noted, None)
                 if [a[1] for a in acts] != want or noted.unrestorable != notes or (
-                        acts and acts[-1][2] != (listed[0],)):
+                        name and acts[-1][2] != (listed[0],)):
                     bad.append(f"{sku}: a scene start put back by {[a[0] for a in acts]}, {noted}")
         if kind != "card" and profile.readback != "none":
             try:
@@ -557,10 +558,10 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     assert [readback.unread({"segments"}, carries, walked, None, was) for was in ((), {0, 1})] == [
         [], ["segments"]]
     # in a scene its segments' colours are the colour-mode memory (aa a5 reads it, the scene leaves it): a
-    # restore check compares them too, unless the restore noted it can't write them, and nothing of a scene
-    # the catalog doesn't list; only the segments its poll set; a plug's relay is put back unless the
-    # restore's own poll read it as it started, a segment level unless that poll set it as it started; a
-    # gradual flag nobody read is noted
+    # restore check compares them too, unless the restore noted it can't write them, and of a scene the
+    # catalog doesn't list only the segment levels (put back, as brightness); only the segments its poll
+    # set; a plug's relay is put back unless the restore's own poll read it as it started, a segment level
+    # unless that poll set it as it started; a gradual flag nobody read is noted
     from govee_ble_local.models import DeviceState
 
     watch = readback.FrameWatch("AA:BB:CC:DD:EE:01")
@@ -584,7 +585,7 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
                                   frozenset({"scene_code", "segments"}))
     painted_over = await restore.check_restore(painted, in_scene, restore.Outcome(), watch)
     assert painted_over.result == "partial" and set(painted_over.diffs) == {"segments"}
-    for note, result in ((restore.SEGMENT_COLOURS_NOTE, "close"), (restore.scene_unlisted(5), "unverified")):
+    for note, result in ((restore.SEGMENT_COLOURS_NOTE, "close"), (restore.scene_unlisted(5), "close")):
         assert (await restore.check_restore(painted, in_scene, restore.Outcome(unrestorable=[note]),
                                             watch)).result == result
     painted.state = DeviceState(segments=[Segment(1, (0, 255, 0), 100)])   # segment 1: a write's intent

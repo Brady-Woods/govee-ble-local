@@ -16,13 +16,13 @@ memory, which a scene leaves as it is and ``aa a5`` reads (firmware-sourced: the
 change them under a scene too. Segments the start's poll didn't read (a group reply lost, a whole read
 failed) can't be put back that way, and are recorded unrestorable (:func:`segment_gaps`). A scene the
 catalog doesn't list is not re-activated (the app sends no bare ``33 05 04`` for a scene it doesn't list,
-CLAUDE.md rule 1): it is recorded unrestorable, nothing of its colour is sent, and the check doesn't
-compare it. :func:`check_restore` polls once more and compares what
-that poll reads back with the start (a plug: its outlets' relay bits too; in a scene, the segments' colours
-too). Each unrestorable entry starts with what it is about (``colour:``, ``scene:``, ``segments:``,
-``brightness:``, ``power:``, ``relay:``, ``gradual:``): :func:`unrestorable_written` tells which the run's
-writes changed. Segments are
-compared only where the poll set them (:attr:`.readback.Poll.segments`): a status burst that lost a colour
+CLAUDE.md rule 1): it is recorded unrestorable, and nothing of its colour is sent or compared; its segment
+levels, which are brightness and need no scene, are put back and checked. :func:`check_restore` polls
+once more and compares what that poll reads back with the start (a plug: its outlets' relay bits too; in a
+scene, the segments' colours too). Each unrestorable entry starts with what it is about (``colour:``,
+``scene:``, ``segments:``, ``brightness:``, ``power:``, ``relay:``, ``gradual:``):
+:func:`unrestorable_written` tells which the run's writes changed. Segments are compared only where the
+poll set them (:attr:`.readback.Poll.segments`): a status burst that lost a colour
 group keeps the segments it held, a write's intent among them. A start field that poll didn't read back (a
 lost or rejected reply, a segment no reply set) and that the run's writes changed is ``unread``, which
 makes the check ``partial``: an acked write the device didn't apply would otherwise pass unseen.
@@ -53,8 +53,8 @@ def segments_unread(indices: Collection[int] | None, what: str) -> str:
 def scene_unlisted(code: Any) -> str:
     """The unrestorable entry for a scene start the bundled catalog doesn't list at the scene set in force."""
     return (f"scene: {code} is not in the bundled catalog at this scene set, so it is not re-activated "
-            "(the app sends no bare 33 05 04 for a scene it doesn't list): its colour, segments and effect "
-            "are left as the run made them")
+            "(the app sends no bare 33 05 04 for a scene it doesn't list): its colour, its segment colours "
+            "and its effect are left as the run made them")
 
 
 def segment_runs(segments: Any) -> list[tuple[RGB, list[int]]]:
@@ -299,11 +299,12 @@ def _colour_actions(dev: Any, start: StartState, out: Outcome,
     if "scene_code" in read and st.scene_code is not None and "scenes" in caps:
         # As the library activates a scene: by name (with its upload) where the catalog lists the start's
         # scene, after the segment colours and levels the run changed (each a colour-mode write, which leaves
-        # the scene); one it doesn't list is not re-activated, and nothing of its colour is sent.
+        # the scene); one it doesn't list is not re-activated, and nothing of its colour is sent: only the
+        # segment levels the run changed, which are brightness and need no scene.
         name = start.active_scene
         if not (name and name in _listed_scenes(dev)):
             out.unrestorable.append(scene_unlisted(st.scene_code))
-            return []
+            return _segment_levels(dev, start, fresh) if "segments" in read else []
         colours = _segment_colours(dev, start, out, fresh) if "segments" in read else []
         levels = _segment_levels(dev, start, fresh) if "segments" in read else []
         return [*colours, *levels, (f"scene {name!r} by name (uploaded where it needs it)",
@@ -442,10 +443,11 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
     now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned, segments=segments)
     raw = bool(getattr(profile, "brightness_range", None) or getattr(profile, "brightness_by_pact", ()))
     # What the restore recorded it can't put back is not compared: a scene the catalog doesn't list leaves
-    # its whole colour as the run made it; segment colours the row can't write leave those (levels compared).
+    # its whole colour as the run made it (its segment levels compared); segment colours the row can't write
+    # leave those (levels compared).
     unlisted = any(u.startswith("scene:") for u in check.unrestorable)
-    left = frozenset(COLOUR_FIELDS) if unlisted else frozenset()
-    colours = SEGMENT_COLOURS_NOTE not in check.unrestorable
+    left = frozenset(COLOUR_FIELDS) - {"segments"} if unlisted else frozenset()
+    colours = not unlisted and SEGMENT_COLOURS_NOTE not in check.unrestorable
     compared = 0
     for field in FIELDS:
         if field not in start.read or field in left:
