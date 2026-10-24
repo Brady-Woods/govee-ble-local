@@ -1089,7 +1089,14 @@ model, from which the shipped readers are generated).
   `SubMode4Color`). So the H6052's `0d 00 00 00`, for one, reads as `rgb_color` (1, 1, 1), not (0, 0, 0), on
   every row with the stock page; `color_page: none` rows and rows without a page read it as decoded. `segments`
   keep the black the device reported, and `last_color_temp_kelvin` is as before (the Kelvin sync, `:1211`,
-  tests the original `d` with `KelvinConfig.f:144-157`, and black is no tint).
+  tests the original `d` with `KelvinConfig.f:144-157`, and black is no tint). A report that the decode reads as
+  a Kelvin above 0 still reads as that Kelvin. That holds on the H60501 screen (H6050 / H6051 / H6073) too, where
+  the app can show another colour: `H60501InfoDetail:137-143` puts the report's tint bytes in `d` where the
+  report carries them, and `H605051NewDetailVm.T4:496-510` replaces them only when `KelvinConfig.d:125-131`
+  finds a tint for that Kelvin (`Constant.getTemColorByKelvin:991-1005` finds none for a Kelvin off the 100 K
+  steps inside the device's range, or outside 1000-10000). So for such a Kelvin the page shows the wire tint,
+  and a black tint as (1, 1, 1). That gap applies to every tint, not only black, and this change leaves it
+  open.
   - Admitted by default and changed (* = admitted at 1.6.1): bulblightv3 **H6005*** (20), **H6004* / H6006* /
     H6008* / H6009†* / H600A†* / H600B†* / H600C†* / H600D†* / H6010†* / H6011†* / H6013†* / H800B†*** (64),
     **H1501* / H601A* / H601B* / H601C* / H601D* / H801A* / H801C* / H801D* / R1501*** (111), **H14C0 / H14A1 /
