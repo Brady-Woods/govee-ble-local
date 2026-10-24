@@ -69,7 +69,7 @@ from .masking import (
     write_text_atomic,
 )
 from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step
-from .readback import FrameWatch, Judgement, carried, judge, judge_fields, outlet_mask, poll
+from .readback import FrameWatch, Judgement, Reads, carried, judge, judge_fields, outlet_mask, poll, unread
 from .restore import (
     CHANGES,
     Outcome,
@@ -125,15 +125,26 @@ class ConnectSkipped(Exception):
 class _Console:
     """The tester's terminal. Output never raises: the first write that fails (a closed tty, a broken pipe
     through ``| tee``) silences the rest, so no console write can stand between a device write and its
-    restore. After SIGHUP or SIGTERM (:func:`_main_with_signals`) nobody is asked anything either."""
+    restore. Input never raises either: the end of it (a hang-up, Ctrl-D, stdin at its end) or a read that
+    fails is no answer, now and for the rest of the run. After SIGHUP or SIGTERM
+    (:func:`_main_with_signals`) nobody is asked anything either."""
 
-    dead: bool = False             # a write failed: nothing more is printed
+    dead: bool = False             # a write (or a read) failed: nothing more is printed
+    deaf: bool = False             # input ended (EOF): nothing more can be answered
+    hung_up: bool = False          # a SIGHUP came: the terminal is gone
     stopped_by: str | None = None  # "SIGHUP" / "SIGTERM": the run is stopping on that signal
+    interrupted: bool = False      # a first interrupt (Ctrl-C or a signal) was absorbed: the run is stopping
+    sigints: int = 0               # the Ctrl-Cs (SIGINT) counted by _main_with_signals
 
     @property
     def gone(self) -> bool:
-        """No tester to ask: the output is dead, or a signal is stopping the run."""
-        return self.dead or self.stopped_by is not None
+        """No tester to ask: the output is dead, the input ended, or a signal is stopping the run."""
+        return self.dead or self.lost
+
+    @property
+    def lost(self) -> bool:
+        """Nobody can answer any more: the input ended (a hang-up) or a signal is stopping the run."""
+        return self.deaf or self.stopped_by is not None
 
 
 _CONSOLE = _Console()
@@ -141,7 +152,7 @@ _CONSOLE = _Console()
 
 def _say(*parts: object) -> None:
     """``print``, flushed, that never raises (see :class:`_Console`)."""
-    if _CONSOLE.dead or _CONSOLE.stopped_by == "SIGHUP":   # a hang-up: the terminal is gone
+    if _CONSOLE.dead or _CONSOLE.hung_up:   # a hang-up: the terminal is gone
         return
     try:
         print(*parts, flush=True)
@@ -221,7 +232,23 @@ async def _readline(prompt: str, reader: Callable[[str], str] | None = None) -> 
     """``reader(prompt)`` (``input``, or ``getpass`` for a secret) on a daemon thread. ``asyncio.to_thread``
     would run it in the default executor, which ``asyncio.run`` joins on the way out: after a Ctrl-C at a
     prompt the tool would hang, its summary printed, until the tester pressed Enter. Nothing joins a
-    daemon thread. With the console gone (:class:`_Console`) nobody can answer: ``""`` at once."""
+    daemon thread. With the console gone (:class:`_Console`) nobody can answer: ``""`` at once. A read that
+    fails (EIO) is no answer, ``""``, and so is the end of the input on a terminal (the tab closed: its
+    prompt sees EOF before its SIGHUP is handled; Ctrl-D): either leaves the console gone. The end of input
+    that is not a terminal (answers piped in, run out) raises EOFError in the caller."""
+    tty = _on_a_terminal()   # before the prompt: a hang-up under it may leave stdin no tty
+    try:
+        return await _read(prompt, reader)
+    except EOFError:
+        if not tty:
+            raise
+        _CONSOLE.deaf = True
+    except OSError:   # EIO: the terminal went away under the prompt
+        _CONSOLE.dead = True
+    return ""
+
+
+async def _read(prompt: str, reader: Callable[[str], str] | None) -> str:
     if _CONSOLE.gone:
         return ""
     loop = asyncio.get_running_loop()
@@ -251,16 +278,12 @@ async def _readline(prompt: str, reader: Callable[[str], str] | None = None) -> 
 
 async def _ask(question: str, enabled: bool, free_text: bool = False) -> str | None:
     """y / n / s(kip), or a free-text answer; None when prompting is disabled or the console is gone (a
-    hang-up, a signal, a terminal that fails to read or write: :class:`_Console`). End of input raises."""
+    hang-up, the end of the input, a signal, a terminal that fails to read or write: :class:`_Console`)."""
     if not enabled or _CONSOLE.gone:
         return None
     hint = "describe what you see" if free_text else "y = yes, n = no, s = skip"
     while True:
-        try:
-            raw = (await _readline(f"    ? {question} [{hint}]: ")).strip()
-        except OSError:   # EIO: the terminal went away under the prompt
-            _CONSOLE.dead = True
-            return None
+        raw = (await _readline(f"    ? {question} [{hint}]: ")).strip()
         if _CONSOLE.gone:
             return None
         if free_text:
@@ -385,8 +408,8 @@ class Policy:
     settle: float = 1.0
     route: str = "mac"
     gate: bool = False        # --all: a device that can't be reached is "not reached", not a failure
-    unattended: bool = False  # --unattended: --all may write visibly with no terminal on stdin (recorded)
-    writes_off: str | None = None   # --all started outside the window without --yes: no write all run
+    unattended: bool = False  # --unattended: visible writes with no terminal on stdin (recorded)
+    writes_off: str | None = None   # why no visible write is made all run (the window, no terminal)
 
     @property
     def prompts(self) -> bool:
@@ -485,8 +508,9 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
         if outlet_mask(_survey.classify(h.sku, h.pact)[2]) != 0x01:
             line += (f" ({h.outlets} outlets, switched together: it toggles only if they all start on, or "
                      "all off)")
-        if not policy.prompts:
-            _say(f"{line}: allow-listed, but a relay toggle needs the run-time confirmation: read-only")
+        if not policy.prompts or policy.writes_off:
+            why = policy.writes_off or "a relay toggle needs the run-time confirmation"
+            _say(f"{line}: allow-listed, but {why}: read-only")
             continue
         _say(f"{line}: allow-listed for a relay toggle")
         await _ask(f"What is plugged into {h.ref}? (not saved anywhere)", True, free_text=True)
@@ -577,6 +601,7 @@ class _Run:
     extra: Callable[[], dict[str, Any]]
     pre: Any = None
     wrote: bool = False
+    changed: set[str] = dataclasses.field(default_factory=set)   # what the write steps sent change
     interrupted: bool = False   # a first Ctrl-C reached this device's run (it then restores and stops)
     abandon: bool = False       # a second one: the restore is abandoned
     warnings: list[str] = dataclasses.field(default_factory=list)
@@ -652,6 +677,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     sent_error: str | None = None
     # Before the send: a Ctrl-C (CancelledError) can land after its frame went out and before its ack.
     run.wrote = run.wrote or (step.kind == "write" and step.refusal is None)
+    run.changed.update(rec.get("changes") or ())
     try:
         await step.action()
         rec["sent"] = "ok"
@@ -669,6 +695,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     intent = _state_copy(dev) if step.fields else None
     post: Any = None
     carried_map: dict[str, str | None] = {}
+    segments: frozenset[int] | None = None
     if step.refusal is None:
         await asyncio.sleep(policy.settle)
         rmark = run.watch.mark()
@@ -679,24 +706,38 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
             rec["readback_matches"] = None
         else:
             try:
-                st, assigned = await poll(dev)
-                rec["readback"] = snapshot(st, run.plan.snapshot_keys, run.extra())
-                rec["readback_matches"] = step.expect(rec["readback"]) if step.expect else None
+                st, assigned, segments = await poll(dev)
                 post = st
-                carried_map = carried(dev, run.watch.window(rmark), run.warnings, assigned=assigned)
+                carried_map = carried(dev, run.watch.window(rmark), run.warnings, assigned=assigned,
+                                      segments=segments)
+                rec["readback"] = snapshot(st, run.plan.snapshot_keys, run.extra())
+                rec["readback_matches"] = None
+                if step.expect is not None:
+                    # A hand-written plan's check runs on the library's state: each state field it reads
+                    # must be one this poll read back, or its holding proves nothing (readback.unread).
+                    reads = Reads(rec["readback"])
+                    rec["readback_matches"] = step.expect(reads)
+                    rec["readback_unread"] = unread(reads.used, carried_map, st, segments) or None
             except Exception as err:
                 rec["readback"] = _err(err, run.address, run.names, run.secrets)
                 rec["readback_matches"] = False
-        _say(f"    read-back: {rec['readback']}  match={rec['readback_matches']}")
+        missed = rec.get("readback_unread")
+        _say(f"    read-back: {rec['readback']}  match={rec['readback_matches']}"
+             + (f" (not read back: {', '.join(missed)})" if missed else ""))
     field_results: dict[str, str] = {}
     fails: list[str] = []
     if step.fields and post is not None and intent is not None:
-        field_results, fails = judge_fields(step, dev, run.pre, intent, post, carried_map)
+        field_results, fails = judge_fields(step, dev, run.pre, intent, post, carried_map, segments)
     check: Any = None
     if step.check is not None:
         verdict, why = step.check()
         check = (verdict, why) if verdict in ("pass", "fail", "unverifiable") else None
     expect_match = rec.get("readback_matches") if step.expect is not None else None
+    if rec.get("readback_unread") and expect_match is not None:
+        expect_match = None   # the plan's check read a field this poll didn't read back
+        if check is None:
+            check = ("unverifiable", f"the plan's check reads {', '.join(rec['readback_unread'])}, "
+                                     "which this poll didn't read back")
 
     def verdict_with(observed: str | None) -> Judgement:
         return judge(step, sent_error=sent_error, field_results=field_results, fails=fails, observed=observed,
@@ -751,19 +792,38 @@ async def _connect(dev: Any, target: _survey.Heard, policy: Policy) -> None:
 
 
 def _absorb(run: _Run) -> bool:
-    """A CancelledError reached a device's run. The first Ctrl-C (``asyncio.run`` cancels the main task) is
-    absorbed: noted on ``run`` and the task uncancelled, so the device is restored and the run stops after
-    it (True). A later one is the abandonment (False, and ``run.abandon`` set): the second Ctrl-C makes
-    ``asyncio.run`` raise KeyboardInterrupt and cancel every task, here or in the same breath as the first
-    (a task with two cancellations requested)."""
+    """A CancelledError reached a device's run. The first interrupt (a Ctrl-C: ``asyncio.run`` cancels the
+    main task; a SIGHUP or SIGTERM, :func:`_main_with_signals`) is absorbed: noted on ``run`` and the task
+    uncancelled, so the device is restored and the run stops after it (True). The second Ctrl-C is the
+    abandonment (False, and ``run.abandon`` set): it makes ``asyncio.run`` raise KeyboardInterrupt and cancel
+    every task (:func:`_second_ctrl_c`)."""
     task = asyncio.current_task()
-    if run.interrupted or (task is not None and task.cancelling() > 1):
+    if _second_ctrl_c(run, task):
         run.interrupted = run.abandon = True
         return False
     run.interrupted = True
-    if task is not None:
-        task.uncancel()
+    _absorbed(task)
     return True
+
+
+def _second_ctrl_c(run: _Run, task: asyncio.Task[Any] | None) -> bool:
+    """Whether this cancellation is the second Ctrl-C's. Under :func:`_main_with_signals` the Ctrl-Cs are
+    counted, and only the second abandons: a SIGHUP or SIGTERM is a first interrupt, and cancels nothing
+    once one is under way, whatever the order (a Ctrl-C and a hang-up in the same breath included). Where
+    they are not counted (no signal came either), any cancellation after the first is the second, as is a
+    task with two cancellations requested at once."""
+    if _CONSOLE.sigints:
+        return _CONSOLE.sigints >= 2
+    if _CONSOLE.stopped_by is not None:
+        return False
+    return run.interrupted or (task is not None and task.cancelling() > 1)
+
+
+def _absorbed(task: asyncio.Task[Any] | None) -> None:
+    """Note a first interrupt as absorbed, run-wide (a signal after it cancels nothing), and uncancel."""
+    _CONSOLE.interrupted = True
+    if task is not None and task.cancelling():
+        task.uncancel()
 
 
 async def _carry_on(aw: Coroutine[Any, Any, T], run: _Run) -> T:
@@ -818,8 +878,14 @@ async def _reconnect(run: _Run, wait: float) -> None:
         await run.dev.connect()
 
 
-def not_restored(check: RestoreCheck) -> list[str]:
-    """What a ``partial`` or ``failed`` restore left changed: its fields' start and end, and its errors."""
+def not_restored(check: RestoreCheck, written: Collection[str] = (), wrote: bool = False) -> list[str]:
+    """What a ``partial`` or ``failed`` restore left changed: its fields' start and end, and its errors; for
+    an ``abandoned`` one (a second Ctrl-C) after the run wrote (``wrote``), what its writes changed
+    (``written``: :data:`.restore.CHANGES` values), all of it left as the run made it."""
+    if check.result == "abandoned":
+        what = ", ".join(sorted(written)) or "a write in flight"
+        return [f"restore abandoned (a second Ctrl-C): what the run changed ({what}) is left as the run "
+                "made it"] if wrote else []
     if check.result not in RESTORE_FAILED:
         return []
     out = [f"{field}: start {d.get('start')!r}, now {d.get('end')!r}" for field, d in check.diffs.items()]
@@ -975,7 +1041,8 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         text = json.dumps(report, indent=1, default=json_default) + "\n"
         write_text_atomic(report_path, mask_text(text, address, names, secrets))
 
-    def done(result: str, interrupted: bool = False) -> dict[str, Any]:
+    def done(result: str, interrupted: bool = False, wrote: bool = False,
+             changed: Collection[str] = ()) -> dict[str, Any]:
         report["result"] = result
         report["interrupted"] = interrupted
         save()
@@ -986,13 +1053,14 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         rec["counts"] = counts(report["steps"])
         rc = report.get("restore_check") or {}
         rec["restore"] = {k: rc.get(k) for k in ("result", "unrestorable", "diffs", "errors")} if rc else None
+        written = _written(report["steps"]) | set(changed)   # a write a Ctrl-C cut short has no record
         if rec["restore"] is not None:
             # what the run wrote and can never put back: a close or unverified restore doesn't clear the gate
             rec["restore"]["unrestorable_written"] = unrestorable_written(
-                list(rc.get("unrestorable") or []), _written(report["steps"]))
+                list(rc.get("unrestorable") or []), written)
             rec["restore"]["retries"] = report.get("restore_retries", 0)
-        rec["not_restored"] = [mask_text(w, address, names, secrets)
-                               for w in not_restored(RestoreCheck(**rc))] if rc else []
+        left = not_restored(RestoreCheck(**rc), written, wrote) if rc else []
+        rec["not_restored"] = [mask_text(w, address, names, secrets) for w in left]
         if not result.startswith(("completed", "interrupted", "skipped")):
             rec["errors"].append(rec["result"])
         return rec
@@ -1010,9 +1078,7 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         if not await _survey.acquire(target, policy.retries):
             return done("not reached: not heard again")
     except asyncio.CancelledError:   # the first Ctrl-C (a device's run is where the run is interruptible)
-        task = asyncio.current_task()
-        if task is not None:
-            task.uncancel()
+        _absorbed(asyncio.current_task())
         return done("interrupted", interrupted=True)
     # The library writes the capture under a hidden name; only its redaction (_finish) writes frames_path,
     # so a run killed before that leaves no raw capture under the name a tester attaches.
@@ -1030,11 +1096,6 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     profile = getattr(dev, "profile", None)
     kind = device_kind(profile) if profile is not None else "light"
     rec["kind"], rec["plan"] = kind, "generic" if is_generic else "hand"
-    # A row that needs a secret (every plug) tested without one: its 33 b2 unlock is never sent, so the
-    # device can't pass the gate (summary.device_passed), whatever its read steps say; a row whose connect
-    # sends the app's empty 33 b2 check without one (empty_secret_check) is no such device once that check
-    # was acked (_empty_check_held).
-    rec["no_secret"] = bool(getattr(profile, "requires_secret", False)) and not secret
     report.update(kind=kind, plan={"sku": plan.sku, "title": plan.title}, plan_kind=rec["plan"],
                   ref=target.ref, device={"address": mask_address(address), "name": mask_name(target.name)})
     codes: dict[str, int] = {}
@@ -1062,9 +1123,10 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         run.connected = True
         report["device"]["encryption"] = str(getattr(dev, "encryption", None))
         mark = watch.mark()
-        st, assigned = await poll(dev)
+        st, assigned, segments = await poll(dev)
         start = await capture_start(dev, target.adv, watch.window(mark), kind=kind, polled=st,
-                                    assigned=assigned, ask=_ask_yes_no if policy.prompts else None)
+                                    assigned=assigned, segments=segments,
+                                    ask=_ask_yes_no if policy.prompts else None)
         initial = snapshot(st, plan.snapshot_keys, extra())
         report["initial_state"] = initial
         report["start"] = start.summary()
@@ -1103,18 +1165,22 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
             run.abandon = run.interrupted = True
         watch.detach()
     report["result"] = result
-    if rec["no_secret"] and _empty_check_held(profile, watch):
-        rec["no_secret"] = False
+    rec["no_secret"] = _no_secret(profile, secret, watch)
     _print_steps(report)
-    return done(result, interrupted=run.interrupted)
+    return done(result, interrupted=run.interrupted, wrote=run.wrote, changed=run.changed)
 
 
-def _empty_check_held(profile: Any, watch: FrameWatch) -> bool:
-    """A row that sends the app's empty ``33 b2`` check when it has no secret (``empty_secret_check``, read
-    with ``getattr``: older wheels have none) sent it and got its ack: its connect holds without one, as the
-    app's does, so the run needs no secret for it."""
-    return bool(getattr(profile, "empty_secret_check", False)) and watch.sent("33b2") \
+def _no_secret(profile: Any, secret: bytes | None, watch: FrameWatch) -> bool:
+    """A row that needs a secret (every plug) tested without one: its 33 b2 unlock is never sent, so the
+    device can't pass the gate (summary.device_passed), whatever its read steps say. A row whose connect sends
+    the app's empty ``33 b2`` check without one (``empty_secret_check``, read with ``getattr``: older wheels
+    have none) is no such device once the run sent that check and got its ack: its connect holds without a
+    secret, as the app's does."""
+    if not getattr(profile, "requires_secret", False) or secret:
+        return False
+    held = bool(getattr(profile, "empty_secret_check", False)) and watch.sent("33b2") \
         and watch.acked("33b2") is not None
+    return not held
 
 
 def _print_steps(report: dict[str, Any]) -> None:
@@ -1202,6 +1268,37 @@ def _say_not_restored(devices: Collection[dict[str, Any]]) -> None:
         _say(f"NOT RESTORED: {d.get('ref')} {d.get('sku')} ({d.get('kind')}): {'; '.join(d['not_restored'])}")
 
 
+async def _start_writes(order: list[_survey.Heard], args: argparse.Namespace, policy: Policy,
+                        window: Window) -> str:
+    """``--all``: whether this run may write visibly (``policy.writes_off`` set where not), and the start
+    question where one is asked: ``""`` to go on, ``"lost"`` when nobody could answer it (a hang-up, the end
+    of the input, a signal), else why the run is refused (exit 3)."""
+    visible = [h for h in order if h.kind != "plug" or h.address.upper() in policy.toggle]
+    writes = bool(visible) and not policy.read_only
+    if writes and not args.yes and not window.allows_writes():
+        # The start confirmation is the run's: a run started before the window opens without --yes
+        # writes nothing visible all the way through, even once the window opens.
+        policy.writes_off = f"started outside {window.label()} without --yes: read steps only this run"
+        _say(f"{len(visible)} device(s) would change visibly, but the run started outside "
+             f"{window.label()} without --yes: read steps only, for the whole run.")
+    elif writes and not policy.unattended and not _on_a_terminal():
+        # Nobody at a terminal (a cron job, a detached session, stdin redirected): no visible change without
+        # the explicit, recorded --unattended.
+        policy.writes_off = NO_TERMINAL
+        _say(f"{len(visible)} device(s) would change visibly, but no terminal is attached: read steps only "
+             "(pass --unattended to allow visible writes).")
+    elif writes and not args.yes:
+        if not policy.prompts:
+            return f"{len(visible)} device(s) would change visibly: a run without prompts needs --yes."
+        reply = await _ask(f"{len(visible)} device(s) will change visibly (each is restored after); "
+                           "start?", True)
+        if reply is None and _CONSOLE.lost:
+            return "lost"
+        if reply != "yes":
+            return "Not started."
+    return ""
+
+
 async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: Window,
                   lib: dict[str, Any]) -> int:
     """``--all``: list every Govee device heard, then test each supported one (and with
@@ -1229,39 +1326,26 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
         summary.save()
         _say(f"\nNothing to test. Summary -> {summary.path}")
         return EXIT_NOTHING
-    await _confirm_plugs(chosen, args, policy, file_secrets)
-    summary.secrets = list(policy.secrets.values())
-    summary.data["options"]["toggle_plugs"] = len(policy.toggle)
     order = sorted(chosen, key=lambda h: (KIND_ORDER.get(h.kind or "light", 0),
                                           -(h.rssi if h.rssi is not None else -999)))
-    visible = [h for h in order if h.kind != "plug" or h.address.upper() in policy.toggle]
-    writes = bool(visible) and not policy.read_only
-    if writes and not args.yes and not window.allows_writes():
-        # The start confirmation is the run's: a run started before the window opens without --yes
-        # writes nothing visible all the way through, even once the window opens.
-        policy.writes_off = f"started outside {window.label()} without --yes: read steps only this run"
-        _say(f"{len(visible)} device(s) would change visibly, but the run started outside "
-             f"{window.label()} without --yes: read steps only, for the whole run.")
-    elif writes and not policy.unattended and not _on_a_terminal():
-        # Nobody at a terminal (a cron job, a detached session, stdin redirected): no visible change without
-        # the explicit, recorded --unattended.
-        policy.writes_off = NO_TERMINAL
-        _say(f"{len(visible)} device(s) would change visibly, but no terminal is attached: read steps only "
-             "(pass --unattended to allow visible writes).")
-    elif writes and not args.yes:
-        if not policy.prompts:
-            summary.save()
-            _say(f"{len(visible)} device(s) would change visibly: a run without prompts needs --yes.")
-            return EXIT_REFUSED
-        reply = await _ask(f"{len(visible)} device(s) will change visibly (each is restored after); "
-                           "start?", True)
-        if reply != "yes":
-            summary.save()
-            _say("Not started.")
-            return EXIT_REFUSED
-    summary.data["options"]["writes_off"] = policy.writes_off
-    summary.save()
+    # A first interrupt (Ctrl-C, SIGHUP, SIGTERM) or a console gone at a question before the first device
+    # or between two: nothing more is run, and the summary lists the rest as not run (exit 130).
     interrupted = False
+    try:
+        await _confirm_plugs(chosen, args, policy, file_secrets)
+        refused = await _start_writes(order, args, policy, window)
+    except asyncio.CancelledError:
+        _absorbed(asyncio.current_task())
+        refused = None
+    summary.secrets = list(policy.secrets.values())
+    summary.data["options"].update(toggle_plugs=len(policy.toggle), writes_off=policy.writes_off)
+    if refused == "lost" or refused is None:
+        interrupted = True
+    elif refused:
+        summary.save()
+        _say(refused)
+        return EXIT_REFUSED
+    summary.save()
     stopped: str | None = None   # a device left not restored: the rest are not run unless the tester goes on
     for n, target in enumerate(order, 1):
         if interrupted or stopped:
@@ -1274,9 +1358,15 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
         interrupted = bool(rec.get("interrupted"))
         if rec.get("not_restored") and not interrupted and n < len(order):
             _say_not_restored([rec])
-            reply = await _ask(f"{target.ref} is NOT RESTORED (see above): go on with the next device?",
-                               policy.prompts)
-            if reply != "yes":
+            try:
+                reply = await _ask(f"{target.ref} is NOT RESTORED (see above): go on with the next device?",
+                                   policy.prompts)
+            except asyncio.CancelledError:
+                _absorbed(asyncio.current_task())
+                reply = None
+            if reply is None and (_CONSOLE.interrupted or (policy.prompts and _CONSOLE.lost)):
+                interrupted = True
+            elif reply != "yes":
                 stopped = f"stopped: {target.ref} was not restored"
     summary.save()
     _say("\nSummary")
@@ -1337,11 +1427,24 @@ async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Wi
               f"Report -> {report_path}")
         return EXIT_NOTHING
     _say(window.banner())
-    await _confirm_plugs([target], args, policy, file_secrets)
+    if not policy.read_only and not policy.unattended and not _on_a_terminal():
+        # As --all: nobody at a terminal, no visible change without the explicit, recorded --unattended.
+        policy.writes_off = NO_TERMINAL
+        _say("No terminal is attached: read steps only (pass --unattended to allow visible writes).")
+    interrupted = False
+    try:
+        await _confirm_plugs([target], args, policy, file_secrets)
+    except asyncio.CancelledError:   # a first interrupt before the device: it is not run
+        _absorbed(asyncio.current_task())
+        interrupted = True
     summary = Summary(out_dir / f"fieldtest-summary-{stamp}.json", _base_summary(args, policy, lib))
     summary.mask = _masks([target])
     summary.secrets = list(policy.secrets.values())
     summary.data["heard"] = [target.masked()]
+    summary.data["options"].update(toggle_plugs=len(policy.toggle), writes_off=policy.writes_off)
+    if interrupted:
+        summary.add_device(_not_run(target))
+        return EXIT_INTERRUPTED
     rec = await run_device(target, None, args, out_dir, stamp, policy, lib)
     summary.add_device(rec)
     _say("\nSummary")
@@ -1412,8 +1515,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--yes", action="store_true",
                     help="skip the 'N devices will change visibly; start?' question")
     ap.add_argument("--unattended", action="store_true",
-                    help="--all: allow visible writes with no terminal on stdin (recorded in the summary); "
-                         "without it such a run is read-only")
+                    help="allow visible writes with no terminal on stdin (recorded in the summary and every "
+                         "report); without it such a run, one device or --all, is read-only")
     ap.add_argument("--library", choices=("auto", "checkout", "installed"), default="auto",
                     help="the library to test: auto (this checkout once its classes are generated, else the "
                          "installed one), checkout, or installed (the release-candidate wheel; refuses a "
@@ -1433,20 +1536,38 @@ def _main_with_signals(main: Coroutine[Any, Any, int]) -> int:
     """``asyncio.run(main)`` with SIGHUP and SIGTERM handled as the first Ctrl-C is: the main task is
     cancelled once, so the current device is restored and the run stops after it (the summary saved, exit
     130). The terminal closing, the app quitting or a dropped SSH session sends SIGHUP: the console is gone
-    then, so nothing more is printed or asked (:class:`_Console`). A repeat of either signal changes nothing
-    (the restore in progress carries on); a second Ctrl-C still abandons it."""
+    then, so nothing more is printed or asked (:class:`_Console`). Once a first interrupt is under way (a
+    Ctrl-C absorbed, or one requested and not yet handled, :func:`_absorb`), either signal only stops the
+    asking: it cancels nothing, so the restore in progress carries on; a second Ctrl-C still abandons it."""
     async def guarded() -> int:
         loop = asyncio.get_running_loop()
         task = asyncio.current_task()
         installed: list[int] = []
 
         def stop(name: str) -> None:
+            if name == "SIGHUP":
+                _CONSOLE.hung_up = True   # before anything is printed: the terminal is gone
             if _CONSOLE.stopped_by is not None:
                 return
             _say(f"\n{name}: restoring the current device, then stopping ...")
             _CONSOLE.stopped_by = name
-            if task is not None:
+            if task is not None and not _CONSOLE.interrupted and not _CONSOLE.sigints:
                 task.cancel()
+
+        # asyncio.run's own SIGINT handler (the first Ctrl-C cancels the main task, the second raises
+        # KeyboardInterrupt), each Ctrl-C counted first (_second_ctrl_c).
+        previous = signal.getsignal(signal.SIGINT)
+
+        def on_sigint(signum: int, frame: Any) -> None:
+            _CONSOLE.sigints += 1
+            if callable(previous):
+                previous(signum, frame)
+            else:
+                raise KeyboardInterrupt
+
+        counted = callable(previous) and threading.current_thread() is threading.main_thread()
+        if counted:
+            signal.signal(signal.SIGINT, on_sigint)
 
         for name in ("SIGHUP", "SIGTERM"):
             sig = getattr(signal, name, None)
@@ -1463,6 +1584,8 @@ def _main_with_signals(main: Coroutine[Any, Any, int]) -> int:
             for sig in installed:
                 with contextlib.suppress(Exception):
                     loop.remove_signal_handler(sig)
+            if counted and signal.getsignal(signal.SIGINT) is on_sigint:
+                signal.signal(signal.SIGINT, previous)   # asyncio.run puts its own back to the default
 
     return asyncio.run(guarded())
 
@@ -1502,6 +1625,11 @@ def main(argv: list[str] | None = None) -> int:
         _say("\nInterrupted.")
         return EXIT_INTERRUPTED
     finally:
-        if _CONSOLE.dead:   # stdout is broken: point it at /dev/null, so its flush at exit doesn't complain
+        if _CONSOLE.dead or _CONSOLE.hung_up:
+            # The terminal is gone (or stdout broken): point stdout and stderr at /dev/null, so their flush
+            # at exit doesn't fail (EIO: exit 120) over what is still buffered.
             with contextlib.suppress(Exception):
-                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+                null = os.open(os.devnull, os.O_WRONLY)
+                for stream in (sys.stdout, sys.stderr):
+                    with contextlib.suppress(Exception):
+                        os.dup2(null, stream.fileno())

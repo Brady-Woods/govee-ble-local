@@ -110,7 +110,7 @@ def test_plan_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(ft, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: d)
-    args = ft.parse_args(["--no-prompt", "--settle", "0"])
+    args = ft.parse_args(["--no-prompt", "--settle", "0", "--unattended"])
     assert asyncio.run(ft.run(args, tmp_path, "T")) == 0
 
     report_path = tmp_path / "h6047-report-T.json"

@@ -6,7 +6,7 @@ checks the behaviours issue #13 corrected, one connection, read-back after every
 * whole-device power is ``33 01`` (the app's main switch); the per-bar buttons are ``33 36 <left> <right>``
 * read-back covers the 10 real segments (no phantom segments 10 and 11)
 * colour temperature carries the app's tint, and ``aa 05 15`` reads one kelvin per bar
-* the gradual flag (``33 a3`` write, ``aa a3`` read)
+* the gradual flag (``33 a3`` write, ``aa a3`` read), skipped when the first poll read none
 
 "left" and "right" are the app's logical bar names: the bars can be swapped during setup, so the
 physical bar may be the other one. Scenes are not part of this plan.
@@ -125,12 +125,16 @@ def build_steps(ctx: PlanContext) -> list[Step]:
              "the app sends CCT, 33 05 15 01 ff ff ff 0f a0 ff d5 a1 ff 03, not RGB (Config.Yt)",
         expect=lambda st: (st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None
                            and _kelvin(st, 4000, 4000))))
+    # The gradual flag only from a start the first poll read: the library holds none where it read none (its
+    # aa a3 reply lost), and nothing could put an unknown flag back.
+    unknown = ctx.start is not None and getattr(ctx.start.state, "gradual", None) is None
+    skip = "gradual not read at the start: it couldn't be restored" if unknown else ""
     s.append(Step("gradual_on", partial(dev.set_gradual, True), state_is("gradual", True),
                   "Did the light carry on normally (no flicker, no colour change)?",
-                  note="33 a3 01; read-back aa a3 (no visible effect expected)"))
+                  note="33 a3 01; read-back aa a3 (no visible effect expected)", skip=skip))
     s.append(Step("gradual_off", partial(dev.set_gradual, False), state_is("gradual", False),
                   "Did the light carry on normally (no flicker, no colour change)?",
-                  note="33 a3 00"))
+                  note="33 a3 00", skip=skip))
     return s
 
 

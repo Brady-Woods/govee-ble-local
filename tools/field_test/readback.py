@@ -10,7 +10,10 @@ is judged only where the profile reads it, a reply that carries it came back in 
 field whose intent is the value it had before the step proves nothing by matching (the read can't tell
 the write from no write), and an RGB read after a colour-temperature write proves nothing on a mode report
 that can't show a colour temperature (the ``_nocct`` decodes, ``rgb``): both are not read, and the tester
-is asked.
+is asked. Segments count only where the poll set them (:attr:`Poll.segments`): a status burst's colour groups
+are merged over the segments held, so a segment whose group no reply carried keeps a write's intent. A
+hand-written plan's check (``expect``) reads the same state, so a check that reads a field the poll didn't
+read back proves nothing either (:class:`Reads`, :func:`unread`).
 
 :class:`FrameWatch` keeps, per frame, only its time, direction and first two bytes; for an ``33 xx`` ack
 its status byte, for an ``aa 05`` reply its sub-mode and for an ``aa 01`` reply its first byte (a plug's
@@ -24,8 +27,8 @@ import contextlib
 import dataclasses
 import logging
 import time
-from collections.abc import Iterable, Iterator, Mapping
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from collections.abc import Collection, Iterable, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias
 
 if TYPE_CHECKING:
     from .plan import Step
@@ -238,6 +241,15 @@ NOT_SET = "the poll's reply set nothing here (the library dropped or rejected it
 COLOURS = ("rgb_color", "color_temp_kelvin")
 
 
+class Poll(NamedTuple):
+    """One poll (:func:`poll`): the state it returned, the state fields it assigned and the segments its
+    replies set."""
+
+    state: Any
+    assigned: frozenset[str] | None   # None: the tool can't see the assignments (no dataclass state)
+    segments: frozenset[int] | None   # the indices of the segments the poll set; None: can't tell
+
+
 @contextlib.contextmanager
 def assignments(dev: Any) -> Iterator[set[str] | None]:
     """The state fields the library assigns on ``dev``'s state object while the block runs (a poll: what its
@@ -270,11 +282,28 @@ def assignments(dev: Any) -> Iterator[set[str] | None]:
             setattr(cls, "__setattr__", own)   # noqa: B010
 
 
-async def poll(dev: Any) -> tuple[Any, frozenset[str] | None]:
-    """``await dev.update()``, and the fields it assigned (:func:`assignments`)."""
+def _segments_held(dev: Any) -> list[Any] | None:
+    held = getattr(getattr(dev, "state", None), "segments", None)
+    return list(held) if isinstance(held, list) else None
+
+
+async def poll(dev: Any) -> Poll:
+    """``await dev.update()``, the fields it assigned (:func:`assignments`) and the segments its replies set.
+
+    ``segments`` is assigned whenever any segment reply came back, but a status burst's colour groups are
+    merged over the segments held (``merge_segments``: a burst that lost its tail keeps the others), so a
+    segment whose group no reply carried keeps the value it had, a write's intent included. The library
+    keeps those very objects in the merged list and builds a new one for each segment a reply set, so the
+    segments the poll set are the ones that are not the objects held before it."""
+    before = _segments_held(dev)
     with assignments(dev) as seen:
         state = await dev.update()
-    return state, None if seen is None else frozenset(seen)
+    after = _segments_held(dev)
+    segments: frozenset[int] | None = None
+    if before is not None and after is not None:
+        held = {id(s) for s in before}   # ``before`` keeps them alive: an id is not reused meanwhile
+        segments = frozenset(s.index for s in after if id(s) not in held)
+    return Poll(state, None if seen is None else frozenset(seen), segments)
 
 
 # -- which fields a poll carried ------------------------------------------------------------------
@@ -332,18 +361,23 @@ def _brightness_pending(dev: Any) -> bool:
 
 
 def carried(dev: Any, frames: Iterable[Frame], warnings: list[str] | None = None, *,
-            assigned: Iterable[str] | None = None) -> dict[str, str | None]:
+            assigned: Iterable[str] | None = None,
+            segments: Collection[int] | None = None) -> dict[str, str | None]:
     """``{field: None}`` for each state field the poll's replies (``frames``, one poll's window) carried and
     the poll set (``assigned``, :func:`poll`; None: unknown, so nothing counts), ``{field: reason}`` for the
     others: what a step on this row can be judged on. A colour the poll's mode report set to a value counts
     too where the decode table here says that report can't carry it: the library read it (a newer library's
-    fold, such as a Kelvin tint read as its colour temperature)."""
+    fold, such as a Kelvin tint read as its colour temperature). ``segments`` (:attr:`Poll.segments`): a poll
+    that set none of them read no segment, whatever it assigned (:func:`judge_fields` judges only the ones it
+    set)."""
     warnings = [] if warnings is None else warnings
     frames = list(frames)
     out = _carried(dev, frames, warnings)
     if assigned is None:
         return {f: reason if reason is not None else NOT_SEEN for f, reason in out.items()}
     seen = set(assigned)
+    if segments is not None and not segments:
+        seen.discard("segments")
     state = getattr(dev, "state", None)
     for field, reason in out.items():
         if reason is None and field not in seen:
@@ -351,6 +385,11 @@ def carried(dev: Any, frames: Iterable[Frame], warnings: list[str] | None = None
         elif reason is not None and field in COLOURS and field in seen and _mode_reported(dev, frames) \
                 and getattr(state, field, None) is not None:
             out[field] = None
+    # A colour temperature above 0 the poll read says the device shows white, no RGB colour: the library
+    # clears the RGB with it (``apply_kelvin_report``, the bars' matching pair), and that "none" is read too.
+    if out["color_temp_kelvin"] is None and out["rgb_color"] is not None and "rgb_color" in seen \
+            and getattr(state, "color_temp_kelvin", None) and getattr(state, "rgb_color", None) is None:
+        out["rgb_color"] = None
     return out
 
 
@@ -448,6 +487,37 @@ def _carried(dev: Any, frames: list[Frame], warnings: list[str]) -> dict[str, st
     return out
 
 
+class Reads(dict[str, Any]):
+    """A read-back snapshot as a hand-written plan's ``expect`` gets it, noting the keys it reads
+    (:func:`unread`): its check is judged on the library's state, which holds a write's intent wherever the
+    poll set nothing."""
+
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        super().__init__(data)
+        self.used: set[str] = set()
+
+    def __getitem__(self, key: str) -> Any:
+        self.used.add(key)
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None, /) -> Any:
+        self.used.add(key)
+        return super().get(key, default)
+
+
+def unread(keys: Iterable[str], carried_map: Mapping[str, str | None], post: Any,
+           segments: Collection[int] | None) -> list[str]:
+    """Of the state fields among ``keys`` (what a plan's ``expect`` read, :class:`Reads`), the ones this poll
+    didn't read back (:func:`carried`), ``segments`` too where it set only some of the segments held: a
+    check that reads one proves nothing by holding (the step is unverifiable, and the tester is asked)."""
+    keys = set(keys)
+    out = {k for k in keys if k in FIELDS and carried_map.get(k, NOT_SEEN) is not None}
+    if "segments" in keys and segments is not None and \
+            {s.index for s in getattr(post, "segments", None) or []} - set(segments):
+        out.add("segments")
+    return sorted(out)
+
+
 # -- verdicts -------------------------------------------------------------------------------------
 
 
@@ -485,12 +555,20 @@ def _value(attr: str, seg: Any) -> Any:
     return tuple(value) if attr == "rgb" and value is not None else value
 
 
-def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str) -> tuple[str, str | None]:
-    """A segment step: the touched indices as intended, the others as they read before the step. Touched
-    segments that already read as intended before it prove nothing by reading so again."""
-    after, wanted, before = _segments(post), _segments(intent), _segments(pre)
+def _not_set(indices: Iterable[int]) -> str:
+    return f"segments {sorted(indices)} not set by this poll's replies (no reply carried their group)"
+
+
+def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str,
+                    read: Collection[int] | None = None) -> tuple[str, str | None]:
+    """A segment step: the touched indices as intended, the others as they read before the step, each judged
+    only where the poll set it (``read``, :attr:`Poll.segments`; None: every segment held). Touched segments
+    that already read as intended before it prove nothing by reading so again, and a touched segment the
+    poll didn't set proves nothing at all."""
+    held, wanted, before = _segments(post), _segments(intent), _segments(pre)
+    after = held if read is None else {i: s for i, s in held.items() if i in read}
     if not after:
-        return "not read: no segments in the read-back", None
+        return "not read: " + ("no segments in the read-back" if not held else _not_set(held)), None
     bad: list[str] = []
     for i, seg in sorted(after.items()):
         ref = wanted.get(i) if i in step.touched else before.get(i)
@@ -500,11 +578,14 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str) -> 
         if want is not None and not _same(attr, tuple(want) if attr == "rgb" else want,
                                           tuple(got) if attr == "rgb" and got else got, raw=False):
             bad.append(f"segment {i}: {got} (wanted {want})")
-    missing = [i for i in step.touched if i not in after]
+    missing = [i for i in step.touched if i not in held]
     if missing:
         bad.append(f"segments {missing} missing from the read-back")
     if bad:
         return "fail", "; ".join(bad[:4])
+    unset = [i for i in step.touched if i not in after]
+    if unset:
+        return f"not read: {_not_set(unset)}", None
     if step.kind == "write" and all(i in before and i in wanted and _value(attr, before[i]) is not None
                                     and _value(attr, before[i]) == _value(attr, wanted[i])
                                     for i in step.touched):
@@ -513,8 +594,10 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str) -> 
 
 
 def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
-                 carried_map: Mapping[str, str | None]) -> tuple[dict[str, str], list[str]]:
-    """``{field: "pass" | "fail" | "not read: <reason>"}`` for the step's fields, and the failures."""
+                 carried_map: Mapping[str, str | None],
+                 segments: Collection[int] | None = None) -> tuple[dict[str, str], list[str]]:
+    """``{field: "pass" | "fail" | "not read: <reason>"}`` for the step's fields, and the failures. A segment
+    is judged only where the poll set it (``segments``, :attr:`Poll.segments`; None: every one held)."""
     out: dict[str, str] = {}
     fails: list[str] = []
     raw = _raw_brightness(dev)
@@ -524,7 +607,7 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                 out[field] = f"not read: {carried_map['segments']}"
                 continue
             verdict, why = _judge_segments(step, pre, intent, post,
-                                           "brightness" if field == "segment_brightness" else "rgb")
+                                           "brightness" if field == "segment_brightness" else "rgb", segments)
             out[field] = verdict
             if why:
                 fails.append(f"{field}: {why}")
@@ -533,19 +616,23 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
         if field == "rgb_color" and reason is not None and carried_map.get("segments") is None:
             # read back through the segment colours: every segment the colour the library intended
             want = getattr(intent, "rgb_color", None)
-            segs = _segments(post)
+            held = _segments(post)
+            segs = held if segments is None else {i: s for i, s in held.items() if i in segments}
             if want is None or not segs:
                 out[field] = "not read: " + ("no RGB intended" if want is None else "no segments read")
                 continue
             off = [i for i, s in segs.items() if s.rgb is None or tuple(s.rgb) != tuple(want)]
             was = _segments(pre)
-            if not off and step.kind == "write" and was and all(
+            if off:
+                out[field] = "fail"
+                fails.append(f"rgb_color (segments): {len(off)} of {len(segs)} segments not {tuple(want)}")
+            elif len(segs) < len(held):   # the whole device was written: a segment not read proves nothing
+                out[field] = f"not read: {_not_set(set(held) - set(segs))}"
+            elif step.kind == "write" and was and all(
                     s.rgb is not None and tuple(s.rgb) == tuple(want) for s in was.values()):
                 out[field] = f"not read: {UNCHANGED}"
-                continue
-            out[field] = "fail" if off else "pass"
-            if off:
-                fails.append(f"rgb_color (segments): {len(off)} of {len(segs)} segments not {tuple(want)}")
+            else:
+                out[field] = "pass"
             continue
         kelvin_intended = getattr(intent, "color_temp_kelvin", None) is not None
         if field == "rgb_color" and reason is None and kelvin_intended \

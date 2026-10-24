@@ -197,14 +197,26 @@ def test_runner_runs_a_registered_plan_with_its_own_snapshot_keys_and_restore(
     ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     log: list[Any] = []
-    rc, dev = _run_fake_plan(ft, runner, monkeypatch, tmp_path, [], log)
+    rc, dev = _run_fake_plan(ft, runner, monkeypatch, tmp_path, ["--unattended"], log)
     assert rc == 0 and dev.calls == [("power", False), ("power", True)]
     rep = json.loads((tmp_path / "h9996-report-T.json").read_text())
     assert rep["plan"]["sku"] == "H9996" and rep["restore"] == "ok" and len(log) == 1
     assert rep["initial_state"] == {"is_on": True, "tint": 5, "serial_number": "<redacted>",
                                     "wifi_mac": "<redacted>"}
     assert [r["readback_matches"] for r in rep["steps"]] == [True, False]
+    # the first check reads is_on, which no reply of this profile-less fake carried: it holds, and proves
+    # nothing; the second fails on a key that is no state field the library could have intended
+    assert [(r["verdict"], r["readback_unread"]) for r in rep["steps"]] == [
+        ("unverifiable", ["is_on"]), ("fail", None)]
     assert "AA:BB:CC:DD:EE:11" not in (tmp_path / "h9996-report-T.json").read_text()
+    # with no terminal on stdin, one device as --all: no visible write unless --unattended, recorded
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    rc, dev = _run_fake_plan(ft, runner, monkeypatch, alone, [], log)
+    summary = json.loads((alone / "fieldtest-summary-T.json").read_text())
+    assert rc == 0 and dev.calls == [] and summary["options"]["unattended"] is False
+    assert summary["options"]["writes_off"] == runner.NO_TERMINAL
+    assert {s["verdict"] for s in summary["devices"][0]["steps"]} == {"skipped"}
 
 
 def test_sku_flag_is_passed_to_discovery_case_insensitively(
@@ -261,12 +273,13 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     write the tool reads from each profile's connect writes is what the library's every connect sends but a
     plug's time sync. One property over the table, not a test per SKU; then what a read-back proves: an RGB
     read after a Kelvin write on a report with no Kelvin nothing, a field intended as it already was nothing
-    by matching."""
+    by matching, a segment only where the poll set it; what a restore puts back and checks; the H6047 plan's
+    gradual toggle from a read start only; when a Ctrl-C abandons a restore."""
     from unittest.mock import AsyncMock
 
     from fake_ble import ble_device
 
-    from govee_ble_local import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
+    from govee_ble_local import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported, profile_for
     from govee_ble_local.devices import profile as table
     from govee_ble_local.devices.device import Device
     from govee_ble_local.models import Segment
@@ -337,7 +350,7 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
             state.scene_code, state.segments = 1, [Segment(0, None, 100)]
             scened = restore.StartState(state, frozenset({"scene_code", "segments"}), kind,
                                         active_scene=listed[0])
-            acts = restore._colour_actions(dev, scened, restore.Outcome(), False)
+            acts = restore._colour_actions(dev, scened, restore.Outcome(), None)
             levels = "segments" in {str(c) for c in dev.capabilities} and getattr(
                 dev, "supports_segment_brightness", True)
             if acts[-1][1:] != (dev.set_scene_by_name, (listed[0],)) or (
@@ -345,7 +358,7 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
                 bad.append(f"{sku}: a scene start restored by {[a[0] for a in acts]}")
         if kind != "card" and profile.readback != "none":
             try:
-                _, seen = await readback.poll(dev)
+                seen = (await readback.poll(dev)).assigned
             except GoveeBleError:
                 seen = frozenset()
             if seen is None or seen & set(readback.FIELDS):
@@ -377,6 +390,125 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     both = dict.fromkeys(("rgb_color", "color_temp_kelvin"))   # the library read the Kelvin (a newer fold)
     assert readback.judge_fields(kelvin, None, was, want, want, both) == (
         {"color_temp_kelvin": "pass", "rgb_color": f"not read: {readback.UNCHANGED}"}, [])
+    # a colour the decode table says a 0x15 mode report can't carry counts where the poll set it to a value
+    # (a newer library's fold), and so does the "no RGB" a Kelvin above 0 brings; not a None it set
+    polled = SimpleNamespace(readback="polled", mode_color_parse="rgb_kelvin", bar_switch=False,
+                             gradual=False, color_readback="mechanism_a_direct", brightness_by_pact=(),
+                             detail_power_read=False)
+    mode_15 = [readback.Frame(0.0, "rx", "aa05", 0x15), readback.Frame(0.0, "rx", "aaa5")]
+    for rgb, kelvin_read, counted in (((1, 2, 3), None, True), (None, 5500, True), (None, None, False)):
+        fake = SimpleNamespace(profile=polled, pact=None,
+                               state=SimpleNamespace(rgb_color=rgb, color_temp_kelvin=kelvin_read))
+        got = readback.carried(fake, mode_15, assigned={"rgb_color", "color_temp_kelvin"})
+        assert (got["rgb_color"] is None) is counted, (rgb, kelvin_read)
+    # and segments assigned by a poll that set none of them (a burst merged over what was held) read nothing
+    assert readback.carried(fake, mode_15, assigned={"segments"}, segments=frozenset())["segments"] == (
+        readback.NOT_SET)
+    # segments: a touched one already as intended proves nothing, nor does a whole-device colour every segment
+    # already showed; only the segments the poll set are judged (a burst that lost a colour group keeps the
+    # others as they were, a write's intent among them)
+    red, blue = (255, 0, 0), (0, 0, 255)
+    segs = SimpleNamespace(segments=[Segment(0, red, 100), Segment(1, blue, 100)], rgb_color=blue)
+    seg_step = ft.Step("segment_rgb_0", generic._nothing, None, "", fields=("segments",), touched=(0,))
+    rgb_step = ft.Step("rgb_blue", generic._nothing, None, "", fields=("rgb_color",))
+    carries = {"segments": None, "rgb_color": "the mode reply carries no RGB"}
+
+    def unset(i: int) -> str:
+        return f"not read: segments [{i}] not set by this poll's replies (no reply carried their group)"
+
+    for step, field, read, verdict in ((seg_step, "segments", None, f"not read: {readback.UNCHANGED}"),
+                                       (seg_step, "segments", {1}, unset(0)),
+                                       (rgb_step, "rgb_color", None, "fail"),
+                                       (rgb_step, "rgb_color", {1}, unset(0))):
+        assert readback.judge_fields(step, None, segs, segs, segs, carries, read)[0] == {field: verdict}
+    all_blue = SimpleNamespace(segments=[Segment(0, blue, 100), Segment(1, blue, 100)], rgb_color=blue)
+    assert readback.judge_fields(rgb_step, None, all_blue, all_blue, all_blue, carries)[0] == {
+        "rgb_color": f"not read: {readback.UNCHANGED}"}
+    # in a scene its segments' colours are the scene's: a restore check compares their levels only, and only
+    # the segments its poll set; a plug's relay is put back unless the restore's own poll read it as it
+    # started, a segment level unless that poll set it as it started; a gradual flag nobody read is noted
+    from govee_ble_local.models import DeviceState
+
+    runner = importlib.import_module("field_test.runner")
+    watch = readback.FrameWatch("AA:BB:CC:DD:EE:01")
+    relay: list[bool] = []
+
+    async def answered_by_nobody() -> None:   # a poll answered by nobody: it sets nothing
+        return None
+
+    async def power(*args: Any) -> None:
+        relay.append(args[-1])
+    painted = SimpleNamespace(profile=polled, pact=None, state=DeviceState(scene_code=5))
+
+    async def scene_poll() -> Any:   # sets segment 0 alone, the others kept as they were held
+        watch.frames.extend((readback.Frame(0.0, "rx", "aa05", readback.SCENE_SUB), mode_15[1]))
+        held = [g for g in painted.state.segments if g.index != 0]
+        painted.state.scene_code, painted.state.segments = 5, [Segment(0, (9, 9, 9), 100), *held]
+        return painted.state
+
+    painted.update = scene_poll
+    in_scene = restore.StartState(DeviceState(scene_code=5, segments=[Segment(0, red, 100)]),
+                                  frozenset({"scene_code", "segments"}))
+    assert (await restore.check_restore(painted, in_scene, restore.Outcome(), watch)).result == "exact"
+    painted.state = DeviceState(segments=[Segment(1, (0, 255, 0), 100)])   # segment 1: a write's intent
+    two = restore.StartState(DeviceState(segments=[Segment(0, (9, 9, 9), 100), Segment(1, blue, 100)]),
+                             frozenset({"segments"}))
+    assert (await restore.check_restore(painted, two, restore.Outcome(), watch)).result == "exact"
+    painted.capabilities, painted.supports_segment_brightness = ("segments",), True
+    painted.set_segment_brightness = power
+    levels = restore.StartState(DeviceState(segments=[Segment(1, blue, 60)]), frozenset({"segments"}))
+    painted.state = DeviceState(segments=[Segment(1, blue, 60)])
+    assert [a[2] for a in restore._segment_levels(painted, levels, frozenset())] == [([1], 60)]
+    assert restore._segment_levels(painted, levels, frozenset({1})) == []
+    flag = SimpleNamespace(profile=SimpleNamespace(readback="polled", gradual=True), capabilities=(),
+                           zones=(), state=DeviceState(), update=answered_by_nobody)
+    unread = restore.StartState(DeviceState(), frozenset())
+    noted = (await restore.restore_start(flag, unread, str)).unrestorable
+    gradual = "gradual: unknown at the start (not read back)"
+    assert gradual in noted and restore.unrestorable_written(noted, {"gradual"}) == [gradual]
+    lamp = SimpleNamespace(profile=SimpleNamespace(readback="plug"), capabilities=(), set_power=power,
+                           state=DeviceState(is_on=True), update=answered_by_nobody)
+    was_on = restore.StartState(DeviceState(is_on=True), frozenset({"is_on"}), "plug")
+    assert (await restore.restore_start(lamp, was_on, str)).actions == ["relay on"] and relay == [True]
+    # a row with the app's empty unlock check needs no secret once that check was sent and acked; a step with
+    # no field (a hand-written plan's) may change any colour or brightness
+    acked = readback.FrameWatch("AA:BB:CC:DD:EE:01")
+    acked.frames += [readback.Frame(0.0, "tx", "33b2"), readback.Frame(0.0, "rx", "33b2", 0)]
+    empty, needs = (SimpleNamespace(requires_secret=True, empty_secret_check=e) for e in (True, False))
+    assert [runner._no_secret(p, s, w) for p, s, w in (
+        (empty, None, acked), (empty, None, watch), (needs, None, acked), (needs, b"\x01" * 8, watch))] == [
+        False, True, True, False]
+    assert runner._changes(ft.Step("hand", generic._nothing, None, "")) == ["brightness", "colour"]
+    # only the second counted Ctrl-C abandons a restore; after a SIGHUP or SIGTERM no uncounted cancellation
+    # does either (a write's ack timeout firing with it); with neither, any cancellation after the first does
+    first = SimpleNamespace(interrupted=True)
+    try:
+        for console, abandons in ((runner._Console(stopped_by="SIGTERM"), False),
+                                  (runner._Console(sigints=1), False), (runner._Console(sigints=2), True),
+                                  (runner._Console(), True)):
+            runner._CONSOLE = console
+            assert runner._second_ctrl_c(first, None) is abandons, console
+    finally:
+        runner._CONSOLE = runner._Console()
+    # a poll whose burst merged one colour group over the segments held set only that group's segments
+    kept = Segment(0, red, 100)
+    merged = SimpleNamespace(state=DeviceState(segments=[kept]))
+
+    async def merge() -> Any:
+        merged.state.segments = [kept, Segment(1, blue, 100)]
+        return merged.state
+
+    merged.update = merge
+    assert (await readback.poll(merged)).segments == {1}
+    # the H6047's own plan toggles the gradual flag only from a start the first poll read
+    h6047 = Device(profile_for("H6047"), ble_device("AA:BB:CC:DD:EE:47", "ihoment_H6047_1A2B"), None,
+                   sku="H6047")
+    for flag, skipped in ((None, True), (False, False)):
+        st = h6047.snapshot()
+        st.gradual = flag
+        ctx = ft.PlanContext(h6047, "H6047", {}, start=restore.StartState(st, frozenset()))
+        skips = {s.name: bool(s.skip) for s in ft.PLANS["H6047"].build_steps(ctx)}
+        assert (skips["gradual_on"], skips["gradual_off"]) == (skipped, skipped)
 
 
 def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt(
@@ -395,8 +527,10 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     write went out, before its ack, still restores the H6047 and leaves no raw capture. With no terminal on
     stdin, --all writes nothing visible unless --unattended. Modelled and unsupported devices are listed only.
     A write step nothing verified keeps the gate incomplete (exit 4). A capture a killed run left raw is
-    redacted at the next start; GOVEE_FIELD_TEST_NOW pins the clock under pytest only. Every file the runs
-    write is masked."""
+    redacted at the next start; GOVEE_FIELD_TEST_NOW pins the clock under pytest only. A Ctrl-C and then a
+    SIGHUP as the restore is checked abandon nothing; a tab closed at the start question, or at "go on with
+    the next device?" after a NOT RESTORED, stops the run with the rest not run (interrupted). Every file the
+    runs write is masked."""
     from fake_ble import FakeGovee, FirmwareGovee, ble_device, frame, virtual_time
     from test_h6047_field_test import _Sim
 
@@ -556,6 +690,20 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert f"{entries[1].ref}: read-only" in shown and typed["options"]["toggle_plugs"] == 0
     assert "write_tx power" not in plug.sim.requests()
 
+    # the tab closes at the start question: on a terminal its prompt sees EOF, so nobody can answer; nothing
+    # is started, and the summary lists every device as not run (interrupted), exit 130
+    def hung_up(_prompt: str = "") -> str:
+        raise EOFError
+
+    calls = light.establish_calls
+    with monkeypatch.context() as m:
+        m.setattr(runner, "_on_a_terminal", lambda: True)
+        m.setattr("builtins.input", hung_up)
+        rc, closed, _ = run_all("--all", "--only", entries[0].ref)
+    assert rc == 130 and runner._CONSOLE.deaf and light.establish_calls == calls
+    assert [d["result"] for d in closed["devices"]] == ["not run (interrupted)"]
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+
     # the window closes during the H14A1's turn: in its re-scan (21:59:50 to 22:00:30), so its connect is
     # not made; or once it is connected, so nothing polls it after (a dropped link would reconnect)
     def at_2200(real: Any) -> Any:
@@ -620,27 +768,43 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert set(day) >= {"tool_version", "route", "library", "window", "options", "heard", "devices", "totals"}
 
     # the terminal closes (SIGHUP) once the first write (power off) reached the light, before its ack: the
-    # H6047 is restored as on a Ctrl-C, and its capture is redacted into its own name (no raw file left)
+    # H6047 is restored as on a Ctrl-C, and its capture is redacted into its own name (no raw file left); a
+    # Ctrl-C there instead, and the tab closed as its restore is checked: the hang-up cuts nothing short
     def hang_up_before_the_ack(client: Any, plain: bytes) -> None:
         if plain[:3] != b"\x33\x01\x00" or main.get("cut"):
             return answer(client, plain)
         main["cut"] = True
         sim.write(plain)
-        os.kill(os.getpid(), signal.SIGHUP)
+        if not main["ctrl_c"]:
+            return os.kill(os.getpid(), signal.SIGHUP)
+        ctrl_c = signal.getsignal(signal.SIGINT)   # what the terminal's Ctrl-C runs: asyncio.run's, counted
+        assert callable(ctrl_c)
+        ctrl_c(signal.SIGINT, None)
+
+    real_check = runner.check_restore
+
+    def hang_up_in_the_check(*a: Any, **k: Any) -> Any:
+        if main["ctrl_c"]:
+            os.kill(os.getpid(), signal.SIGHUP)
+        return real_check(*a, **k)
 
     light.on_write = hang_up_before_the_ack
+    monkeypatch.setattr(runner, "check_restore", hang_up_in_the_check)
     hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)   # never the suite's death, if no handler took it
-    try:
-        rc, cut, cut_out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes",
-                                   "--unattended", "--only", entries[0].ref, signals=True)
-    finally:
-        signal.signal(signal.SIGHUP, hup)
-    assert rc == 130 and main["cut"] and cut["devices"][0]["result"] == "interrupted"
-    assert runner._CONSOLE.stopped_by == "SIGHUP"
-    assert cut["devices"][0]["restore"]["result"] == "exact"
-    assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
-    assert sorted(p.name for p in cut_out.iterdir() if "frames" in p.name) == ["h6047-01-frames-T.jsonl"]
-    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    for ctrl_c in (False, True):
+        main.update(cut=False, ctrl_c=ctrl_c)
+        try:
+            rc, cut, cut_out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes",
+                                       "--unattended", "--only", entries[0].ref, signals=True)
+        finally:
+            signal.signal(signal.SIGHUP, hup if ctrl_c else signal.SIG_IGN)
+        assert rc == 130 and main["cut"] and cut["devices"][0]["result"] == "interrupted"
+        assert (runner._CONSOLE.stopped_by, runner._CONSOLE.sigints) == ("SIGHUP", int(ctrl_c))
+        assert cut["devices"][0]["restore"]["result"] == "exact" and not cut["devices"][0]["not_restored"]
+        assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+        assert sorted(p.name for p in cut_out.iterdir() if "frames" in p.name) == ["h6047-01-frames-T.jsonl"]
+        monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    monkeypatch.setattr(runner, "check_restore", real_check)
 
     # a restore the light ignores at first (a dropout) is tried again and ends exact; one it ignores for good
     # is NOT RESTORED after its retries, and the run (no prompts) stops there; under the H6047's own plan the
@@ -675,6 +839,18 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert actions[0] == "the plan's restore" and "power on" in actions
     assert bars["plan"] == "hand" and bars["counts"]["fail"] == 0 and bars["restore"]["result"] == "exact"
     assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+    # with prompts, the tab closed at "go on with the next device?" after one: its prompt sees EOF on the
+    # terminal, so the rest are not run (interrupted), exit 130
+    main.update(restoring=False, ignore=3)
+    with monkeypatch.context() as m:
+        m.setattr(runner, "_on_a_terminal", lambda: True)
+        m.setattr("builtins.input", hung_up)
+        rc, lost, _ = run_all("--all", "--generic", "--force-hours", "--yes", "--only",
+                              f"{entries[0].ref},{entries[4].ref}")
+    assert rc == 130 and lost["devices"][0]["not_restored"]
+    assert lost["devices"][1]["result"] == "not run (interrupted)"
+    sim.pct = start[2]
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
     monkeypatch.setattr(runner, "restore_start", real_restore)
 
     # the gate: a write step nothing verified (no read-back carried it, no answer) leaves it incomplete, as
@@ -694,6 +870,12 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert [summary.gate_verdict({"devices": [d]}) for d in cases] == [
         "pass", "incomplete", "fail", "incomplete", "fail", "pass"]
     assert [runner._exit_code({"devices": [d]}, False) for d in (ok, unverified, failed)] == [0, 4, 1]
+    # a restore a second Ctrl-C abandoned after the run wrote is NOT RESTORED, with what the writes changed
+    abandoned = restore.RestoreCheck("abandoned")
+    assert runner.not_restored(abandoned, {"power", "brightness"}, True) == [
+        "restore abandoned (a second Ctrl-C): what the run changed (brightness, power) is left as the run "
+        "made it"]
+    assert runner.not_restored(abandoned, (), False) == []
     for path in (*out.iterdir(), *listed.iterdir(), *lit_out.iterdir(), *cut_out.iterdir()):
         text = path.read_text()
         assert "DD:EE" not in text and "1A2B" not in text, path.name

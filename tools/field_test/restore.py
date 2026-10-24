@@ -11,13 +11,15 @@ needs one), by code only where the catalog doesn't list it, after the segment le
 :func:`check_restore` polls once more and compares what that poll reads back with the start (a plug: its
 outlets' relay bits too; in a scene, the segments' levels but not their colours, which the scene paints).
 Each unrestorable entry starts with what it is about (``colour:``, ``scene:``, ``brightness:``, ``power:``,
-``relay:``): :func:`unrestorable_written` tells which the run's writes changed.
+``relay:``, ``gradual:``): :func:`unrestorable_written` tells which the run's writes changed. Segments are
+compared only where the poll set them (:attr:`.readback.Poll.segments`): a status burst that lost a colour
+group keeps the segments it held, a write's intent among them.
 """
 from __future__ import annotations
 
 import copy
 import dataclasses
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 from .readback import FIELDS, FrameWatch, carried, outlet_mask, poll, relay_bits
@@ -31,7 +33,7 @@ CHANGES: dict[str, str] = {
     "zone_color_temp_kelvin": "colour", "brightness": "brightness", "segment_brightness": "brightness",
     "is_on": "power", "zone_power": "power", "gradual": "gradual"}
 _ABOUT = {"colour": "colour", "scene": "colour", "brightness": "brightness", "power": "power",
-          "relay": "power"}
+          "relay": "power", "gradual": "gradual"}
 Ask = Callable[[str], Awaitable[str | None]]
 Describe = Callable[[BaseException], str]
 
@@ -73,11 +75,13 @@ class StartState:
 
 
 async def capture_start(dev: Any, adv: Any, frames: list[Any], *, kind: str, ask: Ask | None = None,
-                        polled: Any = None, assigned: frozenset[str] | None = None) -> StartState:
+                        polled: Any = None, assigned: frozenset[str] | None = None,
+                        segments: frozenset[int] | None = None) -> StartState:
     """The start state after the first poll (``frames``: that poll's window of the FrameWatch; ``polled``:
-    the state it returned, kept where the device has no ``snapshot()``; ``assigned``: the fields that poll
-    set, :func:`.readback.poll`)."""
-    read = frozenset(f for f, reason in carried(dev, frames, assigned=assigned).items() if reason is None)
+    the state it returned, kept where the device has no ``snapshot()``; ``assigned`` and ``segments``: the
+    fields and the segments that poll set, :func:`.readback.poll`)."""
+    read = frozenset(f for f, reason in carried(dev, frames, assigned=assigned, segments=segments).items()
+                     if reason is None)
     advertised: bool | None = None
     if "is_on" not in read and adv is not None:
         try:
@@ -121,9 +125,11 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
     caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
     fresh = getattr(p, "readback", "none") != "none" and start.kind != "card"
     polled: frozenset[str] = frozenset()
+    segments: frozenset[int] | None = None
     if fresh:
         try:
-            polled = (await poll(dev))[1] or frozenset()
+            _, assigned, segments = await poll(dev)
+            polled = assigned or frozenset()
         except Exception:
             fresh = False
 
@@ -145,12 +151,13 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
         elif not known("is_on") or dev.state.is_on is not started_on:
             await do(f"relay {'on' if started_on else 'off'}", dev.set_power, started_on)
         return out
-    colour = _colour_actions(dev, start, out, known("segments"))
+    colour = _colour_actions(dev, start, out, segments if known("segments") else None)
     restore_brightness = "brightness" in caps and "brightness" in read and bool(st.brightness)
     if "brightness" in caps and not restore_brightness:
         out.unrestorable.append("brightness: unknown at the start (not read back)")
-    if getattr(p, "gradual", False) and "gradual" in read and st.gradual is not None \
-            and (not known("gradual") or dev.state.gradual != st.gradual):
+    if getattr(p, "gradual", False) and ("gradual" not in read or st.gradual is None):
+        out.unrestorable.append("gradual: unknown at the start (not read back)")
+    elif getattr(p, "gradual", False) and (not known("gradual") or dev.state.gradual != st.gradual):
         await do("gradual", dev.set_gradual, bool(st.gradual))
     if started_on is None:
         out.unrestorable.append("power: unknown at the start")
@@ -174,8 +181,10 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
 Action = tuple[str, Callable[..., Awaitable[None]], tuple[Any, ...]]
 
 
-def _colour_actions(dev: Any, start: StartState, out: Outcome, fresh: bool) -> list[Action]:
-    """The colour to put back, by precedence: scene, per-bar Kelvin, whole Kelvin, mixed segments, RGB."""
+def _colour_actions(dev: Any, start: StartState, out: Outcome,
+                    fresh: Collection[int] | None) -> list[Action]:
+    """The colour to put back, by precedence: scene, per-bar Kelvin, whole Kelvin, mixed segments, RGB.
+    ``fresh``: the segments the restore's poll set (None: it set none, or failed)."""
     caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
     if not caps & {"rgb", "color_temp", "scenes"}:
         return []
@@ -226,12 +235,13 @@ def _listed_scenes(dev: Any) -> list[str]:
         return []
 
 
-def _segment_levels(dev: Any, start: StartState, fresh: bool) -> list[Action]:
-    """Per-segment brightness back where it was read and the run changed it (every level, when the
-    restore's first poll failed)."""
+def _segment_levels(dev: Any, start: StartState, fresh: Collection[int] | None) -> list[Action]:
+    """Per-segment brightness back where it was read and the run changed it: every level the restore's
+    first poll didn't set (``fresh``; None: it set none, or failed) is sent, since the one held for it may be
+    a write's intent."""
     if "segments" not in _caps(dev) or not getattr(dev, "supports_segment_brightness", True):
         return []
-    now = {s.index: s.brightness for s in (dev.state.segments or [])} if fresh else {}
+    now = {s.index: s.brightness for s in (dev.state.segments or []) if s.index in (fresh or ())}
     levels: dict[int, list[int]] = {}
     for seg in start.state.segments or []:
         if seg.brightness is not None and now.get(seg.index) != seg.brightness:
@@ -295,12 +305,12 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
         return check
     mark = watch.mark() if watch is not None else 0
     try:
-        post, assigned = await poll(dev)
+        post, assigned, segments = await poll(dev)
     except Exception as err:
         check.errors.append(f"final read-back: {type(err).__name__}")
         check.result = "failed"
         return check
-    now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned)
+    now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned, segments=segments)
     raw = bool(getattr(profile, "brightness_range", None) or getattr(profile, "brightness_by_pact", ()))
     in_scene = "scene_code" in start.read and start.state.scene_code is not None
     compared = 0
@@ -309,6 +319,8 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
             continue
         compared += 1
         want, got = getattr(start.state, field, None), getattr(post, field, None)
+        if field == "segments" and segments is not None:   # only the segments this poll set
+            got = [s for s in got or [] if s.index in segments]
         if _differs(field, want, got, raw, colours=not in_scene):
             check.diffs[field] = {"start": _show(field, want), "end": _show(field, got)}
     end_bits = relay_bits(watch.window(mark)) if watch is not None else None

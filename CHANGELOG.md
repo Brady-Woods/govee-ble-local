@@ -310,9 +310,15 @@ model, from which the shipped readers are generated).
     proves nothing. A write step's field intended as it already was proves nothing by matching, and an RGB
     read after a colour-temperature write proves nothing on a report with no Kelvin (`rgb_kelvin_0d_nocct`),
     where a colour the library itself read from the report (a Kelvin tint read as its colour temperature)
-    counts. Otherwise the step is `unverifiable`, and `--ask unverifiable` (the `--all` default) asks the
-    tester only there. A segment-brightness step expects the whole groups the row's strip dims
-    (`segment_brightness_groups`), and the gradual toggle is skipped when no start was read for it.
+    counts, as does the "no RGB" a colour temperature above 0 brings. Segments are judged only where the poll
+    set them: a status burst's colour groups are merged over the segments held, so one whose group no reply
+    carried keeps a write's intent (`readback.Poll.segments`: the segment objects the poll made new). A
+    hand-written plan's check (`expect`) is judged only on fields the poll read back: one that reads a field
+    it didn't leaves the step `unverifiable` (`readback_unread` in the report; `readback_matches` still records
+    the check on the library's state). Otherwise the step is `unverifiable`, and `--ask unverifiable` (the
+    `--all` default) asks the tester only there. A segment-brightness step expects the whole groups the row's
+    strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped when no
+    start was read for it; a gradual flag nobody read is noted in the restore (`gradual: unknown`).
   - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
     `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
@@ -325,10 +331,15 @@ model, from which the shipped readers are generated).
     hand-written plan's restore is followed by the generic one from the captured start. One Ctrl-C restores the device wherever it lands: in a step (also
     between a command's frame and its ack, so the device counts as written to before the send), during the
     restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
-    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`). SIGHUP (a closed
-    terminal, a dropped SSH session) and SIGTERM do what the first Ctrl-C does, and nothing is asked after
-    either (nothing printed after SIGHUP); console output never raises, so a closed tty or a broken pipe can't
-    skip a restore. The restore polls first, since a write cut short applies nothing to the library's state.
+    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`), and the device is
+    printed `NOT RESTORED` with what the run changed. SIGHUP (a closed terminal, a dropped SSH session) and
+    SIGTERM do what the first Ctrl-C does, and nothing is asked after either (nothing printed after SIGHUP);
+    once a first interrupt is under way, either signal cancels nothing, so the restore carries on: only a
+    second Ctrl-C (counted) abandons it. Console output never raises, so a closed tty or a broken pipe can't
+    skip a restore, and the end of the input on a terminal (a tab closed under a prompt, Ctrl-D) is no answer;
+    one at the start question or at "go on with the next device?" stops the run with the rest listed `not run
+    (interrupted)`, exit 130. The restore polls first, since a write cut short applies nothing to the
+    library's state.
   - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
     (each shown by its advertised name as its label shows it, and its signal, on the console only; what it
     powers is asked and never stored; its ref typed to allow the toggle) and given a secret
@@ -360,8 +371,8 @@ model, from which the shipped readers are generated).
     beside each device's report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug
     secrets are scrubbed from every file. The library writes each capture under a hidden `.….jsonl.raw` name
     that only its redaction turns into the capture, so a killed run leaves no raw capture under an attachable
-    name, and the next start redacts any it left. `--all` with no terminal on stdin writes nothing visible
-    unless `--unattended` (recorded in the summary). `--library checkout` / `installed` and `--expect-version` pick and
+    name, and the next start redacts any it left. A run with no terminal on stdin, one device or `--all`,
+    writes nothing visible unless `--unattended` (recorded in the summary and every report). `--library checkout` / `installed` and `--expect-version` pick and
     pin the library under test; `installed` refuses a source tree or an editable install. `TOOL_VERSION`
     is 3.
   - **Changes for one device:** with no hand-written plan for the SKU (and none heard without `--sku`), the
@@ -376,6 +387,7 @@ model, from which the shipped readers are generated).
     real scanner), a session ref key and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every test
     (`tests/conftest.py`); the clock pin is honoured only while pytest runs a test (`PYTEST_CURRENT_TEST`), and a
     real run that finds it exported says it is ignored.
+  - The one-device field-test runs in the suite pass `--unattended` (pytest's stdin is no terminal).
   - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
     rows too; the visible connect write the tool reads is what the library's connect sends) and
     `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE: an H6047

@@ -142,7 +142,8 @@ def _run(ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, 
     monkeypatch.setattr(runner, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: dev)
     try:
-        rc = asyncio.run(runner.run(runner.parse_args(["--no-prompt", "--settle", "0"]), tmp_path, "T"))
+        rc = asyncio.run(runner.run(runner.parse_args(["--no-prompt", "--settle", "0", "--unattended"]),
+                                    tmp_path, "T"))
     finally:
         ft.PLANS.pop(sku, None)
     return rc, (tmp_path / f"{sku.lower()}-report-T.json").read_text()

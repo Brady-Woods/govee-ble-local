@@ -354,7 +354,8 @@ def test_field_test_plan_runs_end_to_end(tmp_path: Path, monkeypatch: pytest.Mon
 
     monkeypatch.setattr(runner, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: d)
-    assert asyncio.run(runner.run(runner.parse_args(["--no-prompt", "--settle", "0"]), tmp_path, "T")) == 0
+    args = runner.parse_args(["--no-prompt", "--settle", "0", "--unattended"])
+    assert asyncio.run(runner.run(args, tmp_path, "T")) == 0
     rep = json.loads((tmp_path / "h6062-report-T.json").read_text())
     assert rep["result"] == "completed" and rep["plan"]["sku"] == "H6062"
     names = [r["step"] for r in rep["steps"]]

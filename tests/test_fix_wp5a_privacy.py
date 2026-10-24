@@ -120,7 +120,8 @@ def _run(ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, 
     monkeypatch.setattr(runner, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: dev)
     try:
-        rc = asyncio.run(runner.run(runner.parse_args(["--no-prompt", "--settle", "0"]), tmp_path, "T"))
+        rc = asyncio.run(runner.run(runner.parse_args(["--no-prompt", "--settle", "0", "--unattended"]),
+                                    tmp_path, "T"))
     finally:
         ft.PLANS.pop(plan.sku, None)
     return rc, (tmp_path / f"{plan.sku.lower()}-report-T.json").read_text()
@@ -353,7 +354,7 @@ def test_the_capture_is_redacted_only_after_the_frame_log_reached_the_disk(
 
     monkeypatch.setattr(runner, "discover", fake_discover)
     try:
-        args = runner.parse_args(["--no-prompt", "--settle", "0"])
+        args = runner.parse_args(["--no-prompt", "--settle", "0", "--unattended"])
         assert asyncio.run(runner.run(args, tmp_path, "T")) == 0
     finally:
         ft.PLANS.pop("H9993", None)
