@@ -93,12 +93,13 @@ def test_reassemble_random_agree() -> None:
 # Real H60A6 0xAC bursts (same captures as tests/test_wire_reassemble.py _BURST / _LIVE): bytes 2-3 of
 # the first chunk = 0x000a = 10 packets (ac00..ac08 + acff), byte 4 = 0x0c = 12 data bytes in the
 # data-bearing 0xFF chunk (AbsController4BleSingleSendMultiBack.g/.h).
+# Device ids and MACs in them are made-up examples (checksums recomputed).
 _REAL_BURSTS = {
     "burst": [
         "ac000a000c0300010101040150050415010000e8",
-        "ac010707065774f453e75c0711105674f453e7f0",
-        "ac025cdb2d0100290104030000070d115ce753d9",
-        "ac03f474560100290104031104001e0f0f120749",
+        "ac010707065753005e00020711105653005e00ae",
+        "ac0202a60a0100290104030000070d1102005e69",
+        "ac030053560100290104031104001e0f0f12079a",
         "ac04ff640000800f00231000000080000000808f",
         "ac0500000080000000804102020130020101a57e",
         "ac06110132ff00006400ff00640000ff64ff00ec",
@@ -108,9 +109,9 @@ _REAL_BURSTS = {
     ],
     "live": [
         "ac000a000c0300010100040164050415010a8c5b",
-        "ac010707065774f453e75c0711105674f453e7f0",
-        "ac025cdb2d0100290104030000070d115ce753d9",
-        "ac03f474560100290104031104001e0f0f120749",
+        "ac010707065753005e00020711105653005e00ae",
+        "ac0202a60a0100290104030000070d1102005e69",
+        "ac030053560100290104031104001e0f0f12079a",
         "ac04ff640000800f00231000000080000000808f",
         "ac0500000080000000804102020130020000a57e",
         "ac06110164ffae5464ffae5464ffae5464ffaeee",

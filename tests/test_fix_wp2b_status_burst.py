@@ -29,11 +29,12 @@ from govee_ble_local.wire.describe import (  # noqa: E402
 
 # Real captured H60A6 0xAC status burst (13 segments, both zones on, brightness 80):
 # header ac 00 | 0a 00 = 10 packets | 0c = the 0xFF chunk carries 12 data bytes.
+# Device ids and MACs in it are made-up examples (checksums recomputed).
 _BURST = [bytes.fromhex(h) for h in (
     "ac000a000c0300010101040150050415010000e8",
-    "ac010707065774f453e75c0711105674f453e7f0",
-    "ac025cdb2d0100290104030000070d115ce753d9",
-    "ac03f474560100290104031104001e0f0f120749",
+    "ac010707065753005e00020711105653005e00ae",
+    "ac0202a60a0100290104030000070d1102005e69",
+    "ac030053560100290104031104001e0f0f12079a",
     "ac04ff640000800f00231000000080000000808f",
     "ac0500000080000000804102020130020101a57e",
     "ac06110132ff00006400ff00640000ff64ff00ec",
@@ -272,18 +273,18 @@ def test_zone_power_reads_bit0_only() -> None:
     assert st.zone_power == {0: False, 1: True}
 
 
-_WIFI = bytes([0x07, 0x0D, 0x11, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 2, 0, 9, 3, 0, 1])
-_BASIC = bytes([0x07, 0x11, 0x10, 0x56, 0x74, 0xF4, 0x53, 0xE7, 0x5C, 0xDB, 0x2D,
+_WIFI = bytes([0x07, 0x0D, 0x11, 0x02, 0x00, 0x5E, 0x00, 0x53, 0x56, 2, 0, 9, 3, 0, 1])
+_BASIC = bytes([0x07, 0x11, 0x10, 0x56, 0x53, 0x00, 0x5E, 0x00, 0x02, 0xA6, 0x0A,
                 1, 0, 41, 1, 4, 3, 0, 0])
 
 
 def test_wifi_module_versions_never_fill_the_device_versions() -> None:
     # Compose4BaseInfoSingleRead.w keeps 0x11's sw/hw as wifiSoftVersion / wifiHardVersion.
     st = r.parse_status(_chunk(_WIFI + _BASIC))        # Wi-Fi block first
-    assert st.wifi_mac == "5C:E7:53:F4:74:56"
+    assert st.wifi_mac == "02:00:5E:00:53:56"
     assert (st.firmware_version, st.hardware_version) == ("1.00.41", "1.04.03")
     alone = r.parse_status(_chunk(_WIFI))
-    assert alone.wifi_mac == "5C:E7:53:F4:74:56"
+    assert alone.wifi_mac == "02:00:5E:00:53:56"
     assert (alone.firmware_version, alone.hardware_version) == (None, None)
 
 
@@ -296,7 +297,7 @@ def test_status_device_info_reads_only_the_basic_and_wifi_blocks() -> None:
     assert st.is_on is True                                 # the walk went on past both blocks
     assert (st.serial_number, st.hardware_version) == (None, None)
     st = r.parse_status(_chunk(sn + hard + _BASIC))
-    assert (st.serial_number, st.hardware_version) == ("2D:DB:5C:E7:53:F4:74:56", "1.04.03")
+    assert (st.serial_number, st.hardware_version) == ("0A:A6:02:00:5E:00:53:56", "1.04.03")
 
 
 # ── analyzer: same completeness rule and walk as the runtime ────────────────────
@@ -477,8 +478,8 @@ def test_analyzer_header_kept_redaction_uses_the_packet_count() -> None:
 
 def _capture(tmp_path: Path, frames: list[bytes]) -> Path:
     path = tmp_path / "h60a6-frames-T.jsonl"
-    rows = [{"ts": 1, "addr": "5C:E7:53:F4:74:57", "dir": "tx", "plain": "ac" + "00" * 19, "wire": None}]
-    rows += [{"ts": 2 + i, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": fr.hex(), "wire": None}
+    rows = [{"ts": 1, "addr": "02:00:5E:00:53:57", "dir": "tx", "plain": "ac" + "00" * 19, "wire": None}]
+    rows += [{"ts": 2 + i, "addr": "02:00:5E:00:53:57", "dir": "rx", "plain": fr.hex(), "wire": None}
              for i, fr in enumerate(frames)]
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     return path
@@ -490,7 +491,7 @@ def test_redacted_capture_round_trip_reports_a_clean_burst_as_clean(
     # The field test redacts its capture before it is attached to an issue; govee-ble-analyze over
     # it must not call the clean status burst dropped or merged (whichever header masking applies).
     path = _capture(tmp_path, [f for fr in _BURST for f in (fr, fr)])
-    assert masking.redact_frames(path, "5C:E7:53:F4:74:57") == 21
+    assert masking.redact_frames(path, "02:00:5E:00:53:57") == 21
     records: list[dict[str, object]] = [json.loads(line) for line in path.read_text().splitlines()]
     rx_ac = [bytes.fromhex(str(rec["plain"])) for rec in records if rec["dir"] == "rx"]
     assert status_burst_report(rx_ac).malformed == 0
@@ -502,7 +503,7 @@ def test_redacted_capture_round_trip_still_reports_a_dropped_chunk(
     masking: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = _capture(tmp_path, [*_BURST[:3], *_BURST[4:]])          # chunk 0x03 lost
-    masking.redact_frames(path, "5C:E7:53:F4:74:57")
+    masking.redact_frames(path, "02:00:5E:00:53:57")
     records: list[dict[str, object]] = [json.loads(line) for line in path.read_text().splitlines()]
     debug.analyze(records)
     out = capsys.readouterr().out

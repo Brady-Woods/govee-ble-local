@@ -177,7 +177,7 @@ class DeviceState:
     def device_id(self) -> str | None:
         """The device id the Govee app calls ``device``; an alias of ``serial_number``.
 
-        E.g. ``2D:DB:5C:E7:53:F4:74:56``, read with ``aa 07 02`` and, on a status-read SKU, from the status
+        E.g. ``0A:A6:02:00:5E:00:53:56``, read with ``aa 07 02`` and, on a status-read SKU, from the status
         reply's TLV 0x07. Where the SKU's status row says ``device_info_reads: none`` (spec/devices.yaml), the
         library sends no ``aa 07 02`` and takes it from TLV 0x07 alone, as the app's screen does."""
         return self.serial_number
