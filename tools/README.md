@@ -209,7 +209,9 @@ Notes:
   brightness or power never read: the summary's `restore.unrestorable_written`), a `close` restore leaves
   the gate `incomplete` and an `unverified` one fails it.
 - Under `--all` a `partial` or `failed` restore is tried twice more (2 s, then 5 s, each after a fresh scan
-  and connect). A device still not back is printed as `NOT RESTORED: <ref> <sku> (<kind>): <what>`, plugs
+  and connect), each time for only the fields its check found off or didn't read back (the generic restore
+  from the captured start, a hand-written plan's too), so a retry repeats no write that landed; the whole
+  restore again only where that check's poll failed. A device still not back is printed as `NOT RESTORED: <ref> <sku> (<kind>): <what>`, plugs
   first, again at the end, and the run asks whether to go on (with `--no-prompt` it stops: the rest are
   `not run (stopped: <ref> was not restored)`). Under `--all` a hand-written plan's restore is checked
   with one poll and, where that check isn't exact, followed by the generic one from the captured start for

@@ -72,7 +72,10 @@ model, from which the shipped readers are generated).
     one, the H6047's) puts a scene start back the same way (`plan.restore_scene`, with the start's scene
     name added to its snapshot), never by a bare code, and returns what it can't put back. A `close` restore of something the run wrote and could never put back (a start colour,
     brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`
-    a partial or failed restore is tried twice more after a fresh scan and connect; a device still not back
+    a partial or failed restore is tried twice more after a fresh scan and connect, each time for only the
+    fields its check found off or didn't read back (the whole restore again only where its poll failed), so
+    a retry repeats no write that landed, a whole plan's restore or a scene start's segment colours and
+    scene among them; a device still not back
     is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a
     hand-written plan's restore is checked with one poll and, where that isn't exact, followed by the generic
     one from the captured start for only the fields it found off or didn't read back (nothing after an exact

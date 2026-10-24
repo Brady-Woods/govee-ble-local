@@ -1045,6 +1045,7 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
         sim.pct = start[2]
     shown = capsys.readouterr().out
     assert f"NOT RESTORED: {entries[0].ref} H6047 (light): brightness: start 50, now 100" in shown
+    assert acted[1] == ["brightness 50"]   # a retry sends only what its check found off, nothing that landed
     checked = "the plan's restore checked: "
     assert acted[2:] == [["the plan's restore", f"{checked}exact"],
                          ["the plan's restore", f"{checked}partial, the generic restore puts back gradual",

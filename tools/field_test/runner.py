@@ -983,8 +983,9 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
     library's frame-log internals changed), the capture is redacted straight away rather than left raw.
 
     Under ``--all`` a partial or failed restore is tried again (:data:`RESTORE_RETRY_BACKOFF`, each after a
-    fresh scan and connect), and a hand-written plan's restore is checked with one poll and followed by the
-    generic one from the captured start for what that check found off (:func:`_plan_restore`).
+    fresh scan and connect) for only what its check found off, and a hand-written plan's restore is checked
+    with one poll and followed by the generic one from the captured start for what that check found off
+    (:func:`_plan_restore`).
 
     One Ctrl-C at any point here (or before, in a step) still restores the device: the restore, the
     disconnect and the flush run through :func:`_carry_on`, and one at the check's poll or its question
@@ -1007,6 +1008,24 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
         if not run.generic and initial is not None:
             return _plan_restore(run, initial, start, follow=run.policy.gate)
         return None
+
+    def retry(check: RestoreCheck, last: Outcome) -> Coroutine[Any, Any, Outcome] | None:
+        """A partial or failed restore's retry: only the fields its check found off or didn't read back (the
+        generic restore from the start, a hand-written plan's too), so it repeats no write that landed (a
+        whole plan's restore, a scene start's segment colours and scene); the whole restore again where the
+        check found nothing off (its poll failed). The unrestorable entries recorded are kept."""
+        off = frozenset(check.diffs) | frozenset(check.unread)
+        if start is None or not off:
+            return restore()
+        begun = start
+
+        async def only_off() -> Outcome:
+            again = await restore_start(dev, begun, run.describe, only=off, seen=run.seen_segments)
+            again.unrestorable = [*last.unrestorable,
+                                  *(u for u in again.unrestorable if u not in last.unrestorable)]
+            return again
+
+        return only_off()
 
     async def check_it(outcome: Outcome) -> RestoreCheck:
         if start is None:
@@ -1039,7 +1058,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
             for n, wait in enumerate(RESTORE_RETRY_BACKOFF if run.policy.gate else (), 1):
                 if run.abandon or outcome is None or check.result not in RESTORE_FAILED:
                     break
-                again = restore()
+                again = retry(check, outcome)
                 if again is None:
                     break
                 _say(f"  restore {check.result}: trying again in {wait:.0f} s ({n} of "
