@@ -30,7 +30,7 @@ def _adv(local_name: str | None, rssi: int | None, mfg: dict | None = None) -> S
 
 def test_supported() -> None:
     assert supported("ihoment_H5083_5383", _MFG) is True
-    assert supported("ihoment_H9999_A2D1", _MFG) is False  # Govee but unknown SKU
+    assert supported("ihoment_H9999_5383", _MFG) is False  # Govee but unknown SKU
     assert supported("NotGovee", _MFG) is False
 
 
