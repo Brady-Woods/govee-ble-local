@@ -788,19 +788,21 @@ model, from which the shipped readers are generated).
     list): straightfloorlamp 69 takes both (`VM4Light.Z3:709-728`: `w5:552-564`, and the sub-switch parser
     `DefParser.M:76-81` -> `y5:577-589`, which sets the switch alone), h6069 284 the brightness
     (`CubeVM4Light.Z3:650-664` -> `p5:465-477`; no switch parser), rgbiclight 351 / 352 the brightness
-    (`VM4Light.Z3:1054-1076` -> `S5:387-399`; no switch parser, and its IC-count push is not modelled), the six
-    h7020 rows on 296's screen both (`NewDetailVM.Z3:853-881`: `F5:223-234`, and `DefParser.O:83-87` ->
-    `H5:258-270`, the switch alone; only H3001's 361 takes another parser, `Support.isGoodsTypeH3001:591-593`),
-    and h61d3 263 both (`H703ADetailActivity`'s `VM4Light.Z3:953-977`: `y5:688-700`, and `z5:703-797` ->
-    `D5:222-259`, the handler `J3:827-829` runs, so a push that changes the switch re-reads, 300 ms later on 263,
-    `H61D3Support.l0:1340-1342`, where the library folds it at once). h7086 293, h7076 313 and h3700 383 follow
-    no push: their screens register none but Wi-Fi's (`ShareVM.Z3:1599-1607`; h7086 adds only its
+    (`VM4Light.Z3:1054-1076` -> `S5:387-399`; no switch parser, and its IC-count push is not modelled), raised to at
+    least 1 as its setter raises it (`OpInfo4Detail.c:192-200`, `RangesKt.coerceAtLeast(i, 1)`, where the status
+    read's `OpInfo4Detail.D` sets TLV 0x04 as it is, :180; **`DeviceProfile.push_brightness_min`**, keyword-only,
+    default 0, 1 there, so a pushed 0 reads as 1 on H617G / R617G and H618G / R618D, as their screen shows it), the
+    six h7020 rows on 296's screen both (`NewDetailVM.Z3:853-881`: `F5:223-234`, and `DefParser.O:83-87` ->
+    `H5:258-270`, the switch alone; only H3001's 361 takes another parser, `Support.isGoodsTypeH3001:591-593`), and
+    h61d3 263 both (`H703ADetailActivity`'s `VM4Light.Z3:953-977`: `y5:688-700`, and `z5:703-797` -> `D5:222-259`,
+    the handler `J3:827-829` runs, so a push that changes the switch re-reads, 300 ms later on 263,
+    `H61D3Support.l0:1340-1342`, where the library folds it at once). h7086 293, h7076 313 and h3700 383 follow no
+    push: their screens register none but Wi-Fi's (`ShareVM.Z3:1599-1607`; h7086 adds only its
     capacitive-calibration parser, `VM4Light.Z3:353-360`), so there a brightness set elsewhere shows only at the
     next connect's status read, as on the screen. A push is read where the reply is: one that comes after a frame
-    the library sent, before the next beat, stays in the receive queue, which the next operation drains, so a
-    change made elsewhere in that window shows at the next push, the next connect's status read, or for the
-    power the next reply, where the app takes every push. A brightness whose range waits for the advertised pact
-    is not read.
+    the library sent, before the next beat, stays in the receive queue, which the next operation drains, so a change
+    made elsewhere in that window shows at the next push, the next connect's status read, or for the power the next
+    reply, where the app takes every push. A brightness whose range waits for the advertised pact is not read.
   - **Rows** (Changed, below): straightfloorlamp 69 (H6076 / H8076 / R16D0: aa 05 then groups 1-2 over 7 pieces,
     applied), h6069 284 (H6069 / H8069: aa 05 then groups 1-35 over 140 pieces, read and not applied: a
     one-piece colour tab; 140 is the screen's count when no shape layout is stored, which the library has none of,
@@ -1345,24 +1347,24 @@ model, from which the shipped readers are generated).
   PR #45, read the status on every poll until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out:
   the power there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On
   69, 284, 351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then
-  the `aa a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read and not
-  applied). H703A / H703B (h61d3 263, behind `allow_modelled`) gain the re-read too (`aa 05`, `aa a5 01`, not
-  applied). On a link that stays up the brightness follows the `ee 20` push the screen follows (all of them but
-  H7086, H7076 and H3700, whose screens follow none: a brightness set elsewhere shows there at the next connect's
-  status read, as on the screen), and on 69, the h7020 rows and 263 the power follows the `ee 30` push too, at
-  once, so on 69 the next keep-alive reply finds no change and sends no re-read, as its screen's push handler sets
-  the switch alone, while on 263 the push's change sends it (Added). The other frames, the first poll's reads and
-  the decoded state of a fresh link's poll are unchanged; their profiles also carry `color_readback_per_batch` 4
-  on the re-reading rows (it was 3, unused on a status row). The pushes were checked against 8290de4 on the real
-  connection against a fake peripheral over every SKU and pact either tree routes (394 profiles, with
-  `allow_modelled`): a poll, two beats, then `ee 20` and `ee 30` (off, then on) pushes after a beat, a poll, a
-  brightness write and a push right after it. Only the rows above change: the brightness follows the push on
-  each of them (H6076 / H8076 / R16D0, H6069 / H8069, H617G / R617G, H618G / R618D, H7025 / H8025, H7026 / H8026,
-  H7027, H702A-C, H30D0 / H30D1, H3010-H3013; behind `allow_modelled` H703A / H703B), the power follows the
-  `ee 30` push at once on 69, the h7020 rows and 263 (the next reply's, until now), the re-read leaves H6076 /
-  H8076 / R16D0 when a push came first, H703A / H703B send it at the push, not at the next reply, and the push
-  right after a write is not read on any. H7086, H7076, H3700 and every other SKU send and decode as before.
-  Source-traced (Govee Home 7.7.02), not live-verified.
+  the `aa a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read
+  and not applied). H703A / H703B (h61d3 263, behind `allow_modelled`) gain the re-read too (`aa 05`, `aa a5 01`,
+  not applied). On a link that stays up the brightness follows the `ee 20` push the screen follows (a 0 as 1 on 351
+  / 352, as their screen's setter raises it; all of them but H7086, H7076 and H3700, whose screens follow none: a
+  brightness set elsewhere shows there at the next connect's status read, as on the screen), and on 69, the h7020
+  rows and 263 the power follows the `ee 30` push too, at once, so on 69 the next keep-alive reply finds no change
+  and sends no re-read, as its screen's push handler sets the switch alone, while on 263 the push's change sends it
+  (Added). The other frames, the first poll's reads and the decoded state of a fresh link's poll are unchanged;
+  their profiles also carry `color_readback_per_batch` 4 on the re-reading rows (it was 3, unused on a status row).
+  The pushes were checked against 8290de4 on the real connection against a fake peripheral over every SKU and pact
+  either tree routes (394 profiles, with `allow_modelled`): a poll, two beats, then `ee 20` and `ee 30` (off, then
+  on) pushes after a beat, a poll, a brightness write and a push right after it. Only the rows above change: the
+  brightness follows the push on each of them (H6076 / H8076 / R16D0, H6069 / H8069, H617G / R617G, H618G / R618D,
+  H7025 / H8025, H7026 / H8026, H7027, H702A-C, H30D0 / H30D1, H3010-H3013; behind `allow_modelled` H703A / H703B),
+  the power follows the `ee 30` push at once on 69, the h7020 rows and 263 (the next reply's, until now), the
+  re-read leaves H6076 / H8076 / R16D0 when a push came first, H703A / H703B send it at the push, not at the next
+  reply, and the push right after a write is not read on any. H7086, H7076, H3700 and every other SKU send and
+  decode as before. Source-traced (Govee Home 7.7.02), not live-verified.
 - **H6058 (hollowlamp 59) and H6071 / H6075 (h6071 57 / 67) send the app's empty `33 b2` check on every connect
   while no secret is set** (the user's decision D4, 2026-10-22, an approved connect-byte change;
   `DeviceProfile.empty_secret_check`, Added). Their screens put `Controller4Secret.Companion.a` of the account's
@@ -2289,15 +2291,17 @@ model, from which the shipped readers are generated).
   `parse.parse_light_power(heartbeat=True)` reads. The h61d3 `status_read` note's "absent TLVs leave brightness 0"
   is corrected to 100, the fresh `DeviceBaseInfoFromDevice`'s (`DeviceBaseInfoFromDevice.java:70-80`).
   `brightness_live: [push_20]`, new beside `power_live` (family `client_profile` and clientRow; gen_devices keeps
-  it), names the `ee 20` brightness push a screen's notify list follows, and `heartbeat_reread` takes `push_on`,
-  an `ee 30` push that changes the switch starting the re-read. The resolver serves `brightness_live` only with
-  `heartbeat_power` (`DeviceProfile.push_brightness`), reads a heartbeat_power row's `power_live` `push_30` with
-  its wire `f_ee_30` as `DeviceProfile.push_power`, and `push_on` only with such a push
-  (`DeviceProfile.heartbeat_reread_on_push`). Rows: 69, 284, 351, 352, the six h7020 rows on 296's screen and
-  263 say `brightness_live: [push_20]`, and 263 `heartbeat_reread: { pieces: 1, push_on: true }`; their docs
-  and `timing.heartbeat.deviations` say which pushes each screen follows, in place of the named follow-up (fold
-  ee 30 pushes through the same hook). The forms were already in the spec: govee_ble_frame `notify`'s
-  `brightness` (`govee_common::level`) and `notify_30` under `form_ee_30`.
+  it), names the `ee 20` brightness push a screen's notify list follows (`push_20_min_1`: the same push, which the
+  screen's setter raises to at least 1, rgbiclight `OpInfo4Detail.c:192-200`; the resolver gives it
+  `DeviceProfile.push_brightness_min` 1), and `heartbeat_reread` takes `push_on`, an `ee 30` push that changes the
+  switch starting the re-read. The resolver serves `brightness_live` only with `heartbeat_power`
+  (`DeviceProfile.push_brightness`), reads a heartbeat_power row's `power_live` `push_30` with its wire `f_ee_30` as
+  `DeviceProfile.push_power`, and `push_on` only with such a push (`DeviceProfile.heartbeat_reread_on_push`). Rows:
+  69, 284, the six h7020 rows on 296's screen and 263 say `brightness_live: [push_20]`, 351 and 352
+  `[push_20_min_1]`, and 263 `heartbeat_reread: { pieces: 1, push_on: true }`; their docs and
+  `timing.heartbeat.deviations` say which pushes each screen follows, in place of the named follow-up (fold ee 30
+  pushes through the same hook). The forms were already in the spec: govee_ble_frame `notify`'s `brightness`
+  (`govee_common::level`) and `notify_30` under `form_ee_30`.
 - **TLV 0x40's two one-count readers, the whole-group placement and a status row's IC sources.** govee_common
   `form_40::one_count_u16` reads bytes 0-1 unsigned (`SegmentSettingController.Companion.b`; govee_state
   `ic_count.ic_count_u16`), beside `one_count`, signed (`BleUtil.getSignedShort`), each with no byte-order

@@ -1086,7 +1086,9 @@ class Device:
         :attr:`.DeviceProfile.push_brightness` profile sets ``state.brightness`` in the status read's unit
         (the screen's ``Info4Detail`` brightness setter: straightfloorlamp ``VM4Light.w5:552-564``, h6069
         ``CubeVM4Light.p5:465-477``, rgbiclight ``VM4Light.S5:387-399``, h7020 ``NewDetailVM.F5:223-234``,
-        h61d3 ``VM4Light.y5:688-700``), a live field, and the callbacks fire on a change; an ``ee 30`` switch
+        h61d3 ``VM4Light.y5:688-700``), raised first to :attr:`.DeviceProfile.push_brightness_min` where the
+        setter raises it (rgbiclight ``OpInfo4Detail.c:192-200``, at least 1), a live field, and the callbacks
+        fire on a change; an ``ee 30`` switch
         on a :attr:`.DeviceProfile.push_power` profile is a power read, as a keep-alive reply's
         (:meth:`_fold_beat_power`; straightfloorlamp ``VM4Light.y5:577-589``, h7020
         ``NewDetailVM.H5:258-270``, h61d3 ``VM4Light.z5:703-797`` -> ``D5:222-259``), with the re-read only
@@ -1096,7 +1098,7 @@ class Device:
         if push is None:
             return
         if push.level is not None and self.profile.push_brightness:
-            pct = self._brightness_pct(push.level)
+            pct = self._brightness_pct(max(push.level, self.profile.push_brightness_min))
             if pct is None:
                 return
             changed = pct != self._state.brightness or self._state.optimistic

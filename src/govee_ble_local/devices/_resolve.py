@@ -226,14 +226,15 @@ the row lacks fails the build: nothing defaults silently.
   screen's re-read on a power change (``J3`` -> ``Compose4Off2On``: aa 05, then the screen's aa a5 groups over
   its ``pieces``, ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. On such
   a row the ee pushes its screen follows go through the reply's hook: the ee 20 brightness where the row says
-  ``brightness_live: [push_20]`` (only with ``heartbeat_power``; ``DeviceProfile.push_brightness``), and the
-  ee 30 switch where its ``power_live`` has ``push_30``, read by the wire ``f_ee_30``
-  (``DeviceProfile.push_power``), whose change starts the re-read where ``heartbeat_reread`` says ``push_on``
-  (``DeviceProfile.heartbeat_reread_on_push``). The library folds no other keep-alive reply and no other push
-  into state: the poll's own read stands in for them, aa 01 on a polled row and the status read's TLV 0x01
-  on a status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
-  ``push_30`` with its wire ``f_ee_30``.
-- The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
+  ``brightness_live: [push_20]`` (only with ``heartbeat_power``; ``DeviceProfile.push_brightness``), or
+  ``[push_20_min_1]`` where the screen's setter raises it to at least 1
+  (``DeviceProfile.push_brightness_min``), and the ee 30 switch where its ``power_live`` has ``push_30``, read
+  by the wire ``f_ee_30`` (``DeviceProfile.push_power``), whose change starts the re-read where
+  ``heartbeat_reread`` says ``push_on`` (``DeviceProfile.heartbeat_reread_on_push``). The library folds no
+  other keep-alive reply and no other push into state: the poll's own read stands in for them, aa 01 on a
+  polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on either), the aa 36 bar read
+  for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``. - The session
+  (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
   nothing on connect, holds no link (``heartbeat: none``: ``DeviceProfile.heartbeat`` None) and carries only
@@ -1670,8 +1671,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
         out["heartbeat_reread_pieces"] = reread_pieces
     if push_on:
         out["heartbeat_reread_on_push"] = True
-    if "push_20" in pushes:
+    if pushes:   # push_20, or push_20_min_1: the screen's setter raises it to at least 1
         out["push_brightness"] = True
+    if "push_20_min_1" in pushes:
+        out["push_brightness_min"] = 1
     if push_power:
         out["push_power"] = push_power
     if status_read is not None:

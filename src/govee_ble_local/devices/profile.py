@@ -667,14 +667,24 @@ class DeviceProfile:
     ``AbsNotify.parse:33-41`` -> ``d:17-31`` -> ``AbsNotifyParse.e:23-32``), into the brightness the status
     read's TLV 0x04 sets, in its raw unit: straightfloorlamp 69 (``VM4Light.Z3:709-728`` -> ``w5:552-564``),
     h6069 284 (``CubeVM4Light.Z3:650-664`` -> ``p5:465-477``), rgbiclight 351 / 352 (``VM4Light.Z3:1054-1076``
-    -> ``S5:387-399``), h7020 296 / 316 / 318 / 337 / 391 / 411 (``NewDetailVM.Z3:853-881`` -> ``F5:223-234``)
-    and h61d3 263 (``H703ADetailActivity``'s ``VM4Light.Z3:953-977`` -> ``y5:688-700``): a devices.yaml status
-    row's ``brightness_live: [push_20]``. A push is read where the keep-alive reply is (``GoveeConnection``'s
-    ``heartbeat_reply``: a frame notified while no other frame has gone out since the beat), so one that comes
-    after a frame the library sent, before the next beat, stays in the receive queue, which the next operation
-    drains; it sets ``state.brightness`` (a live field, so the state is no longer optimistic) and reaches the
-    callbacks when it changes it. A push whose brightness range waits for the advertised pact is not read.
-    False (the default): no ``ee 20`` push is read."""
+    -> ``S5:387-399``, raised to at least 1: :attr:`push_brightness_min`), h7020 296 / 316 / 318 / 337 / 391 /
+    411 (``NewDetailVM.Z3:853-881`` -> ``F5:223-234``) and h61d3 263 (``H703ADetailActivity``'s
+    ``VM4Light.Z3:953-977`` -> ``y5:688-700``): a devices.yaml status row's ``brightness_live: [push_20]``. A
+    push is read where the keep-alive reply is (``GoveeConnection``'s ``heartbeat_reply``: a frame notified
+    while no other frame has gone out since the beat), so one that comes after a frame the library sent,
+    before the next beat, stays in the receive queue, which the next operation drains; it sets
+    ``state.brightness`` (a live field, so the state is no longer optimistic) and reaches the callbacks when
+    it changes it. A push whose brightness range waits for the advertised pact is not read. False (the
+    default): no ``ee 20`` push is read."""
+    push_brightness_min: int = field(default=0, kw_only=True)
+    """With :attr:`push_brightness`: the least raw byte a pushed brightness is read as, where the screen's
+    setter raises the push and the status read's takes TLV 0x04 as it is. 1 on rgbiclight 351 / 352 (H617G /
+    R617G, H618G / R618D): ``VM4Light.S5:387-399`` sets the push through ``OpInfo4Detail.c:192-200``
+    (``RangesKt.coerceAtLeast(i, 1)``), where the status read's ``OpInfo4Detail.D`` sets the byte with no
+    floor (:180), so a pushed 0 shows as 1 on that screen (a devices.yaml status row's ``brightness_live:
+    [push_20_min_1]``). 0 (the default): the push as it is, as the other screens' setters take it
+    (straightfloorlamp ``Info4Detail.e:627-633``, h6069 ``CubeNewInfo4Detail.d:612-618``, h7020
+    ``Info4Detail.e:636-642``, h61d3 ``Info4Detail.e:648-654``)."""
     push_power: str = field(default="", kw_only=True)
     """With :attr:`heartbeat_power`: follow the screen's ``ee 30`` switch push on a held link, read under this
     ``f_ee_30`` form (govee_common ``form_ee_30``; the spec's ``notify_30.is_on``), as its notify list does:
@@ -884,6 +894,11 @@ class DeviceProfile:
         if isinstance(reread, bool) or not isinstance(reread, int) or reread < 0:
             raise GoveeBleInvalidValue(
                 f"{where}: heartbeat_reread_pieces={reread!r} (0, no re-read, or more)")
+        floor = self.push_brightness_min
+        if (isinstance(floor, bool) or not isinstance(floor, int) or floor < 0
+                or (floor and not self.push_brightness)):
+            raise GoveeBleInvalidValue(
+                f"{where}: push_brightness_min={floor!r} (0, or more with push_brightness)")
         push = self.push_power
         if push and (push not in _C.FormEe30.__members__ or push == "unknown"):
             raise GoveeBleInvalidValue(f"{where}: push_power={push!r} (a form_ee_30 form, or \"\")")

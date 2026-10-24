@@ -170,8 +170,8 @@ timing:
         (AbsComposeControllerWithOpResult.onOvertime), and applying the groups' colours only where they are the row's
         segments. The ee pushes such a screen's notify list follows go through the same hook (a frame notified with
         nothing sent since the beat), where the app takes every push: the ee 20 brightness on a row that says
-        brightness_live push_20 (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, the six h7020 rows, h61d3
-        263), and the ee 30 switch, read by the wire f_ee_30, on a row whose power_live has push_30 (69, the h7020
+        brightness_live push_20 (straightfloorlamp 69, h6069 284, the six h7020 rows, h61d3 263) or push_20_min_1
+        (rgbiclight 351 / 352, whose setter raises a 0 to 1, OpInfo4Detail.c), and the ee 30 switch, read by the wire f_ee_30, on a row whose power_live has push_30 (69, the h7020
         rows, 263), a power read as the reply is, with the re-read only where the screen's push handler starts it
         (h61d3 263, whose handler is J3's, D5: heartbeat_reread push_on). A push that comes after a frame the library sent,
         before the next beat, stays in the receive queue, so a change made elsewhere in that window shows at the
@@ -8818,7 +8818,7 @@ families:
           heartbeat: power
           heartbeat_power: true
           heartbeat_reread: { pieces: 15 }
-          brightness_live: [push_20]
+          brightness_live: [push_20_min_1]   # S5 -> OpInfo4Detail.c raises the push to at least 1; OpInfo4Detail.java:192-200
           doc: >-
             H617G (goodsType 351: KmpGoodsType; the SubLib key, so BLE only) on the rgbiclight AcNewDetail screen
             (add/Model.t) with VM4Light. Pacts (1,1) / (1,2) (SupportV2.Companion.a; the scan check VM4Light.n4 ->
@@ -8832,12 +8832,15 @@ families:
             reply is the screen's live power (ShareVM.N3 -> J3, which also queues the Compose4Off2On re-read on every
             change, off as well as on); the screen has no ee 30 parser (Z3:1054-1076 adds the brightness push, S5:387-399,
             which the library reads through the keep-alive reply's hook, brightness_live, and the IC-count push, not
-            modelled). The library follows the keep-alive as the screen does (heartbeat_power, the user's decision
-            17): the status read once per link, then the switch from each aa 01 reply, and on a change J3's re-read
-            (heartbeat_reread): Compose4Off2On's aa 05 (VM4Light.G5 -> OpInfo4Detail.parseModeValidBytes), then O5 ->
-            N5's aa a5 groups 1-4 of 4 four-byte [brightness, R, G, B] records over 15 pieces (Support.b: no
-            LightVersionService count off dreamcolorlightv1, so ColorPieceConfig.c's 15; Support.d: 4; Support.D: part
-            brightness, as Support.x is false), applied as the 15 segments; the compose's timer, sleep and wake reads
+            modelled). S5 sets the pushed brightness through OpInfo4Detail.c, which raises it to at least 1
+            (RangesKt.coerceAtLeast(i, 1)), where the status read's OpInfo4Detail.D takes TLV 0x04 as it is, so the
+            library reads a pushed 0 as 1 there (push_20_min_1). The library follows the keep-alive as the screen does
+            (heartbeat_power, the user's decision 17): the status read once per link, then the switch from each aa 01
+            reply, and on a change J3's re-read (heartbeat_reread): Compose4Off2On's aa 05 (VM4Light.G5 ->
+            OpInfo4Detail.parseModeValidBytes), then O5 -> N5's aa a5 groups 1-4 of 4 four-byte [brightness, R, G, B]
+            records over 15 pieces (Support.b: no LightVersionService count off dreamcolorlightv1, so
+            ColorPieceConfig.c's 15; Support.d: 4; Support.D: part brightness, as Support.x is false), applied as the 15
+            segments; the compose's timer, sleep and wake reads
             are left out. The frames sent are the app's. Brightness 33 04 percent (no BrightnessConfig
             key). Colour on the ColorModeV1_2 strip (RgbIcLightRegistry, Support.g; picks fill the selected pieces):
             ColorModeControllerConfig.c -> Config.F -> Config.x[351] = 0 -> Config.J[0] Yt -> Bytes.h / Bytes.r, white
@@ -8876,7 +8879,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,741-750
             - split_rgbiclight/com/govee/rgbiclight/mode/color/ColorModeV1_2.java:278-321,355-360
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
-            - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-779
+            - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:152-200,743-779
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175,37-41
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:48-66
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1012,1348-1364,1600-1608
@@ -8917,7 +8920,7 @@ families:
           heartbeat: power
           heartbeat_power: true
           heartbeat_reread: { pieces: 15 }
-          brightness_live: [push_20]
+          brightness_live: [push_20_min_1]   # S5 -> OpInfo4Detail.c raises the push to at least 1; OpInfo4Detail.java:192-200
           doc: >-
             H618G (goodsType 352: KmpGoodsType; BLE + Wi-Fi, SubLib4BleIot -> Model4BleIot.t -> AcNewDetail) with
             VM4Light, the screen and facts of 351 (H617G): pacts (1,1) / (1,2) (SupportV2.Companion.a; Support.b() puts
@@ -8926,7 +8929,8 @@ families:
             0x01 / 0x04 / 0x05 / 0x40 / 0xA5 read as on
             351, 15 pieces (ColorPieceConfig.j), no aa 01 / aa 05 read, no 0xB1 / 0xB2; power 33 01, keep-alive aa 01
             whose reply is the screen's live power, followed with J3's re-read on every change as on 351
-            (heartbeat_power and heartbeat_reread, the user's decision 17); brightness 33 04 percent; colour
+            (heartbeat_power and heartbeat_reread, the user's decision 17), and its ee 20 brightness push raised to at
+            least 1 as on 351 (S5 -> OpInfo4Detail.c; push_20_min_1); brightness 33 04 percent; colour
             Config.x[352] = 0 -> Yt (Bytes.h / Bytes.r, white
             type Config.P[352] = 1) on the ColorModeV1_2 strip, the colour page's all-Kelvin Bytes.r over 15 pieces, the
             illumination tab's VM4Light.configKelvinController -> Bytes.C(K, 15, 1) with 33 04 in one write, segment brightness
@@ -8958,6 +8962,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1012,1352
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-81,99-107
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-41
+            - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:152-200
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
