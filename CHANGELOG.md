@@ -1308,7 +1308,8 @@ model, from which the shipped readers are generated).
 - Nothing else for existing SKUs. What changes for the SKUs admitted at 1.6.1:
   - under Fixed: H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1), the segment brightness
     of H6098 / H8098 / H6690, a refused or unacked live `33 b2` check on the account-locked plugs (H5080, H5082,
-    H5083, H5085, H5089, H5160, H5161), and decision 2's live mask, which changes the whole-device colour,
+    H5083, H5085, H5089, H5160, H5161), H6061's poll walk, which ends at its first unanswered group (a poll that
+    loses a group sends no later group), and decision 2's live mask, which changes the whole-device colour,
     colour-temperature and segment frames of the 13 h61d3 IC-sized SKUs admitted by default at 1.6.1 (H6641,
     H6640, H61B3, H61B6, H1A42, H1A43, H1A44, H1AA2, H1AA5, H1AB1, H1AB2, H1AB3, H1B6A) and H6641's
     `DeviceProfile.segments` (16 -> 14);
@@ -1809,6 +1810,27 @@ model, from which the shipped readers are generated).
   frame queued behind it, then another write): the link now ends after the check, and the queued frame connects
   again, where its setup's check is refused (GoveeBleAuthError) or accepted, where it went out on the first link;
   the other flows change nothing. Source-modelled, not live-verified.
+- **On the cubelight and h60a1 screens' rows a poll's `aa a5` walk ends at its first unanswered group, as the
+  app's connect read does** (CLAUDE.md rule 3; `DeviceProfile.color_readback_stop_at_miss`, keyword-only, default
+  False). H6061, H6063, H6065, H6066, H6067 and H606A (cubelight `CubeVM4Light$connectBleSuc$2.l:47-60` ->
+  `CubeVM4Light.l5:386-422`) and H60A1 / H80A1 (h60a1 `VM4Light.h5:327-340` -> `Y4:153-179`) read their pieces in
+  groups that the screen's aa 05 step adds to the same connect compose
+  (`Compose4InfoBleIot$iControllerStrategy$1.v:125-132`). Each group is a `Controller4ColorInfoByGroup`
+  (`Companion.g:112-120`), a plain `AbsController` that is no temporary or retried step
+  (`IControllerNoEvent.DefaultImpls:31-37`, `AbsControllerNoEvent4Single:182-208`), so the first that times out
+  ends the compose in `result2Fail` (`AbsComposeControllerWithOpResult.onOvertime:287-312`) and the comm drops it
+  (`ComposeBleComm.C:143-150` -> `v:305-313`): no later group goes out. The library skipped the lost group and
+  read every later one, where the keep-alive re-read already stopped there. Now the walk stops at it; the groups
+  read before it stay the state's segments, with no report shown over them (the stock colour page entry,
+  Changed: a read that leaves a piece out reads its report as decoded).
+  Frames change only on a poll that loses a group, one frame fewer for each group after it; with every group
+  answered nothing changes. Checked against 9cb9a62: of every SKU x pact profile only these eight take the field,
+  and over every SKU with a walk or a status read (282 profiles, two polls each under 0x0d and 0x15 reports over
+  tint, red and mixed pieces whose walk or burst lost no group, the first or the last) only these eight change,
+  only where the first group was lost: its later groups are no longer sent, and `segments` no longer hold them.
+  The other rows that walk their pieces (H6047, H6641, H6062, the h7020 rows and the rest) keep skipping a lost
+  group until their own screens are traced for it. Of the eight only H6061 was admitted at 1.6.1. Source-traced,
+  not live-verified: none is on the bench.
 
 ### Spec
 - **A pact branch can give its pact a profile of its own (h60ax 303 at (1,1), hass #30).** `clientBranch` takes
@@ -2374,6 +2396,12 @@ model, from which the shipped readers are generated).
   `H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.n`, each through `k2(e(), d())`); h705a 394 and h7057 349
   already had it. The values came in with an earlier merge (the resolver requires them); this adds the traces,
   and no profile, frame or read changes.
+- **`color_group_stop_at_miss`** (devices.schema.json, family `client_profile` and clientRow; gen_devices keeps
+  it): the connect read's `aa a5` group walk ends at the first group that goes unanswered, as the screen's connect
+  compose does (the trace, cited in the schema, is under Fixed). The resolver serves it only with the direct
+  colour read-back on a polled row (`DeviceProfile.color_readback_stop_at_miss`). The h6061 family says it for its
+  six cubelight rows, and h60ax 235 (H60A1 / H80A1) for its row, with their docs. No frame form changes, so no
+  `.ksy` change.
 
 ## [1.6.1] — 2026-10-21
 

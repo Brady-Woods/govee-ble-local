@@ -2492,7 +2492,9 @@ class Device:
         (``DeviceProfile.color_readback_ic_walk_only``) a walk of other than :attr:`segment_count` pieces is
         made and not applied: the strip applies a read-back only of its own length (h6609
         ``H70C456789ColorMode.updateColor`` / ``updateBrightness``). On a ``light_num_per_unit`` profile it
-        walks the last ``aa 0f`` read's pieces, uncapped (:meth:`_read_light_num`)."""
+        walks the last ``aa 0f`` read's pieces, uncapped (:meth:`_read_light_num`). On a
+        :attr:`.DeviceProfile.color_readback_stop_at_miss` profile the walk ends at its first unanswered
+        group, as the screen's connect compose does."""
         pieces = None
         apply: Callable[[_readback.Walk], None] = self._apply_segments
         if self.profile.kelvin_from_pieces:
@@ -2516,9 +2518,11 @@ class Device:
                 apply = drop
         elif self.profile.light_num_per_unit:
             pieces = self._light_num_pieces   # past the masks' 112, as NewDetailVM.D5 walks them
+        stop = self.profile.color_readback_stop_at_miss   # the screen's compose ends at a lost group
         await self._read_fresh(
             "segment colour",
-            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces),
+            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces,
+                                                      stop_at_miss=stop),
             apply)
 
     async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:

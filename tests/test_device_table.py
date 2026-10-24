@@ -121,6 +121,9 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # range as that colour temperature, whatever the decode (decision 27): a read-side fold, no frame change.
     **{(sku, "color_page"): (None, "stock") for sku in (
         "H60A6", "H6004", "H6006", "H6008", "H6052", "H6188", "H6061")},
+    # 1.9.0: the cubelight screen's connect compose ends at a group that goes unanswered
+    # (AbsComposeControllerWithOpResult.onOvertime), so the poll's walk stops there.
+    ("H6061", "color_readback_stop_at_miss"): (False, True),
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.

@@ -807,6 +807,7 @@ families:
           kelvin_range: [2200, 6500]   # KelvinConfig.Config.Y2 version 1, below hard 1.04.03
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
+          color_group_stop_at_miss: true   # the groups are connect-compose steps after aa 05 (h5 -> Y4), so a lost one ends it; split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light.java:153-179,327-340
           connect_writes: []
           heartbeat: heartbeat
           by_firmware:
@@ -815,32 +816,33 @@ families:
             H60A1 / H80A1 (ThemeM in the 235 block of Support.addSupportPact; pacts (1,1), (2,1); the screen's n4 is
             supportPactV2). Model.t -> AcNewDetail, VM4Light. Connect (connectBleSuc, not H60A4): the default
             Compose4InfoBleIot read (aa 04, aa a3, aa 01, aa 05 parsed by h60a1 Info4Detail.Q), then the direct aa a5
-            groups 1-4 of 4 over getColorPieceSize(235) = 14 pieces (VM4Light.Y4). Config.I[235] = gradual off, so the
-            aa a3 reply is discarded. Live power: the ee 30 switch push (makeSwitchNotifyParser, byte 1). Heartbeat
-            aa 00 (I3 false). Colour tab: Config.x[235] = 0 -> Config.Yt -> Bytes.h / Bytes.r, white type Config.P = 1,
-            the family h60a6 frames; segments picked per piece (ColorMode.canClickColor). The colour tab has no Kelvin
-            (Config.I[235][4] false, ColorMode.canClickColorTem null); the illumination tab (mode 13 in the SKU's
-            localSkuComponentConfigs list) writes Config.N[0] = Bytes.C(K, 14, 1) and then 33 04 as one compose
-            (View4IlluminationMode.I0; color_temp_control illumination, with illuminationCur()[0] = Info4Detail.i,
-            the aa 04 brightness). Config.I[235] = zN: segment brightness on, colour temperature off. Main switch 33
-            01; no zone switch. The polled aa 05 reply is parsed by Info4Detail.Q (the family wire mode, music
-            v2_default; DeviceProfile.mode_decode). Kelvin range: the illumination tab's (VM4Light.colorTemRange:600-602
-            -> KelvinConfig.m:240-242 -> LightColorCapabilityCenter.r1:1286-1297, no LightCapabilitySpec for 235, so
-            t1:537-539 -> LegacyColorCapabilityProvider.l:218-221 -> KelvinConfig.o:254-268) is the version
-            Config.Companion.b:329-342 takes from goodsType 235's function, Config.Y2 (:423-427, :1434-1436): version
-            2 = [2700, 6500] (:407) when BleUtils.isHigherVersion(the hard version Info4BleIotDevice.Z, "1.04.03")
-            holds, else version 1 = [2200, 6500] (:406). isHigherVersion$default (:74-79) sets its inclusive flag
-            back to true, so Q (:327-335) is q0(hard) >= q0("1.04.03"), and q0 (:1065-1074) is the version with its
-            dots removed as one int, 0 when empty or unparsable: a numeric compare (by_firmware compare numeric),
-            where the other KelvinConfig gates are string compares. The library reads the hard version with aa 07 03
-            (the polled row's device-info reads); until it is in, the range is [2700, 6500], the one valid on every
-            revision. The range also decides which RGB picks go out as Kelvin (KelvinConfig.i:193-200): below 1.04.03
-            a pick of one of the ten 2200-2600 K tint colours is sent as Bytes.r. Brightness version 1. No 0xB2 on the connect. Not listed: the
-            time-sync write, the timer, sleep and wake reads. Scenes not traced. Not hardware-verified.
-            No Kelvin over a piece selection (segment_color_temp false): 235 is not in SupportPartColorTemConfig.d, so
-            the colour page's Part tab has no Kelvin item (DelegateColorV2Part.Z0 adds it only where
-            LightColorCapabilityCenter.C2 holds), and the illumination tab, the row's one Kelvin control, writes every
-            piece.
+            groups 1-4 of 4 over getColorPieceSize(235) = 14 pieces (VM4Light.Y4), which the aa 05 step adds to the same
+            compose, so the first that goes unanswered ends it and no later group is sent (color_group_stop_at_miss).
+            Config.I[235] = gradual off, so the aa a3 reply is discarded. Live power: the ee 30 switch push
+            (makeSwitchNotifyParser, byte 1). Heartbeat aa 00 (I3 false). Colour tab: Config.x[235] = 0 -> Config.Yt ->
+            Bytes.h / Bytes.r, white type Config.P = 1, the family h60a6 frames; segments picked per piece
+            (ColorMode.canClickColor). The colour tab has no Kelvin (Config.I[235][4] false, ColorMode.canClickColorTem
+            null); the illumination tab (mode 13 in the SKU's localSkuComponentConfigs list) writes Config.N[0] =
+            Bytes.C(K, 14, 1) and then 33 04 as one compose (View4IlluminationMode.I0; color_temp_control illumination,
+            with illuminationCur()[0] = Info4Detail.i, the aa 04 brightness). Config.I[235] = zN: segment brightness on,
+            colour temperature off. Main switch 33 01; no zone switch. The polled aa 05 reply is parsed by Info4Detail.Q
+            (the family wire mode, music v2_default; DeviceProfile.mode_decode). Kelvin range: the illumination tab's
+            (VM4Light.colorTemRange:600-602 -> KelvinConfig.m:240-242 -> LightColorCapabilityCenter.r1:1286-1297, no
+            LightCapabilitySpec for 235, so t1:537-539 -> LegacyColorCapabilityProvider.l:218-221 ->
+            KelvinConfig.o:254-268) is the version Config.Companion.b:329-342 takes from goodsType 235's function,
+            Config.Y2 (:423-427, :1434-1436): version 2 = [2700, 6500] (:407) when BleUtils.isHigherVersion(the hard
+            version Info4BleIotDevice.Z, "1.04.03") holds, else version 1 = [2200, 6500] (:406). isHigherVersion$default
+            (:74-79) sets its inclusive flag back to true, so Q (:327-335) is q0(hard) >= q0("1.04.03"), and q0
+            (:1065-1074) is the version with its dots removed as one int, 0 when empty or unparsable: a numeric compare
+            (by_firmware compare numeric), where the other KelvinConfig gates are string compares. The library reads the
+            hard version with aa 07 03 (the polled row's device-info reads); until it is in, the range is [2700, 6500],
+            the one valid on every revision. The range also decides which RGB picks go out as Kelvin
+            (KelvinConfig.i:193-200): below 1.04.03 a pick of one of the ten 2200-2600 K tint colours is sent as
+            Bytes.r. Brightness version 1. No 0xB2 on the connect. Not listed: the time-sync write, the timer, sleep and
+            wake reads. Scenes not traced. Not hardware-verified. No Kelvin over a piece selection (segment_color_temp
+            false): 235 is not in SupportPartColorTemConfig.d, so the colour page's Part tab has no Kelvin item
+            (DelegateColorV2Part.Z0 adds it only where LightColorCapabilityCenter.C2 holds), and the illumination tab,
+            the row's one Kelvin control, writes every piece.
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:79-86,130-132,417-432
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:137-140
@@ -4503,6 +4505,7 @@ families:
       mode_color_parse: rgb_kelvin_0d   # all six, every pact; split_h6061/com/govee/cubelight/newdetails/CubeNewInfo4Detail.java:488-538
       power_read: aa01   # in the connect read set; CubeNewDetailsConfig$makeControllerStrategy$1.java:211-215
       power_live: [heartbeat_aa01]   # no ee 30 parser; CubeVM4Light.java:531-533
+      color_group_stop_at_miss: true   # all six: the aa a5 groups are connect-compose steps after aa 05, so a lost one ends it; CubeVM4Light$connectBleSuc$2.java:47-60, CubeVM4Light.java:386-422
       wire_cipher: runtime
       by_goods_type:   # mode_color_parse = the family default for all six; one screen (CubeAcLightDetail / CubeVM4Light, colour on DelegateColorV2 + CubeColorModeV2) for all six, the rows differ in pacts and wire counts
         "51":   # Glide Hexa (cubelight/pact/Support.getDefDeviceName :243-254). app_traced at a full layout, the editor's cap of 20: the user's decisions 9 (2026-10-21) and D1 (a) (2026-10-22)
@@ -4531,9 +4534,12 @@ families:
             the read-back default with no layout stored, not a layout the editor can make (the row's count until D1).
             app_traced at a full layout: the user's decision 9 ("Keep it, fix the frame") and D1 (a), 20 panels; a smaller
             layout is exact only with the account's layout (D10, the stored-IC release). Connect: a time sync
-            (TimerConfig.f, not modelled), aa 04, aa 01, aa 05, then the aa a5 groups 1..ceil(L / 4) (CubeVM4Light.l5).
-            Kelvin version 0 = [2000, 9000]; brightness percent; one 33 01 switch, unzoned. 0xB2 only while pairing
-            (ConnectDialog, PairAcV1). Not hardware-verified.
+            (TimerConfig.f, not modelled), aa 04, aa 01, aa 05, then the aa a5 groups 1..ceil(L / 4) (CubeVM4Light.l5),
+            which the aa 05 step adds to the same compose, so the first that goes unanswered ends it and no later group
+            is sent (color_group_stop_at_miss: Controller4ColorInfoByGroup is no temporary or retried step,
+            AbsComposeControllerWithOpResult.onOvertime -> result2Fail). Kelvin version 0 = [2000, 9000]; brightness
+            percent; one 33 01 switch, unzoned. 0xB2 only while pairing (ConnectDialog, PairAcV1). Not
+            hardware-verified.
           doc-ref:
             - split_h6061/com/govee/cubelight/pact/Support.java:99-107,180-194
             - base-classes2/com/govee/shared/config/h6061/H6061SceneConfig.java:46-48

@@ -162,7 +162,10 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     A group that gets no usable reply is skipped and the walk goes on; with ``stop_at_miss`` it ends there,
     keeping the groups read before it, as a compose ends at a step that fails
     (``AbsComposeControllerWithOpResult.onOvertime``) after each earlier step's callback has applied its group
-    (the keep-alive re-read, ``Compose4Off2On``).
+    (the keep-alive re-read, ``Compose4Off2On``; and the poll's walk on a
+    :attr:`~.profile.DeviceProfile.color_readback_stop_at_miss` profile, whose connect compose holds the
+    groups). The :class:`Walk` counts the pieces the walk covers either way, so a walk that lost a group never
+    reads as one that brought every piece.
 
     Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``

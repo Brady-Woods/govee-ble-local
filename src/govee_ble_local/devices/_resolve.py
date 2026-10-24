@@ -123,7 +123,9 @@ the row lacks fails the build: nothing defaults silently.
   becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of the device. A row's ``kelvin_readback:
   pieces`` (the colour-temperature state read from the read-back's pieces, goodsType 180's ``VM4Light.g5``)
   becomes ``DeviceProfile.kelvin_from_pieces``; it needs ``color_temp`` and the direct colour read-back on a
-  polled row, over the static or device-reported pieces (not an IC-sized walk).
+  polled row, over the static or device-reported pieces (not an IC-sized walk). ``color_group_stop_at_miss``
+  (row or family; the screen's connect compose ends at a group that goes unanswered) becomes
+  ``DeviceProfile.color_readback_stop_at_miss``; it needs the direct colour read-back on a polled row.
   An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as
   every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
   (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
@@ -401,6 +403,7 @@ class Row(TypedDict, total=False):
     power_write: str
     power_live: tuple[str, ...]
     brightness_live: tuple[str, ...]
+    color_group_stop_at_miss: bool
     heartbeat: str
     heartbeat_timing: str
     heartbeat_power: bool
@@ -523,6 +526,7 @@ class ClientProfile(TypedDict, total=False):
     power_read: str
     power_live: tuple[str, ...]
     brightness_live: tuple[str, ...]
+    color_group_stop_at_miss: bool
     mode_color_parse: str
     mode_color_parse_status: str
     relay_power: str
@@ -1399,6 +1403,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
             forms.get("f_a5", ""), "")
         if not color_readback:
             fail(f"colour read-back with f_a5 {forms.get('f_a5')!r}")
+    # The screen's connect compose ends at a group that goes unanswered
+    # (DeviceProfile.color_readback_stop_at_miss).
+    stop_at_miss = bool(row.get("color_group_stop_at_miss", cp.get("color_group_stop_at_miss", False)))
+    if stop_at_miss and (color_readback != "mechanism_a_direct" or readback != "polled"):
+        fail("color_group_stop_at_miss without the direct colour read-back on a polled row (it ends the "
+             "poll's aa a5 walk)")
     # The status read takes colour groups from TLV 0xA5 where it requests them, or on the bare read (whose
     # screen parses each 0xA5 that arrives, VM4H70DX.g5), and the row reads them so.
     status_groups = (any("color_group" in read or not read for read in status_reads)
@@ -1607,6 +1617,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
         "color_readback_per_batch": (int(per_group) if color_readback == "mechanism_a_direct" or reread_pieces
                                      else 3),
         "color_readback_live_ic": live_ic,
+        "color_readback_stop_at_miss": stop_at_miss,
         # the live pieces size the writes too (ColorPieceConfig.c), unless the rule sizes the walk alone
         "color_writes_live_ic": live_ic and not ic_rule.get("color_readback_ic_walk_only", False),
         "color_readback_ic_sections": ic == "sections",

@@ -352,11 +352,13 @@ def test_a_negative_signed_kelvin_in_the_0x0d_report_is_an_rgb_colour() -> None:
     assert d.state.rgb_color == (0x12, 0x34, 0x56) and d.state.color_temp_kelvin is None
 
 
-def test_update_queries_power_brightness_mode_then_every_group() -> None:
-    d = _poll(_frame(0xAA, 0x05, 0x0D, 1, 2, 3, 0, 0))
+def test_update_queries_power_brightness_mode_then_the_groups_to_the_first_miss() -> None:
+    red = {g: _group_reply(g, *[(100, 0xFF, 0, 0)] * 4) for g in (1, 2)}   # groups 1-2 of 5; 3 unanswered
+    d = _poll(_frame(0xAA, 0x05, 0x0D, 1, 2, 3, 0, 0), red)
     q = [f[:3].hex() for f in _queried(d) if f[1] in (0x01, 0x04, 0x05, 0xA5)]
-    # aa 01 / aa 04 without a selector byte, as the app sends them
-    assert q == ["aa0100", "aa0400", "aa0501"] + [f"aaa5{g:02x}" for g in range(1, 6)]
+    # aa 01 / aa 04 without a selector byte, as the app sends them; the groups are steps of the connect
+    # compose, which the first unanswered one ends (AbsComposeControllerWithOpResult.onOvertime)
+    assert q == ["aa0100", "aa0400", "aa0501", "aaa501", "aaa502", "aaa503"]
 
 
 def test_update_reads_panel_colours_from_the_group_replies() -> None:

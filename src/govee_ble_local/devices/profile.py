@@ -699,6 +699,19 @@ class DeviceProfile:
     follows only with :attr:`heartbeat_reread_on_push`. ``""`` (the default): no ``ee 30`` push is read (h6069
     284 and rgbiclight 351 / 352, whose screens have no switch parser, and every row the library does not
     follow on a held link)."""
+    color_readback_stop_at_miss: bool = field(default=False, kw_only=True)
+    """mechanism_a_direct on a polled profile: the poll's ``aa a5`` walk ends at the first group that gets no
+    usable reply and sends no later group, as the screen's connect compose ends there. Each group is a
+    ``Controller4ColorInfoByGroup`` step (``Companion.g:112-120``), a plain ``AbsController`` that is no
+    temporary or retried step (``IControllerNoEvent.DefaultImpls:31-37``), which the aa 05 step's callback
+    adds to the compose (``Compose4InfoBleIot$iControllerStrategy$1.v:125-132``), so a group that times out
+    ends it in ``result2Fail`` (``AbsComposeControllerWithOpResult.onOvertime:287-312``) and the comm drops
+    it (``ComposeBleComm.C:143-150`` -> ``v:305-313``): cubelight ``CubeVM4Light$connectBleSuc$2.l:47-60``
+    -> ``CubeVM4Light.l5:386-422`` (H6061, H6063, H6065, H6066, H6067, H606A) and h60a1
+    ``VM4Light.h5:327-340`` -> ``Y4:153-179`` (H60A1, H80A1). The groups read before it are the state's
+    segments, with no report shown over them (:func:`._fold.brought_every_piece`). A devices.yaml row's
+    ``color_group_stop_at_miss``. False (the default): a group that gets no usable reply is skipped and the
+    walk goes on, on the rows whose walk is not traced for it."""
     ic_reads_around_status: tuple[bool, bool] = field(default=(False, False), kw_only=True)
     """``readback="status"`` with :attr:`color_readback_live_ic`: the poll's ``aa 40`` reads ``(before,
     after)`` the 0xAC status read, which give the live IC in place of a TLV 0x40 (a devices.yaml status row's
@@ -899,6 +912,10 @@ class DeviceProfile:
                 or (floor and not self.push_brightness)):
             raise GoveeBleInvalidValue(
                 f"{where}: push_brightness_min={floor!r} (0, or more with push_brightness)")
+        if self.color_readback_stop_at_miss and (self.color_readback != "mechanism_a_direct"
+                                                 or self.readback != "polled"):
+            raise GoveeBleInvalidValue(f"{where}: color_readback_stop_at_miss needs the mechanism_a_direct "
+                                       "walk on a polled profile")
         push = self.push_power
         if push and (push not in _C.FormEe30.__members__ or push == "unknown"):
             raise GoveeBleInvalidValue(f"{where}: push_power={push!r} (a form_ee_30 form, or \"\")")
