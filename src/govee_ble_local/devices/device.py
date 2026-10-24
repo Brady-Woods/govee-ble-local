@@ -212,7 +212,7 @@ class Device:
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
         # time.monotonic() of the device read that set _segment_count (_adopt_segment_count); None for a
-        # caller's count (set_segment_count) or none (segment_count_read_at).
+        # caller's count (set_segment_count) or none.
         self._segment_count_read_at: float | None = None
         # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
         # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
@@ -524,18 +524,19 @@ class Device:
         Stamped by each such read on this Device: the aa 41 section count, the ac a1 special-info read, the
         aa 40 live IC, a status read's TLV 0x40 (or the aa 40 reads around it), the aa 0f string count, or a
         status read's TLV 0xA1 / 0x40 (each profile's read in :attr:`segment_count`), at a poll or in the
-        lazy read before a masked write, including a re-read that reports the same count. None for the
-        profile's static count (a new Device until its first such read, and always on a profile whose count
-        is static), after an aa 0f read whose count is negative drops the count, and after
-        :meth:`set_segment_count` (either form) until the next such read. A read that gives no usable count
-        leaves the count and the stamp as they were. No I/O; nothing persists past this Device. A caller
-        that offers one entity per segment sizes them from :attr:`segment_count` while this is set and keeps
-        them while it is None. On the Device, not in :class:`DeviceState`, as :attr:`power_read_at` is."""
+        lazy read before a masked write, including a re-read that reports the same count, but not a status
+        read without TLV 0xA1 whose TLV 0x40 IC is the one already held, which sets no count (the app's
+        lambda writes none: :meth:`_adopt_status_segments`). None for the profile's static count (a new
+        Device until its first such read, and always on a profile whose count is static), after an aa 0f
+        read whose count is negative drops the count, and after :meth:`set_segment_count` (either form)
+        until the next such read. A read that gives no usable count leaves the count and the stamp as they
+        were. No I/O; nothing persists past this Device. A caller that offers one entity per segment sizes
+        them from :attr:`segment_count` while this is set and keeps them while it is None. On the Device,
+        not in :class:`DeviceState`, as :attr:`power_read_at` is."""
         return self._segment_count_read_at
 
     def _adopt_segment_count(self, count: int) -> None:
-        """A device read's segment count: it becomes :attr:`segment_count`, stamped now
-        (:attr:`segment_count_read_at`)."""
+        """A device read's segment count: it becomes :attr:`segment_count`, stamped now."""
         self._segment_count = count
         self._segment_count_read_at = time.monotonic()
 

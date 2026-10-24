@@ -73,7 +73,9 @@ model, from which the shipped readers are generated).
   - **What stamps it:** each read on this Device that gives a usable count and sets `segment_count`: the
     `aa 41` section count, the `ac a1` special-info read, the `aa 40` live IC, a status read's TLV 0x40 (or the
     `aa 40` reads around it), the `aa 0f` string count, or a status read's TLV 0xA1 / 0x40, at a poll or in the
-    lazy read before a masked write. A re-read that reports the same count stamps it again.
+    lazy read before a masked write. A re-read that reports the same count stamps it again, except a status
+    read without TLV 0xA1 whose TLV 0x40 IC is the one already held: as in the app, that read sets no count, so
+    the stamp stays as it was.
   - **What makes it None:** the profile's static count (a new Device until its first such read, and always on
     a profile whose count is static); an `aa 0f` read whose count is negative, which drops the count back to
     the profile's (the stamp goes with it); and `set_segment_count(n)` or `set_segment_count(None)`, until the
