@@ -1790,7 +1790,11 @@ model, from which the shipped readers are generated).
   refused at setup. An operation that overlaps a check in flight waits for its outcome (`asyncio.gather`
   included): after a refusal it connects again, and its own setup sends the check and is refused the same way,
   so no frame goes out on a link whose check failed. A refusing call that is cancelled leaves the link down once
-  the refusal came, and the check pending while the link is up. A check that gets no ack still has the link set
+  the refusal came. A call cancelled once its check is written, before the device answers, tears the link down
+  before anything else goes out on it, as the outcome is unknown, and the next session's setup sends the check;
+  one cancelled while its check waits for the link leaves it pending, as it never went out. Until now such a
+  cancellation left the link up with the check pending, and a frame queued behind it went out on that link
+  before a late refusal arrived. A check that gets no ack still has the link set
   up again, whose setup sends the check, and now only that: the write's retry sent it a second time on the new
   link. The empty check after `read_secret()` (Added) goes the same way. With an accepted check, the
   overlapping operations' frames follow it in the order they were called, where a later one could go first.
@@ -1800,7 +1804,11 @@ model, from which the shipped readers are generated).
   live check and `read_secret()`'s empty check change nothing; a refused live check, or a refused empty check,
   with a frame queued behind it now ends the link before that frame, which connects again and is refused at
   setup (GoveeBleAuthError), where it went out on the refused link and was acked; and an unacked live check
-  goes out once on the reconnected link, not twice. Source-modelled, not live-verified.
+  goes out once on the reconnected link, not twice. The cancelled case was then checked against 9cb9a62 the same
+  way (a live check the device answers after 1 s, refused or accepted, its call cancelled at 50 ms with a
+  frame queued behind it, then another write): the link now ends after the check, and the queued frame connects
+  again, where its setup's check is refused (GoveeBleAuthError) or accepted, where it went out on the first link;
+  the other flows change nothing. Source-modelled, not live-verified.
 
 ### Spec
 - **A pact branch can give its pact a profile of its own (h60ax 303 at (1,1), hass #30).** `clientBranch` takes

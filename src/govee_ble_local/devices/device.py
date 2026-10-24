@@ -800,10 +800,12 @@ class Device:
         at session setup (``GoveeConnection._prepare_session``). An operation that overlaps a check in flight
         waits for its outcome (``_unlock_lock``) rather than skipping it, so none of its frames goes out on a
         link whose check is then refused: after a refusal the session is gone and its own setup sends the
-        check again. Cancelled mid-check, the check is pending again while the link is up (it may not have
-        reached the device), and the session is down once a refusal came. ``ticket``: the write call it goes
-        out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the calling poll's
-        connect limits (:meth:`update`); a timeout that leaves the session down (the reconnect after an
+        check again. Cancelled while the check waits for the link, it is pending again (it never reached the
+        device); cancelled once it is written, before its outcome, the link is torn down first, as that
+        outcome is unknown, so nothing else goes out on it and the next session's setup sends the check; and
+        the session is down once a refusal came. ``ticket``: the write call it goes out for
+        (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the calling poll's connect
+        limits (:meth:`update`); a timeout that leaves the session down (the reconnect after an
         unacked check ran out of them) is raised, and the next session setup sends the unlock."""
         pairing = self._pairing_read()
         if (not pairing and not self._secret and self.profile.empty_secret_check
@@ -841,9 +843,10 @@ class Device:
                 done = True
                 _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
             finally:
-                # A cancelled or failed write on a session that is still up never reached the device:
-                # pending again, so the next operation sends it first. Once the session is gone the next
-                # setup sends it anyway, and a set_secret() during the write has re-armed it itself.
+                # A call cancelled before the check went out, or a failed write, on a session that is still
+                # up never reached the device: pending again, so the next operation sends it first. One
+                # cancelled once it is written has ended the session (send_check), whose next setup sends it
+                # anyway, and a set_secret() during the write has re-armed it itself.
                 if not done and self._conn.is_connected and self._secret == secret:
                     self._unlock_pending = True
                 if done and ticket is not None:

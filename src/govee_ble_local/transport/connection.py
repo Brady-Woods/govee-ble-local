@@ -1137,7 +1137,10 @@ class GoveeConnection:
           behind the check goes out on the refused link, and raises :class:`GoveeBleCommandRejected`;
         - a link that stops acking is torn down and set up again within ``connect_budget``, whose session
           setup sends the check (a refusal there raises :class:`GoveeBleAuthError`), and the check is not sent
-          a second time on it.
+          a second time on it;
+        - a call cancelled once the check is written, before its outcome, tears the link down before the
+          lock is released, as the outcome is unknown: the next session's setup sends the check. One
+          cancelled while it waits for the lock has written nothing and leaves the link as it is.
 
         A cancellation after the refusal still leaves the link down (the client is forgotten before the first
         await, :meth:`_disconnect_locked`). GoveeBleInvalidValue, before any I/O, for a frame that is not a
@@ -1150,6 +1153,12 @@ class GoveeConnection:
             try:
                 await self._send_write_verified(frame_plaintext)
             except GoveeBleCommandRejected:
+                await self._disconnect_locked()
+                raise
+            except asyncio.CancelledError:
+                # Cancelled once the check is written (its first await is the write): its outcome is unknown,
+                # so the link goes before the lock does, and no frame waiting for it goes out on a link whose
+                # check the device may yet refuse. The next session's setup sends the check.
                 await self._disconnect_locked()
                 raise
             except (
