@@ -154,14 +154,20 @@ def _ref_key(path: Path) -> bytes:
 _KEYS: dict[Path, bytes] = {}
 
 
+def ref_key() -> bytes:
+    """The ref key (:data:`REF_KEY_ENV`, else the default path), read or made once; :func:`_ref_key`'s
+    ``OSError`` where it is refused (``runner.main`` checks it before any scan, so that is a refusal)."""
+    path = _ref_key_path()
+    if path not in _KEYS:
+        _KEYS[path] = _ref_key(path)
+    return _KEYS[path]
+
+
 def device_ref(address: str) -> str:
     """6 hex digits of HMAC-SHA256 over the upper-cased address, keyed by a random per-user key: stable
     between runs and safe to paste (an unkeyed digest of a MAC whose vendor prefix is known is not: the
     other 3 bytes can be brute-forced)."""
-    path = _ref_key_path()
-    if path not in _KEYS:
-        _KEYS[path] = _ref_key(path)
-    return hmac.new(_KEYS[path], address.upper().encode(), hashlib.sha256).hexdigest()[:6]
+    return hmac.new(ref_key(), address.upper().encode(), hashlib.sha256).hexdigest()[:6]
 
 
 def outlets(profile: DeviceProfile | None) -> str | None:

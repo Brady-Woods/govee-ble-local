@@ -103,7 +103,8 @@ never at the same time.
    no failure: a device that needs a secret and is given none stays read-only and the gate is
    `incomplete`. The device refs are keyed by `~/.cache/govee-ble-local/field-test-ref.key`
    (`$GOVEE_FIELD_TEST_REF_KEY` elsewhere), made 0600 in a 0700 folder on first use; one group or others
-   can read is refused: delete it to make a new one (every ref changes, so run `--list` again).
+   can read is refused before any scan (exit 3, the path and mode): delete it to make a new one (every
+   ref changes, so run `--list` again).
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
    was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close
@@ -185,7 +186,7 @@ Notes:
 | 0 | The plan completed (its verdicts are in the report and the summary). | `gate` `pass`. |
 | 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, a partial or failed restore, or an unverified restore after a write it can never put back. |
 | 2 | No device found, or no plan for it. | Nothing to test. |
-| 3 | Refused: the wrong library or version, a bad `--secrets-file`. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
+| 3 | Refused: the wrong library or version, a bad `--secrets-file`, a ref key group or others can read. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
 | 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
 | 130 | Interrupted (Ctrl-C, SIGHUP, SIGTERM). | Interrupted (Ctrl-C, SIGHUP, SIGTERM), whatever the gate. |
 

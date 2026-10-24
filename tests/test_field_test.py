@@ -266,14 +266,28 @@ def test_runner_reports_not_found_and_unplanned_sku(
     key.chmod(0o640)
     with pytest.raises(OSError, match=r"readable by group or others \(mode 0640\)"):
         survey._ref_key(key)
-    # under pytest no real scan or connect, even in a tree whose conftest sets no GOVEE_FIELD_TEST_NO_SCAN
-    monkeypatch.delenv("GOVEE_FIELD_TEST_NO_SCAN")
+    with monkeypatch.context() as m:   # the tool refuses it (exit 3) before any scan, not with a traceback
+        m.setenv(survey.REF_KEY_ENV, str(key))
+        assert runner.main(["--list", "--out", str(tmp_path / "wide")]) == runner.EXIT_REFUSED
+        shown = capsys.readouterr().out
+        assert f"Refused: {key}: the ref key is readable by group or others (mode 0640)" in shown
+        assert key not in survey._KEYS
+    # under pytest no real scan or connect, even in a tree whose conftest sets no GOVEE_FIELD_TEST_NO_SCAN;
+    # the connect no_radio stops is a tripwire, bleak's in name only: a broken guard fails here, off the radio
+    monkeypatch.delenv("GOVEE_FIELD_TEST_NO_SCAN", raising=False)
     with pytest.raises(RuntimeError, match=r"scanning is disabled \(PYTEST_CURRENT_TEST"):
         survey._scanner()
+
+    async def tripwire(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("no_radio let a connect through")
+
+    tripwire.__module__ = "bleak_retry_connector"
+    assert survey._real(conn_mod.establish_connection)
+    monkeypatch.setattr(conn_mod, "establish_connection", tripwire)
     dev = create_device(ble_device("AA:BB:CC:DD:EE:47", "ihoment_H6047_1A2B"), "H6047")
     with survey.no_radio(), pytest.raises(GoveeBleError, match=r"connecting is disabled \(PYTEST_CUR"):
         asyncio.run(dev.connect())
-    assert conn_mod.establish_connection.__module__.startswith("bleak_retry_connector")   # put back
+    assert conn_mod.establish_connection is tripwire   # put back
 
 
 def test_help_runs_as_a_directory_and_lists_plans() -> None:

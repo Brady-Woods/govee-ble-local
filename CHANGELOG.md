@@ -107,7 +107,8 @@ model, from which the shipped readers are generated).
     or `GOVEE_FIELD_TEST_SECRETS` elsewhere; `field-test-secrets*.json` is git-ignored). One group or others
     can read is refused (exit 3), saying why and printing no value; no file is no failure (a device that
     needs a secret and is given none stays read-only, the gate `incomplete`). The ref key
-    (`~/.cache/govee-ble-local/field-test-ref.key`) is made 0600, and one group or others can read is refused.
+    (`~/.cache/govee-ble-local/field-test-ref.key`) is made 0600, and one group or others can read is refused
+    (exit 3) before any scan.
   - Under pytest (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real
     scan and connect (bleak's `BleakScanner`; a library connect while `establish_connection` is bleak's), so a
     test reaches only a fake whatever its tree's conftest sets. The suite sets `GOVEE_FIELD_TEST_NO_SCAN`, a

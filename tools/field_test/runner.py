@@ -1632,6 +1632,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.expect_version and lib.get("version") != args.expect_version:
             raise Refused(f"the library under test is {lib.get('version')} ({lib.get('source')}), "
                           f"not {args.expect_version}")
+        try:   # a ref key group or others can read (or not a file) is refused before any scan or connect
+            _survey.ref_key()
+        except OSError as err:
+            raise Refused(str(err)) from None
     except Refused as err:
         _say(f"Refused: {err}")
         return EXIT_REFUSED
