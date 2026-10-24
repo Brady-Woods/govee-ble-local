@@ -413,8 +413,11 @@ def apply_status(
         # and, where they all show one colour, shows (d[0]). Those bursts' own report is the 0x15 sub-mode
         # (15 01 00 00), which carries no colour and leaves d to the groups, so W1 shows their one colour
         # there too, as after the h60a1 screen's 0x0d Kelvin above 0, whose tint they replace
-        # (_shown_over_pieces).
-        apply_mode(profile, state, st.mode, pieces=st.segments)
+        # (_shown_over_pieces). Only where the groups bring every piece (brought_every_piece): j sizes d to
+        # the piece count and copies in only the groups that came (:124-147), so a piece no group brought
+        # holds no colour of this read, and the report folds as decoded, as over pieces that differ.
+        whole = brought_every_piece(st.segments, st.group_pieces)
+        apply_mode(profile, state, st.mode, pieces=st.segments if whole else ())
         applied = True
     # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
     # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
@@ -445,12 +448,15 @@ def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any,
 def apply_mode_over_pieces(profile: DeviceProfile, state: DeviceState, m: Any, pieces: Sequence[Segment],
                            remembered: int | None) -> None:
     """Show a polled ``aa 05`` colour-mode report again once the same poll's ``aa a5`` walk has read
-    ``pieces``: as :func:`apply_mode` would have folded it had the pieces been in when it came, ``remembered``
-    being the ``last_color_temp_kelvin`` from before it. The app shows the colour page once its connect read
-    is done, and the walk is part of that read, after the ``aa 05`` reply: the mode callback's group reads
-    join the same compose (``Compose4InfoBleIot$iControllerStrategy$1.v:125-132``, ``:243-250``; h60a1
+    ``pieces``, every piece it walked (the caller checks :func:`brought_every_piece`): as :func:`apply_mode`
+    would have folded it had the pieces been in when it came, ``remembered`` being the
+    ``last_color_temp_kelvin`` from before it. The app shows the colour page once its connect read is done,
+    and the walk is part of that read, after the ``aa 05`` reply: the mode callback's group reads join the
+    same compose (``Compose4InfoBleIot$iControllerStrategy$1.v:125-132``, ``:243-250``; h60a1
     ``VM4Light.h5:327-340`` -> ``Y4:153-179`` -> ``Z4:181-185``, then ``i5:342-358``; cubelight
-    ``CubeVM4Light$connectBleSuc$2.l:47-60`` -> ``CubeVM4Light.l5:386-421`` -> ``m5:424-438``). So
+    ``CubeVM4Light$connectBleSuc$2.l:47-60`` -> ``CubeVM4Light.l5:386-421`` -> ``m5:424-438``), whose
+    success callback alone syncs the page (h60a1 ``VM4Light.g5:307-324``, ``i5``; a group that goes
+    unanswered fails the compose into ``j5:362-371``, ``R(1)``, with nothing synced). So
     ``DelegateColorV2.W1`` tests the walk's pieces, which replace the report's one colour in
     ``SubMode4Color.d`` (:func:`_as_shown`), or fill it after a 0x15 report, which carries none, and on the
     h60a1 screen after a 0x0d Kelvin above 0, whose tint they replace (:func:`_shown_over_pieces`): their one
@@ -622,6 +628,24 @@ def _held_kelvin(color: parse.ModeColor | None) -> int | None:
 def _stock_page(profile: DeviceProfile) -> bool:
     """Whether the screen shows a reported colour on the stock colour page with a Kelvin control."""
     return profile.color_page == "stock" and Capability.COLOR_TEMP in profile.capabilities
+
+
+def brought_every_piece(pieces: Sequence[Segment], count: int | None) -> bool:
+    """Whether ``pieces``, the segments one read brought (a poll's ``aa a5`` walk, a status burst's TLV
+    0xA5 groups), give every one of the ``count`` pieces that read covers a colour, so the stock colour page
+    shows a report over them (:func:`apply_mode_over_pieces`, :func:`apply_status`). A walk that had a group
+    go unanswered fails the app's connect read, and the screen syncs nothing from it (h60a1
+    ``VM4Light.g5:307-324`` -> ``j5:362-371``; cubelight ``CubeVM4Light$connectBleSuc$2.p:106-115``; the
+    walk's group read is no temporary or retried step,
+    ``AbsComposeControllerWithOpResult.onOvertime:287-312``), and a burst whose groups leave a piece out
+    holds no colour of that read for it (``SubMode4Color.j:113-148`` copies only the groups that came), so
+    in either case the report folds as decoded, as :func:`apply_piece_kelvin` leaves the Kelvin of a walk
+    that lost a group. ``count`` None (a burst read with no piece count, each group's from its TLV length):
+    the groups that came are the read's pieces."""
+    if count is None:
+        return True
+    known = {seg.index for seg in pieces if seg.rgb is not None}
+    return all(i in known for i in range(count))
 
 
 def _one_colour(pieces: Sequence[Segment]) -> tuple[int, int, int] | None:

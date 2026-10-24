@@ -266,9 +266,9 @@ def test_walk_mechanism_b_asks_each_batch_in_order() -> None:
             return _frame(0xAA, 0xA5, 2, 50, 1, 2, 3, 60, 4, 5, 6, 70, 7, 8, 9)
         return None
 
-    segs = run(_readback.walk_mechanism_b(target, read_reply))
+    walk = run(_readback.walk_mechanism_b(target, read_reply))
     assert asked == [build.bulb_group_query(seq, v2=True) for seq in range(1, 6)]   # 15 / 3 = 5 batches
-    assert segs == [Segment(3, (1, 2, 3), 50), Segment(4, (4, 5, 6), 60), Segment(5, (7, 8, 9), 70)]
+    assert walk == ([Segment(3, (1, 2, 3), 50), Segment(4, (4, 5, 6), 60), Segment(5, (7, 8, 9), 70)], 15)
 
 
 def test_walk_mechanism_a_direct_skips_on_a_failed_ic_read_and_logs_on_the_device_logger(
@@ -312,10 +312,10 @@ def test_walk_mechanism_a_direct_sizes_a_sections_walk_by_the_aa_40_section_sum(
             return _frame(0xAA, 0x40, *ic)
         return _frame(0xAA, 0xA5, frame[2], *([100, 1, 2, 3] * size))
 
-    segs = run(_readback.walk_mechanism_a_direct(target, read_reply))
+    read = run(_readback.walk_mechanism_a_direct(target, read_reply))
     walk = [build.bulb_group_query(g, v2=True) for g in range(1, groups + 1)]
     assert asked == [build.ic_count_query(), *walk]
-    assert [s.index for s in segs or ()] == list(range(pieces))
+    assert [s.index for s in (read.segments if read else ())] == list(range(pieces))
 
 
 _FLOOR = dict(color_readback_ic_range=(0, 4095), color_readback_ic_per_piece=4,
@@ -354,10 +354,10 @@ def test_walk_mechanism_a_direct_sizes_a_live_ic_walk_by_its_ic_rule(
             return _frame(0xAA, 0x40, *ic)
         return _frame(0xAA, 0xA5, frame[2], *([100, 1, 2, 3] * 4))
 
-    segs = run(_readback.walk_mechanism_a_direct(_Target("HX", profile, profile.segments), read_reply))
+    read = run(_readback.walk_mechanism_a_direct(_Target("HX", profile, profile.segments), read_reply))
     walk = [build.bulb_group_query(g, v2=True) for g in range(1, -(-pieces // 4) + 1)]
     assert asked == [build.ic_count_query(), *walk]
-    assert [s.index for s in segs or ()] == list(range(pieces))
+    assert [s.index for s in (read.segments if read else ())] == list(range(pieces))
 
 
 def test_read_device_info_reports_a_silent_device() -> None:

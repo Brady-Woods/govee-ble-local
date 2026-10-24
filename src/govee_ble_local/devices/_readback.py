@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from ..models import DeviceState, Segment
 from ..wire import build, parse, reassemble
@@ -27,6 +27,17 @@ ReadReply = Callable[[bytes], Awaitable[bytes | None]]
 
 QueryStatus = Callable[[], Awaitable[tuple[reassemble.StatusReply, list[bytes], list[bytes]]]]
 """One 0xAC status-burst query: ``(parsed, 0xAC frames, all frames)`` (``Device._query_status``)."""
+
+
+class Walk(NamedTuple):
+    """What a segment-colour walk read: ``segments``, the pieces its answered groups brought, each placed by
+    the group asked for, and ``pieces``, the pieces it walked (its groups cover them). A walk that had a
+    group go unanswered brought fewer. The app's connect read fails at that group: the group read is not a
+    temporary or retried step, so ``AbsComposeControllerWithOpResult.onOvertime:287-312`` ends the compose
+    in ``result2Fail``, and the screen syncs nothing from that read (:func:`._fold.brought_every_piece`)."""
+
+    segments: list[Segment]
+    pieces: int
 
 
 class ReadTarget(Protocol):
@@ -83,14 +94,14 @@ async def status_burst(dev: ReadTarget, query_status: QueryStatus) -> reassemble
     return st
 
 
-async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
+async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> Walk | None:
     """H61A8's per-segment colour (AA A5 <seq>, the V2 records with brightness): request each batch
-    and assemble positional segments, or None if no batch came back. per_batch / batch-count are
-    client constants (not frame-encoded: the screen's group size, 3 with brightness on the bench H61A8,
-    read back live). Each reply is placed by the batch asked for, as goodsType 19's screen does (see
-    the loop); a batch that didn't answer is left out. Kept apart from :func:`walk_mechanism_a_direct`
-    (H6047 / H6641, group size 4, colour only): the two share the wire opcode (0xA5), not the record
-    layout the library decodes."""
+    and assemble positional segments over the walk's pieces (:class:`Walk`), or None if no batch came
+    back. per_batch / batch-count are client constants (not frame-encoded: the screen's group size, 3
+    with brightness on the bench H61A8, read back live). Each reply is placed by the batch asked for, as
+    goodsType 19's screen does (see the loop); a batch that didn't answer is left out. Kept apart from
+    :func:`walk_mechanism_a_direct` (H6047 / H6641, group size 4, colour only): the two share the wire
+    opcode (0xA5), not the record layout the library decodes."""
     profile = dev.profile
     per_batch = profile.color_readback_per_batch   # >= 1, checked by DeviceProfile
     seg_count = profile.color_readback_segments or dev.segment_count
@@ -111,19 +122,21 @@ async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segme
             _LOGGER.debug("%s (%s): batch %d reply carries group %d; placed as batch %d, as the app does",
                           dev.address, dev.sku, seq, parsed[0], seq)
         batches.append((seq, parsed[1][: max(0, seg_count - (seq - 1) * per_batch)]))
-    return parse.bulb_groups_to_segments(batches, per_batch) or None
+    segments = parse.bulb_groups_to_segments(batches, per_batch)
+    return Walk(segments, seg_count) if segments else None
 
 
 async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
                                   live_pieces: int | None = None, *,
-                                  stop_at_miss: bool = False) -> list[Segment] | None:
+                                  stop_at_miss: bool = False) -> Walk | None:
     """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
-    requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
-    controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
-    size is the profile's `color_readback_per_batch` (the spec row's wire group num_per_group, 4 on
-    every current SKU). The total piece count — and hence the group count, ceil(pieces / group size) —
-    comes from either the segment count (`color_readback_segments`, else ``Device.segment_count``: the
-    static `segments`, H6047's 10, or the count an aa 41 read reported, H6062; on the h7020 bulb strings
+    requests (AA A5 <group>) over the walk's pieces (:class:`Walk`), or None when the walk was skipped or no
+    group came back. A different controller from H61A8's mechanism_b (BulbGroupColorV2); they only share
+    the wire opcode. Group size is the profile's `color_readback_per_batch` (the spec row's wire group
+    num_per_group, 4 on every current SKU). The total piece count — and hence the group count,
+    ceil(pieces / group size) — comes from either the segment count (`color_readback_segments`, else
+    ``Device.segment_count``: the static `segments`, H6047's 10, or the count an aa 41 read reported, H6062;
+    on the h7020 bulb strings
     ``live_pieces``, the last aa 0f read's pieces, which may pass the 112 the masks carry, as
     ``NewDetailVM.D5`` walks them all) or, when `color_readback_live_ic` is set (H6641), a live `0x40`
     IC-count read
@@ -192,7 +205,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
                           "placing it by the request, as the app does",
                           dev.address, dev.sku, parsed[0], g)
         groups.append((g, parsed[1]))
-    return parse.direct_groups_to_segments(groups, group_size) or None
+    segments = parse.direct_groups_to_segments(groups, group_size)
+    return Walk(segments, total) if segments else None
 
 
 async def _section_sum(dev: ReadTarget, read_reply: ReadReply) -> int | None:

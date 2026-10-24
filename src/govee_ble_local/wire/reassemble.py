@@ -126,6 +126,10 @@ class StatusReply:
     # count where the IC changed and no 0xA1 follows (H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l
     # -> n6); the last one wins.
     ic_segment: tuple[int, int] | None = None
+    # The piece count the 0xA5 colour groups were read over (parse_status's pieces, or the pieces of the
+    # burst's own leading IC count), the pieces SubMode4Color.j sizes the colours to; None (or 0) where each
+    # group's records came from its TLV length. Left out of equality: it is the read's parameter, not state.
+    group_pieces: int | None = field(default=None, compare=False)
 
 
 def _chunk_of(fr: bytes) -> Any:
@@ -407,12 +411,14 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     group byte of 0x80 or more), while a group starting exactly at the end (``pieces`` a multiple of 4) is
     a no-op and skipped (``color_group.is_placed``). ``pieces`` None takes the count from the TLV len and
     drops group 0. With ``pieces``, no segment is set at or past it (a ``from_len`` count is the TLV
-    len's, not the device's). Under ``f_a5`` ``single_record`` (the H703A / H703B screen) a 0xA5 TLV is one
-    ``[brightness, r, g, b]`` record at bytes 1-4, read from a value of 5 bytes or more and taken only at one
-    piece (``SubMode4Color.l``), as ``StatusReply.color``, the last such TLV winning; a shorter one, or one
-    over another piece count, is skipped and never fails the read. A 0xA5 TLV the decode reads neither way
-    (its ``f_a5`` is neither: a record shape the library doesn't read) is skipped. A 0x30 TLV the decode
-    doesn't read as zone bits (its ``f_30`` is not ``zone_power``) is skipped too.
+    len's, not the device's), and it is :attr:`StatusReply.group_pieces`, the count a fold tests the
+    groups against (``_fold.brought_every_piece``). Under ``f_a5`` ``single_record`` (the H703A / H703B
+    screen) a 0xA5 TLV is one ``[brightness, r, g, b]`` record at bytes 1-4, read from a value of 5 bytes
+    or more and taken only at one piece (``SubMode4Color.l``), as ``StatusReply.color``, the last such TLV
+    winning; a shorter one, or one over another piece count, is skipped and never fails the read. A 0xA5
+    TLV the decode reads neither way (its ``f_a5`` is neither: a record shape the library doesn't read) is
+    skipped. A 0x30 TLV the decode doesn't read as zone bits (its ``f_30`` is not ``zone_power``) is
+    skipped too.
     Device-info: the last block wins, as the app's setters do (``Compose4BaseInfoSingleRead.w:370-437``):
     a basic 0x10 block sets the serial when its UID is valid and always sets the versions (None when
     zero); a Wi-Fi 0x11 block always sets the Wi-Fi MAC (None when zero). The 0x11 block's versions are
@@ -552,6 +558,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     st.segments = parse.direct_groups_to_segments(groups, int(prof.group.num_per_group))
     if pieces:   # the device's piece count bounds the segment index (a from_len count is the TLV len's)
         st.segments = [s for s in st.segments if s.index < pieces]
+    st.group_pieces = pieces or None
     # A read that succeeded applies the switch and brightness whether or not the stream carried them: each
     # read starts from a fresh DeviceBaseInfoFromDevice (switch false, brightness 100; its constructor),
     # which u() fills from the 0x01 / 0x04 TLVs, and the success callback hands it to h60a1 Info4Detail.n0

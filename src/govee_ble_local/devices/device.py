@@ -38,7 +38,7 @@ from ..exceptions import (
 )
 from ..identify import GoveeAdvertisement, bound_advertisement, parse_broadcast_onoff
 from ..identify import _govee_record, _latest_govee_key, _pact_entries
-from ..models import Capability, DeviceState, Encryption, Segment, Zone
+from ..models import Capability, DeviceState, Encryption, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
 from ..transport.connection import ConnectBudget, GoveeConnection
@@ -216,7 +216,8 @@ class Device:
         self._polled_color_mode: bool | None = None
         # This poll's aa 05 report, as (the _mutation_seq it was applied at, the report, the
         # last_color_temp_kelvin from before it), None until it answers (_read_mode): shown again over the
-        # walk's pieces once they are in, as the app's colour page shows it (_fold.apply_mode_over_pieces).
+        # walk's pieces once they are all in, as the app's colour page shows it
+        # (_fold.apply_mode_over_pieces).
         self._polled_report: tuple[int, Any, int | None] | None = None
         # A live-IC status profile's read-back pieces, the count its status read places the TLV 0xA5 groups
         # over (_adopt_ic: the IC rule's pieces, or the IC itself under color_readback_ic_raw), uncapped;
@@ -1108,9 +1109,9 @@ class Device:
         if mode == "none":
             return   # unanswered: the compose ends at a step that fails (onOvertime), before its colour reads
         pieces = self.profile.heartbeat_reread_pieces
-        apply: Callable[[list[Segment]], None] = self._apply_segments
+        apply: Callable[[_readback.Walk], None] = self._apply_segments
         if Capability.SEGMENTS not in self.profile.capabilities or pieces != self.segment_count:
-            def drop(_segments: list[Segment]) -> None:
+            def drop(_walk: _readback.Walk) -> None:
                 _LOGGER.debug("%s (%s): the %d-piece keep-alive re-read's colours are not the device's "
                               "segments; not applied", self.address, self._sku, pieces)
             apply = drop
@@ -2414,13 +2415,16 @@ class Device:
             lambda: _readback.walk_mechanism_b(self, lambda f: self._read_reply(f, budget)),
             self._apply_segments)
 
-    def _apply_segments(self, segments: list[Segment]) -> None:
-        """Fold a whole segment-colour read-back into state, and show the poll's ``aa 05`` report over it
-        (:func:`._fold.apply_mode_over_pieces`) unless a setter applied state since that report."""
-        self._state.segments = segments
+    def _apply_segments(self, walk: _readback.Walk) -> None:
+        """Fold a segment-colour walk's pieces into state, and show the poll's ``aa 05`` report over them
+        (:func:`._fold.apply_mode_over_pieces`) where the walk brought every piece it walked
+        (:func:`._fold.brought_every_piece`; one that lost a group leaves the report as decoded, as the app's
+        connect read fails there) and no setter applied state since that report."""
+        self._state.segments = walk.segments
         polled = self._polled_report
-        if polled is not None and polled[0] == self._mutation_seq:
-            _fold.apply_mode_over_pieces(self.profile, self._state, polled[1], segments, polled[2])
+        if (polled is not None and polled[0] == self._mutation_seq
+                and _fold.brought_every_piece(walk.segments, walk.pieces)):
+            _fold.apply_mode_over_pieces(self.profile, self._state, polled[1], walk.segments, polled[2])
 
     async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
@@ -2435,10 +2439,10 @@ class Device:
         ``H70C456789ColorMode.updateColor`` / ``updateBrightness``). On a ``light_num_per_unit`` profile it
         walks the last ``aa 0f`` read's pieces, uncapped (:meth:`_read_light_num`)."""
         pieces = None
-        apply: Callable[[list[Segment]], None] = self._apply_segments
+        apply: Callable[[_readback.Walk], None] = self._apply_segments
         if self.profile.kelvin_from_pieces:
-            def apply_with_kelvin(segments: list[Segment]) -> None:
-                self._apply_segments(segments)
+            def apply_with_kelvin(walk: _readback.Walk) -> None:
+                self._apply_segments(walk)
                 # the walk's pieces: static or device-reported (_resolve)
                 count = self.profile.color_readback_segments or self.segment_count
                 _fold.apply_piece_kelvin(self._state, count, self._polled_color_mode)
@@ -2451,7 +2455,7 @@ class Device:
             if self.profile.color_readback_ic_walk_only and pieces != self.segment_count:
                 walked = pieces
 
-                def drop(_segments: list[Segment]) -> None:
+                def drop(_walk: _readback.Walk) -> None:
                     _LOGGER.debug("%s (%s): the %d-piece colour read-back is not applied: the strip holds %d",
                                   self.address, self._sku, walked, self.segment_count)
                 apply = drop

@@ -1047,7 +1047,14 @@ model, from which the shipped readers are generated).
   read that brings none (the H60A6 at pact (1,1), whose own profile has no segments, Fixed, and whose status read
   asks for no 0xA5) folds as before, as the app tests the report's one colour there. Segments held from before
   the read (a write's, an earlier read's) are not tested, and a poll whose `aa 05` goes unanswered shows no
-  earlier report over its walk. Segments that all show one colour are shown over a 0x15 report too, which
+  earlier report over its walk. Nor is a read that leaves a piece out: the report then reads as decoded. A walk
+  that has a group go unanswered fails the app's connect read at that group (the group read is no temporary or
+  retried step: `AbsComposeControllerWithOpResult.onOvertime:287-312` -> `result2Fail`), so the screen syncs
+  nothing from it (h60a1 `VM4Light.g5:307-324` -> `j5:362-371`; cubelight `CubeVM4Light$connectBleSuc$2.p:106-115`),
+  as the library already leaves the Kelvin of such a walk (`_fold.apply_piece_kelvin`); and a burst whose TLV
+  0xA5 groups leave a piece out holds no colour of that read for it (`SubMode4Color.j:113-148` copies only the
+  groups that came). Until now the pieces that did come were shown as the whole device's colour, over the
+  report. Segments that all show one colour are shown over a 0x15 report too, which
   carries the gradual flag and a Kelvin and no colour (the user's decision 30, 2026-10-23). The segmented rows
   write a colour as the 0x15 segment frame, and the bench H60A6's status bursts report `05 04 15 01 00 00`
   (`tests/test_wire_reassemble.py`). Both screens show it on the
@@ -1161,7 +1168,14 @@ model, from which the shipped readers are generated).
     refusal or profile change, and the state changes only in `rgb_color`, (0, 0, 0) now (1, 1, 1), where the
     read brings no segments, on every stock-page SKU but H7061 (104 admitted by default, and H1270, H1232,
     H1252 and H6148 behind `allow_modelled`); `color_temp_kelvin`, `last_color_temp_kelvin` and `segments`
-    don't change. Not live-verified: no read-back of a tint report was made on the bench.
+    don't change. Showing a report over a read's segments only where it brought every piece was then checked
+    against 8290de4 over every SKU with a walk or a status read (admitted and behind `allow_modelled`), with two
+    polls each under 0x0d and 0x15 reports (a tint at a Kelvin of 0, red at 4000 K, a Kelvin of 0 and of 4000)
+    over walks and TLV 0xA5 groups of the tint, red and mixed pieces that lost no group, the first or the last:
+    no frame, refusal or connect-read change, and the state changes only where a walk or a burst lost a group,
+    on the same 14 rows, in `rgb_color`, `color_temp_kelvin` and `last_color_temp_kelvin` (the report as
+    decoded where the pieces that came were shown); `segments` don't change. Not live-verified: no read-back of
+    a tint report was made on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the

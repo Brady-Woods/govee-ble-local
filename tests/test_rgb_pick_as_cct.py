@@ -29,6 +29,7 @@ import pytest
 from fake_ble import ble_device, status_burst
 
 from govee_ble_local.devices import _fold
+from govee_ble_local.devices._readback import Walk
 from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import profile_for, wire_profile
 from govee_ble_local.exceptions import GoveeBleInvalidValue
@@ -493,17 +494,20 @@ _NO_PIECES = [
      ((0xFF, 0x00, 0x00),) * 13),
     # the bench 0x15 report over 12 black pieces and one (1, 1, 1): the page's copy shows black as (1, 1, 1)
     ("H60A6", (1, 2), "stock", _REPORT_15, ((1, 1, 1), None), ((0, 0, 0),) * 12 + ((1, 1, 1),)),
+    # the walk's last group of the 20 goes unanswered (None): the app's connect read fails there and syncs
+    # nothing (h60a1 VM4Light.g5 -> j5), so the 16 red pieces are not shown and the report reads as decoded
+    ("H6061", (1, 1), "stock", _TINT_4000, (None, 4000), ((0xFF, 0x00, 0x00),) * 16 + (None,) * 4),
 ])
 def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     sku: str, pact: tuple[int, int], page: str, body: tuple[int, ...],
     shown: (tuple[tuple[int, int, int] | None, int | None]
             | tuple[tuple[int, int, int] | None, int | None, int]),
-    pieces: tuple[tuple[int, int, int], ...],
+    pieces: tuple[tuple[int, int, int] | None, ...],
 ) -> None:
     p = profile_for(sku, pact=pact)      # a pact the row lists
     assert p is not None and p.color_page == page
     groups = b"".join(bytes([0xA5, 1 + 4 * len(rec), 1 + g // 4, *(v for rgb in rec for v in (100, *rgb))])
-                      for g in range(0, len(pieces), 4) for rec in [pieces[g:g + 4]])
+                      for g in range(0, len(pieces), 4) for rec in [pieces[g:g + 4]] if None not in rec)
     burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body]) + groups),
                                     decode=wire_profile(p))
     held = [Segment(0, (9, 9, 9), 100)]   # a held segment that is not the tint
@@ -514,7 +518,7 @@ def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     poll._read_reply = AsyncMock(return_value=_frame(0xAA, 0x05, *body))  # type: ignore[method-assign]
     asyncio.run(poll._read_mode())
     if pieces:
-        poll._apply_segments([Segment(i, rgb, 100) for i, rgb in enumerate(pieces)])
+        poll._apply_segments(Walk([Segment(i, rgb, 100) for i, rgb in enumerate(pieces) if rgb], len(pieces)))
     # initColor4Device syncs a Kelvin only when every piece is one tint (KelvinConfig.f:144-157); a third
     # value in shown is the Kelvin held otherwise
     want = (*shown[:2], shown[2] if len(shown) == 3 else shown[1])
@@ -523,7 +527,7 @@ def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
     # the next poll's aa 05 goes unanswered: its walk shows no report, not this poll's
     poll._read_reply = AsyncMock(return_value=None)  # type: ignore[method-assign]
     asyncio.run(poll._read_mode())
-    poll._apply_segments([Segment(0, (1, 2, 3), 100)])
+    poll._apply_segments(Walk([Segment(0, (1, 2, 3), 100)], 1))
     assert (poll.state.rgb_color, poll.state.color_temp_kelvin) == shown[:2]
 
 
