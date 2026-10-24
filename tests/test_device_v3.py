@@ -17,7 +17,7 @@ from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.identify import GoveeAdvertisement
 from govee_ble_local.models import Capability
-from govee_ble_local.wire import build, reassemble
+from govee_ble_local.wire import _spec, build, reassemble
 from govee_ble_local.scenes import Scene
 
 
@@ -634,6 +634,13 @@ def test_the_status_request_is_the_profiles_status_read() -> None:
     assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
     d._pact = (1, 1)
     assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
+    # A pact branch that adds a type is that pact's exact read (status_read_by_pact): H7070 asks for 0x42 at
+    # (1, 2) / (2, 1) only (VM4LightH7070.T4), the row's own read at (1, 1) and before a pact is heard.
+    h7070 = Device(profile_for("H7070"), ble_device("AA:BB:CC:DD:EE:23", "GVH7070"))
+    assert _status_frames(h7070)[0][:5].hex() == "ac0302" "410c"
+    for pact, read in (((1, 2), "ac0303" "410c42"), ((2, 1), "ac0303" "410c42"), ((1, 1), "ac0302" "410c")):
+        h7070._pact = pact
+        assert _status_frames(h7070)[0][:len(read) // 2].hex() == read, pact
     # An empty status_read is the bare read (the h70dx screen's, VM4H70DX.e5), and the TLV 0xA5 its reply
     # carries unrequested is read as colour groups, as that screen parses each one (VM4H70DX.g5).
     bare = next(p for p in PROFILES if p.status_read == ())
@@ -671,6 +678,19 @@ def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:
     for bad in ((("f_a5", "color_group"),), (("f_99", "x"),), (("num_per_group", 0),)):
         with pytest.raises(GoveeBleInvalidValue, match="status_decode"):
             dataclasses.replace(h60a6, status_decode=bad)
+    # The aa 05 reply's music layout and empty-value rule are the profile's mode_decode (a devices.yaml polled
+    # row's wire mode), unset by default.
+    music = dataclasses.replace(h60a6, mode_decode=[("music", "v2_default"), ("empty_fails", True)])
+    assert (wire_profile(music).mode.music, wire_profile(music).mode.empty_fails) == (
+        _spec.Common.MusicDecode.v2_default, True)
+    assert wire_profile(h60a6).mode.music == _spec.Common.MusicDecode.not_decoded
+    # The resolver emits it from a polled row's wire mode (H60A1, h60ax 235: h60a1 Info4Detail.Q).
+    h60a1 = profile_for("H60A1", allow_modelled=True)
+    assert h60a1 is not None and h60a1.mode_decode == (("empty_fails", True), ("music", "v2_default"))
+    twice = (("music", "v1_flagged"), ("music", "v2_default"))
+    for bad_mode in ((("music", "v9"),), (("empty_fails", 1),), twice):
+        with pytest.raises(GoveeBleInvalidValue, match="mode_decode"):
+            dataclasses.replace(h60a6, mode_decode=bad_mode)
 
 
 @pytest.mark.parametrize("sku", ["H1630", "R1630"])

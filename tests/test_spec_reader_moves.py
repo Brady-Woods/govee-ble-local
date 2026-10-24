@@ -145,7 +145,7 @@ def test_advertisement_parse_matches_the_byte_logic() -> None:
             if value and r.random() < 0.8:
                 value[0] = 0xEC
             mfg[cid] = bytes(value)
-        on_mask = r.choice([None, 0x01, 0xFF])
+        on_mask = r.choice([None, 0x00, 0x01, 0xFF])
         assert (identify.parse_manufacturer_data(mfg),
                 identify.parse_broadcast_onoff(mfg, on_mask=on_mask)) == _byte_adv(mfg, on_mask)
 

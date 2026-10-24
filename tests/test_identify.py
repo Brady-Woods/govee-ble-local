@@ -19,14 +19,14 @@ def _cid(header: int, hi: int = 0x88) -> int:
     ("name", "expected"),
     [
         # brand markers: split on "_", exactly 3 parts, SKU = middle (BaseBleProcessor.c/d)
-        ("ihoment_H5083_A2D1", "H5083"),
-        ("Govee_h61a8_631F", "H61A8"),
+        ("ihoment_H5083_5383", "H5083"),
+        ("Govee_h61a8_53A8", "H61A8"),
         ("Minger_H6008_0001", "H6008"),
         ("GBK_H1234_ABCD", "H1234"),
-        ("Govee_H6052_3477", "H6052"),    # live name (bazzite scan)
-        ("Govee_H6047_177E", "H6047"),    # live name (bazzite scan)
+        ("Govee_H6052_5352", "H6052"),    # advertised-name form (made-up suffix)
+        ("Govee_H6047_5347", "H6047"),    # advertised-name form (made-up suffix)
         ("ihoment_H5083", None),          # wrong segment count
-        ("ihoment__A2D1", None),          # empty SKU segment
+        ("ihoment__5383", None),          # empty SKU segment
         ("Govee_H61A8_AB_CD", None),      # too many segments
         # Java String.split("_") drops trailing empty strings (leading ones stay): the app splits
         # "ihoment_H6008_" into 2 parts and "Govee_H6008_ABCD_" into 3
@@ -37,8 +37,8 @@ def _cid(header: int, hi: int = 0x88) -> int:
         ("xGovee_H6188_1A2B", "H6188"),   # markers match anywhere (String.contains)
         ("xGBK_H1234_ABCD", None),        # ...but GBK_ is a prefix
         # GVH/GVR without "_": >= 11 chars, SKU = name[2:7] (BaseBleProcessor.f)
-        ("GVH60A67457", "H60A6"),         # live H60A6 name (bazzite scan)
-        ("GVH60087A93", "H6008"),         # live H6008 name (bazzite scan)
+        ("GVH60A65357", "H60A6"),         # H60A6 advertised-name form (made-up suffix)
+        ("GVH60085308", "H6008"),         # H6008 advertised-name form (made-up suffix)
         ("GVH60A6XXXX", "H60A6"),
         ("GVH6008abc", None),             # 10 chars: too short for f()
         ("GVH", None),
@@ -138,7 +138,7 @@ def test_identify_rejects_non_govee_and_unparseable_sku() -> None:
 def test_identify_unparseable_pact_is_plaintext_unknown() -> None:
     # A Govee-named advert without parseable pact data is reported with pact_type/pact_code = -1
     # and encrypted=False; the typed view says that is unknown, not "plaintext".
-    adv = identify("Govee_H61A8_631F", {})
+    adv = identify("Govee_H61A8_53A8", {})
     assert adv is not None
     assert adv.sku == "H61A8"
     assert adv.encrypted is False
@@ -146,7 +146,7 @@ def test_identify_unparseable_pact_is_plaintext_unknown() -> None:
     assert adv.pact_code == -1
     assert adv.broadcast_version == 0
     assert adv.pact is None and adv.encryption_known is False
-    short = identify("Govee_H61A8_631F", {_cid(0x41): bytes([0xEC, 1])})
+    short = identify("Govee_H61A8_53A8", {_cid(0x41): bytes([0xEC, 1])})
     assert short is not None and short.encrypted is False and short.pact_type == -1
     assert short.pact is None
     # A parsed pact (an encrypted advert, pact 2 / 2): test_h5083_firmware's advert test.

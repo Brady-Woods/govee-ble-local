@@ -17,7 +17,7 @@ from govee_ble_local.devices import _fold
 from govee_ble_local._generated.devices import MODE_COLOR_PARSE
 from govee_ble_local.devices.profile import DeviceProfile, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
-from govee_ble_local.wire import build, parse, reassemble
+from govee_ble_local.wire import build, cct, parse, reassemble
 from govee_ble_local.wire.describe import status_burst_report
 
 from fake_ble import status_burst
@@ -149,6 +149,32 @@ def test_the_h60a6_burst_mode_folds_from_the_tlv(mode: bytes, rgb: object, kelvi
     status = reassemble.parse_status(burst, decode=wire_profile(profile))
     _fold.apply_status(profile, state, status)
     assert (state.rgb_color, state.color_temp_kelvin) == (rgb, kelvin)
+
+
+_T4000 = cct.tint_for_kelvin(4000)
+
+
+@pytest.mark.parametrize(("heads", "segments", "rgb", "kelvin"), [
+    # Heads that differ: each its own colour and brightness, no whole-device colour.
+    ((0x64, 255, 0, 0, 0x32, 0, 0, 255), [((255, 0, 0), 100), ((0, 0, 255), 50)], None, None),
+    # One colour on both: the whole device's, and s16be(r1, g1) = 258 is no Kelvin.
+    ((0x50, 1, 2, 3, 0x50, 1, 2, 3), [((1, 2, 3), 80), ((1, 2, 3), 80)], (1, 2, 3), None),
+    # One in-range Kelvin tint on both: that colour temperature (KelvinConfig.f).
+    ((0x64, *_T4000, 0x64, *_T4000), [(_T4000, 100), (_T4000, 100)], None, 4000),
+    # Signed brightness bytes (-100, 127) clamp to the state's 0..100.
+    ((0x9C, 9, 9, 9, 0x7F, 9, 9, 8), [((9, 9, 9), 0), ((9, 9, 8), 100)], None, None),
+])
+def test_the_h7061_two_head_report_folds_into_both_heads(
+    heads: tuple[int, ...], segments: list[tuple[tuple[int, int, int], int]], rgb: object, kelvin: object,
+) -> None:
+    # H70606162Info4Detail.I: the aa 05 0x15 [bri s8][r g b] x 2 report is the colour page's two heads.
+    profile = profile_for("H7061", pact=(1, 1))
+    assert profile is not None
+    state = DeviceState(rgb_color=(7, 7, 7), color_temp_kelvin=3000)
+    _fold.apply_mode_reply(profile, state, _reply(0x15, *heads))
+    assert [(s.index, s.rgb, s.brightness) for s in state.segments] == [
+        (i, colour, bri) for i, (colour, bri) in enumerate(segments)]
+    assert (state.rgb_color, state.color_temp_kelvin, state.scene_code) == (rgb, kelvin, None)
 
 
 def test_no_library_module_builds_a_frame_by_hand() -> None:

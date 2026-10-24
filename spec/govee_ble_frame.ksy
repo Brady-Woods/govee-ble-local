@@ -394,8 +394,8 @@ types:
         type: u1
   cmd_30_write:
     doc: |
-      33 30, per form_30; zone_power [1][0] and light_direction 1 are the same
-      bytes.
+      33 30, per form_30; zone_power [1][0], light_direction 1 and
+      light_switch light_on are the same bytes.
     params:
       - id: form
         type: u1
@@ -407,6 +407,7 @@ types:
           cases:
             'govee_common::form_30::zone_power': zone_power_write
             'govee_common::form_30::light_direction': light_direction_write
+            'govee_common::form_30::light_switch': light_switch_write
   zone_power_write:
     doc: pact_h60a0 per-zone on / off [zone][state], one frame per zone.
     doc-ref:
@@ -422,16 +423,32 @@ types:
         enum: light_power
   light_direction_write:
     doc: |
-      33 30 [value]: H6038 install direction, H6057 main-light switch, H71xx
-      chart report.
+      33 30 [value]: H6038 install direction, H71xx chart report.
     doc-ref:
       - split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45
-      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-956
       - base-classes12/com/govee/base_h71xx/sku_base/ble/controller/ReportChartController.java:24-31
     seq:
       - id: value
         type: u1
-        doc: H6038 direction 0..5; H6057 1 / 0; H71xx 1
+        doc: H6038 direction 0..5; H71xx 1
+  light_switch_write:
+    doc: |
+      33 30 [state]: the H6057 header's light switch (ivLightSwitch). It
+      writes the light alone, 1 to open and 0 to close it, and leaves the
+      white-noise speaker as it is (the main switch, 33 01, covers both); a
+      one-byte body, not zone_power's [zone][state]. The screen writes the
+      opposite of its light flag (SwitchInfo.j) and on success sets that flag
+      to the written state (i5), the state govee_state device_detail
+      light_open reads back from aa 34.
+    doc-ref:
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:336-355,949-967
+      - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
+      - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:37-40
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:567-571,713-717
+    seq:
+      - id: state
+        type: u1
+        enum: light_power
   cmd_36_write:
     doc: 33 36, per form_36
     params:
@@ -525,15 +542,32 @@ types:
   secret_write:
     doc: |
       33 B2 account-lock secret: the 8 bytes the AA B1 reply carried (not the
-      wire cipher).
+      wire cipher). The empty check: a screen that sends the check on every
+      connect sends it with the account's secretCode, "" when the record has
+      none (DefInfo), and Controller4Secret.Companion.a("") decodes that to no
+      bytes (Encode.decryByBase64), which BleUtils.p zero-fills: secret is 8
+      zero bytes, the frame 33 B2, 17 zero bytes and the xor (hollowlamp
+      H6058NewDetailVm.T4; h6071 VM4Light's connect strategy,
+      initControllerNoEventList). A screen that tests the secret first sends
+      no empty check (H605051NewDetailVm: supportDeviceCheck and a non-empty
+      secret), and nor does the pairing screen, whose secret read is the
+      AA B1 read alone while the secretCode is empty (AbsPairAc4SecretV1.T1,
+      SecretKeyController(b2())); the library's read_secret follows it.
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-35,57-78
       - base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-46
-      - base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:110-112,204-206
+      - base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:107-113,204-206
+      - base-classes11/com/govee/base2light/kt/comm/DefInfo.java:106-110
+      - base-classes10/com/govee/base2home/util/Encode.java:29-40
+      - base-classes11/com/govee/base2light/kt/ble/AbsController.java:30-45
+      - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041
+      - split_hollowlamp/com/govee/hollowlamp/newdetails/h6058/H6058NewDetailVm.java:128-135,168
+      - split_floorlamp/com/govee/h6071/newdetail/VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.java:123-126,184
+      - split_hollowlamp/com/govee/hollowlamp/newdetails/h60501/H605051NewDetailVm.java:163-169
     seq:
       - id: secret
         size: 8
-        doc: the AA B1 token, raw (the app stores it as base64)
+        doc: the AA B1 token, raw (the app stores it as base64); 8 zero bytes in the empty check
   mode_write:
     doc: |
       33 05 [sub_mode][params] mode write; untyped sub-modes (05 mic, 13 music,
@@ -562,17 +596,22 @@ types:
             'govee_common::sub_mode::color_rgbic_15': color_15_write(profile)
   color_02_write:
     doc: |
-      33 05 02 legacy colour: [rgb] for RGB, [ff ff ff][01][tint rgb] for a
+      33 05 02 legacy colour, colour instruction version 4 (Config.J[4] =
+      Config.fu): [rgb] for RGB (Bytes.a); [ff ff ff][01][tint rgb] for a
+      pick that is a Kelvin tint colour in the SKU's range, the Kelvin
+      slider's tint included (Bytes.o). No Kelvin and no segment mask: fu
+      drops the position set. Bytes.y builds the white_tint form from a
       Kelvin.
     doc-ref:
-      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:212-222
-      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:587-604
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5557-5561,14090-14094
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:212-222,422-428,587-604
+      - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884
     seq:
       - id: color
         type: govee_common::rgb
       - id: white_flag
         type: u1
-        doc: 1 for the Kelvin form, 0 for RGB
+        enum: color_02_flag
       - id: tint
         type: govee_common::rgb
   scene_select:
@@ -715,7 +754,16 @@ types:
     seq:
       - id: color
         type: govee_common::rgb
-        doc: the colour; kelvin_tint the slot; kelvin form the tint for CCT
+        doc: |
+          the colour; kelvin form the tint for CCT. kelvin_tint: for CCT the
+          slot of the device's white type (devices.yaml white_type): ff ff ff
+          (rgb_white), 00 00 00 (rgb_black, and rgb_self_tem_color over a whole
+          posSet), or the tint with kelvin and tint 0 (rgb_self_tem_color over
+          a partial posSet: the plain RGB bytes of the tint)
+        doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501,570-586
+          - base-classes10/com/govee/base2kt/utils/ColorUtils.java:141-143,203-205
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:233-241
       - id: kelvin
         type: u2
         if: form != govee_common::form_15_01::basic
@@ -806,9 +854,15 @@ types:
         repeat: expr
         repeat-expr: 4
   op15_kelvin_v9:
-    doc: '[kelvin u16be], colour instruction version 9.'
+    doc: |
+      [kelvin u16be], colour instruction version 9: a Kelvin and nothing else (no
+      colour, tint or segment mask). The illumination tab's Kelvin builder for it is
+      Config.N[9] = JM, and the colour page's Config.J[9] = hu maps every pick to a
+      Kelvin and writes the same; Config.x gives version 9 to goodsTypes 57 and 67
+      (H6071 / H6075). The library's kelvin_v9 colour scheme.
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:133-139
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1674-1683,5640-5645,10543-10545,11706-11709,11869-11872,14418-14427
     seq:
       - id: kelvin
         type: u2
@@ -1820,6 +1874,15 @@ enums:
       id: light_off
     0x01:
       id: light_on
+  color_02_flag:
+    0x00:
+      id: rgb
+      doc: Bytes.a, the colour as given; the tint is zero
+    0x01:
+      id: white_tint
+      doc: Bytes.o / Bytes.y, white in the colour slot and the tint after it
+      doc-ref:
+        - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:422-428,587-604
   relay_write:
     0x10:
       id: relay0_off

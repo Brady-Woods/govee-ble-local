@@ -69,6 +69,8 @@ def test_color_temp() -> None:
            num_segments=16).body.params
     assert m.sub_mode == C.SubMode.color_rgbic_15 and m.params.op == C.Op15.set_color
     assert m.params.data.kelvin == 2700 and m.params.data.is_cct
+    m = _p(b.color_temp(4000, "kelvin_v9"), f_15_04=int(C.Form1504.kelvin_v9)).body.params
+    assert m.params.op == C.Op15.set_color_group and m.params.data.body.kelvin == 4000
     with pytest.raises(GoveeBleNotSupported):
         b.color_temp(4000, "h61a8", 15)
 

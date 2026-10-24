@@ -72,7 +72,7 @@ class DiscoveredDevice:
 
     @property
     def name(self) -> str:
-        """Advertised local name, e.g. ``"Govee_H61A8_631F"``."""
+        """Advertised local name, e.g. ``"Govee_H61A8_53A8"``."""
         return self.advertisement.name
 
 

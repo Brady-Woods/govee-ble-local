@@ -79,8 +79,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
-  rows, H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and behind `allow_modelled` the h70b3 rows' H70B3 /
-  H70B4 / H70B5 / H6810 / H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the
+  rows, H615A-E, H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and behind `allow_modelled` the h70b3 rows'
+  H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the
   advertisement's pact (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it
   (`create_device` with the advertisement, `supported`, `match` and `discover` pass it already).
   `allow_modelled=True` (also on `supported_skus`, `create_device`, `supported`, `match` and `discover`)
@@ -93,14 +93,18 @@ advertisement, build a capability-driven `Device`, then drive it.
   `set_zone_power` / `set_zone_rgb` / `set_zone_color_temp`,
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
-  the device's scene set, `scene_versions`), `state`, `register_callback`, `power_read_at` (when a read
-  last returned the on/off, while `state.is_on` still holds it). `advertised_on(advertisement_data)`
-  decodes an advertisement's on/off as the device does, without changing state; `ingest_advertisement`
-  folds it in. Methods for unsupported capabilities raise `GoveeBleNotSupported`, and so does
-  `set_segment_color_temp` where `DeviceProfile.segment_color_temp` is false: where the SKU's colour page
-  has no Part-tab Kelvin item, and where that item widens every pick to whole zones (the field's docstring
-  lists those SKUs). SEGMENTS and COLOR_TEMP together don't promise it; `set_zone_color_temp` doesn't
-  read the field. The link
+  the device's scene set, `scene_versions`), `supports_segment_brightness` (whether
+  `set_segment_brightness` works: a device with `SEGMENTS` may have segment colour without it, as the
+  H61D2-H61D6 colour page does), `state`, `register_callback`, `power_read_at` (when a read last returned
+  the on/off, while `state.is_on` still holds it). `advertised_on(advertisement_data)` decodes an
+  advertisement's on/off as the device does, without changing state; `ingest_advertisement` folds it in.
+  Methods for unsupported capabilities raise `GoveeBleNotSupported`, and so does `set_segment_color_temp`
+  where `DeviceProfile.segment_color_temp` is false: where the SKU's colour page has no Part-tab Kelvin
+  item, and where that item widens every pick to whole zones (the field's docstring lists those SKUs).
+  SEGMENTS and COLOR_TEMP together don't promise it; `set_zone_color_temp` doesn't read the field. Both
+  raise it where the SKU's screen writes colour temperature over the whole device only
+  (`DeviceProfile.whole_device_kelvin`; a table profile with it and `SEGMENTS` has `segment_color_temp` false
+  too). The link
   comes up with the first operation (or `connect()`) and drops `idle_disconnect` seconds after the last one
   (8 s by default), or 30 s after a command (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the
   reconnect). While it is up the `Device` sends the keep-alive read the SKU's control screen sends every 2 s
@@ -158,6 +162,14 @@ Read-back decodes the `aa 05` mode report the way the app's control screen does 
 H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
 mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
 tint) and no `color_temp_kelvin`.
+
+H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
+BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of
+its own (connect, one frame, disconnect, at least 1.1 s apart), with no read-back. `update()` and
+`connect()` open no link; on/off comes from the advertisement and the last command, brightness is the last
+one sent, and `state.optimistic` stays True. A brightness while the light is not known to be on is sent
+after a power-on. Not live-verified; a unit that reports AES-GCM (BGC version 2) gets
+`GoveeBleNotSupported` on every command.
 
 The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
 buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`
