@@ -719,20 +719,27 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert lit["devices"][0]["result"] == "completed" and bulb.establish_calls >= 1
     assert lit["options"]["unattended"] is True
     assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
-    rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref)   # the plug alone, no secret
+    capsys.readouterr()
+    rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref,   # the plug alone, no secret
+                          "--toggle-plugs", entries[1].ref)
     assert rc == 4 and lone["gate"] == "incomplete" and lone["devices"][0]["result"] == "completed"
+    # into a pipe or a file (stdout no terminal: a `| tee` log) its name's MAC digits are masked
+    assert (f"  {entries[1].ref} H5083 ihoment_H5083_xxxx (rssi {entries[1].rssi} dBm): allow-listed, but"
+            in capsys.readouterr().out)
 
-    # an allow-listed plug is shown by its name as its label shows it, and its signal (on the console only),
-    # and toggles only once its own ref is typed: another answer keeps it read-only
+    # an allow-listed plug is shown on a terminal by its name as its label shows it, and its signal (on the
+    # console only, never with its vendor prefix), and toggles only once its own ref is typed: another answer
+    # keeps it read-only
     async def tester(prompt: str, _reader: Any = None) -> str:
         return "a desk lamp" if "plugged" in prompt else "nope" if "Type its ref" in prompt else "s"
 
-    capsys.readouterr()
     with monkeypatch.context() as m:
         m.setattr(runner, "_readline", tester)
+        m.setattr(runner, "_shown_on_a_terminal", lambda: True)
         rc, typed, _ = run_all("--all", "--only", entries[1].ref, "--toggle-plugs", entries[1].ref)
     shown = capsys.readouterr().out
-    assert f"{entries[1].ref} H5083 {entries[1].name} (rssi {entries[1].rssi} dBm)" in shown
+    assert (f"  {entries[1].ref} H5083 {entries[1].name} (rssi {entries[1].rssi} dBm): allow-listed for a "
+            "relay toggle") in shown
     assert f"{entries[1].ref}: read-only" in shown and typed["options"]["toggle_plugs"] == 0
     assert "write_tx power" not in plug.sim.requests()
 

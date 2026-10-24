@@ -449,6 +449,14 @@ def _on_a_terminal() -> bool:
         return False
 
 
+def _shown_on_a_terminal() -> bool:
+    """Whether stdout is a terminal, not a pipe or a file (``| tee``, a redirect: a log that is kept)."""
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, ValueError):   # no stdout, or a closed one
+        return False
+
+
 def secrets_path(given: str | None) -> Path:
     """The secrets file: ``--secrets-file``, else :data:`SECRETS_ENV`, else :data:`DEFAULT_SECRETS` (outside
     every checkout, so it can never be committed)."""
@@ -508,8 +516,12 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
     said what it powers (free text, never stored) and confirmed it by typing its ref; its secret comes from
     the secrets file or a hidden prompt (Enter: none, so its toggle steps are skipped). Each plug is shown
     with what tells two of one SKU apart, on the console only (never in a file): its advertised name as the
-    Govee app and its label show it (the MAC digits it ends in) and its signal strength."""
+    Govee app and its label show it and its signal strength. The MAC digits the name ends in are shown only
+    when stdout is a terminal (:func:`_shown_on_a_terminal`; masked into a pipe or a file, so a ``| tee``
+    log never keeps them), and the line never carries the address's vendor prefix, which with them gives
+    back all but one byte of the address."""
     allow = _keys(args.toggle_plugs)
+    on_tty = _shown_on_a_terminal()
     for h in targets:
         for key in (h.ref.upper(), h.address.upper()):
             if key in file_secrets:
@@ -522,7 +534,7 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
         if h.kind != "plug" or not _wanted(h, allow):
             continue
         rssi = f"{h.rssi} dBm" if h.rssi is not None else "? dBm"
-        line = f"  {h.ref} {h.sku} {h.name or '?'} (rssi {rssi}) {mask_address(h.address)}"
+        line = f"  {h.ref} {h.sku} {(h.name if on_tty else mask_name(h.name)) or '?'} (rssi {rssi})"
         if outlet_mask(_survey.classify(h.sku, h.pact)[2]) != 0x01:
             line += (f" ({h.outlets} outlets, switched together: it toggles only if they all start on, or "
                      "all off)")

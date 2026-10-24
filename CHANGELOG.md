@@ -60,8 +60,9 @@ model, from which the shipped readers are generated).
     (interrupted)`, exit 130. The restore polls first, since a write cut short applies nothing to the
     library's state.
   - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
-    (each shown by its advertised name as its label shows it, and its signal, on the console only; what it
-    powers is asked and never stored; its ref typed to allow the toggle) and given a secret
+    (each shown by its advertised name as its label shows it, and its signal, on the console only: the name's
+    MAC digits only when stdout is a terminal, masked into a pipe or a `| tee` log, and never beside the
+    address's vendor prefix; what it powers is asked and never stored; its ref typed to allow the toggle) and given a secret
     (the secrets file, or a hidden prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
     plug's power write sets every outlet (`33 01 FF / F0`, the H5089's `33 02`), so it toggles only when the
     first `aa 01` read finds its outlets all on or all off (all off where the row doesn't say which relay bits

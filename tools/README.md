@@ -82,7 +82,8 @@ never at the same time.
 3. `/tmp/gate/bin/python tools/field_test --all --library installed --expect-version X.Y.Z
    --toggle-plugs <ref>[,<ref>] --out gate-X.Y.Z` (add `--allow-modelled` to include the opt-in rows).
    The tool lists every device, shows each allow-listed plug by its ref, its advertised name as the Govee
-   app and the plug's label show it (with its MAC digits, on the console only, never in a file) and its
+   app and the plug's label show it (on the console only, never in a file; its MAC digits only when stdout
+   is a terminal, masked into a pipe or a `| tee` log, and never beside the address's vendor prefix) and its
    signal, asks what it powers (the answer is never stored) and has you type that plug's ref to let it
    toggle (anything else keeps it read-only), asks for its secret unless the secrets file (below) has it
    (every other device whose row needs a secret, every plug among them,
