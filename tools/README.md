@@ -48,7 +48,8 @@ after the step. The keyword fields serve the release-gate verdicts and default t
 behaviour: `kind` (`"write"`, the default, is gated by the daytime window and `--read-only`; `"read"`
 runs at any hour, so a step that sends nothing, such as the H6047's `segment_readback_count`, is `"read"`),
 `fields` (the state fields judged against what the library intended, only where the
-row reads them back: `readback.carried`), `refusal` (the exception the action must raise with nothing
+row reads them back and the step's poll set them: `readback.carried`; a field intended as it already was
+proves nothing by matching), `refusal` (the exception the action must raise with nothing
 sent), `touched` (a segment step's indices), `skip` and `check`. A hand-written step's verdict comes from
 its `expect` (`True` pass, `False` fail, `None` unverifiable) and the tester's answer ("no" fails).
 `field_test/plan.py` has step factories for the common sequences: `power_steps`, `brightness_steps`,
@@ -126,6 +127,13 @@ Notes:
   else is sent outside the window.
 - A card row (one session per command, no read-back: H70B2) is read back from its next advertisement for
   power only; its brightness and its restore rest on the tester's answers.
+- A step passes on a read-back only where the step's poll set the field in the library's state: a reply
+  the library dropped (a bad checksum) or rejected (a status stream the app's read fails on) proves
+  nothing, whatever frames arrived. A write step's field intended as it already was proves nothing by
+  matching, and an RGB read after a colour-temperature write proves nothing on a report that can't show
+  one (`rgb_kelvin_0d_nocct`, `rgb`): such a step is `unverifiable`, and the tester is asked. A segment
+  brightness step expects the whole groups the row's strip dims (`segment_brightness_groups`), and the
+  gradual toggle is skipped when the first poll read no start for it.
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
   scene is re-activated by code, or the start colour was never read back), `partial` (fields differ),
   `failed`, `unverified` (nothing to compare), or `not_needed`.

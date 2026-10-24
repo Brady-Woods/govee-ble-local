@@ -253,9 +253,14 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     whose step names are unique, whose plugs get no write step without the allow-list (and with it, toggle
     from a mixed start of their outlets only where the power write sets outlet 0 alone), whose card rows read
     nothing back, whose refusal steps raise GoveeBleNotSupported before any I/O, and whose other steps the
-    library accepts (a fake connection: writes acked, reads answered with nothing). The visible write the tool
-    reads from each profile's connect writes is what the library's every connect sends but a plug's time
-    sync. One property over the table, not a test per SKU."""
+    library accepts (a fake connection: writes acked, reads answered with nothing). A segment-brightness step
+    judges no segment the library dimmed as unchanged (the strip's groups widen the write), and the gradual
+    toggle waits for a start the first poll read. A poll that brings every reply but sets nothing (the library
+    dropped or rejected them) reads nothing back, and a poll answered by nobody sets nothing. The visible
+    write the tool reads from each profile's connect writes is what the library's every connect sends but a
+    plug's time sync. One property over the table, not a test per SKU; then what a read-back proves: an RGB
+    read after a Kelvin write on a report with no Kelvin nothing, a field intended as it already was nothing
+    by matching."""
     from unittest.mock import AsyncMock
 
     from fake_ble import ble_device
@@ -315,6 +320,19 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
         if (kind == "card" or profile.readback == "none") and any(
                 r is None for r in readback.carried(dev, every_reply).values()):
             bad.append(f"{sku}: a card row judged on a read-back")
+        if any(r is None for set_ in (None, frozenset())
+               for r in readback.carried(dev, every_reply, assigned=set_).values()):
+            bad.append(f"{sku}: a field read back from a poll that set nothing")
+        gradual = [s for s in steps if s.name.startswith("gradual_")]
+        if getattr(profile, "gradual", False) and not all(s.skip for s in gradual):
+            bad.append(f"{sku}: a gradual toggle from a start nobody read")
+        if kind != "card" and profile.readback != "none":
+            try:
+                _, seen = await readback.poll(dev)
+            except GoveeBleError:
+                seen = frozenset()
+            if seen is None or seen & set(readback.FIELDS):
+                bad.append(f"{sku}: an unanswered poll set {seen}")
         for step in steps:
             before, raised = len(sent), None
             try:
@@ -327,7 +345,21 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
                 bad.append(f"{sku} {step.name}: {raised!r} after {len(sent) - before} frame(s)")
             elif step.refusal is None and raised is not None:
                 bad.append(f"{sku} {step.name}: {raised!r}")
+            if step.name.startswith("segment_brightness_") and step.refusal is None and raised is None:
+                dimmed = {s.index for s in dev.state.segments if s.brightness == generic.SEGMENT_LEVEL}
+                if not dimmed <= set(step.touched):
+                    bad.append(f"{sku} {step.name}: dims {sorted(dimmed)}, judges {step.touched} alone")
     assert len(routes) > 100 and not bad, bad[:20]
+    kelvin = ft.Step("color_temp_5500", generic._nothing, None, "", fields=("color_temp_kelvin", "rgb_color"))
+    was, want = (SimpleNamespace(rgb_color=None, color_temp_kelvin=k) for k in (2000, 5500))
+    blind = {"rgb_color": None, "color_temp_kelvin": "the mode reply carries no Kelvin"}   # a _nocct decode
+    tint = SimpleNamespace(rgb_color=(255, 238, 222), color_temp_kelvin=None)
+    assert readback.judge_fields(kelvin, None, was, want, tint, blind) == (
+        {"color_temp_kelvin": "not read: the mode reply carries no Kelvin",
+         "rgb_color": f"not read: {readback.CCT_BLIND}"}, [])
+    both = dict.fromkeys(("rgb_color", "color_temp_kelvin"))   # the library read the Kelvin (a newer fold)
+    assert readback.judge_fields(kelvin, None, was, want, want, both) == (
+        {"color_temp_kelvin": "pass", "rgb_color": f"not read: {readback.UNCHANGED}"}, [])
 
 
 def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt(

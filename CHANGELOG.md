@@ -303,10 +303,16 @@ model, from which the shipped readers are generated).
     `GoveeBleNotSupported` is raised with nothing sent. Hand-written plans still win for their SKUs
     (`--generic` forces the generic one).
   - **Verdicts without false passes** (`readback.py`): each step's fields are compared with what the library
-    intended (`Device.snapshot()` after the action) only where the row reads that field back and a reply
+    intended (`Device.snapshot()` after the action) only where the row reads that field back, a reply
     carrying it came back in that poll, as seen on the `govee_ble_local.frames` logger (a status burst's TLV
-    tags, the `aa 05` sub-mode under the spec's mode-colour parse). Otherwise the step is `unverifiable`, and
-    `--ask unverifiable` (the `--all` default) asks the tester only there.
+    tags, the `aa 05` sub-mode under the spec's mode-colour parse), and the poll set the field in the
+    device's state (`readback.poll` records the assignments), so a reply the library dropped or rejected
+    proves nothing. A write step's field intended as it already was proves nothing by matching, and an RGB
+    read after a colour-temperature write proves nothing on a report with no Kelvin (`rgb_kelvin_0d_nocct`),
+    where a colour the library itself read from the report (a Kelvin tint read as its colour temperature)
+    counts. Otherwise the step is `unverifiable`, and `--ask unverifiable` (the `--all` default) asks the
+    tester only there. A segment-brightness step expects the whole groups the row's strip dims
+    (`segment_brightness_groups`), and the gradual toggle is skipped when no start was read for it.
   - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
     `exact`, `close` (what can't be restored exactly is listed, such as a scene re-activated by code), `partial`,

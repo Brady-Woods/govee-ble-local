@@ -69,7 +69,7 @@ from .masking import (
     write_text_atomic,
 )
 from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step
-from .readback import FrameWatch, Judgement, carried, judge, judge_fields, outlet_mask
+from .readback import FrameWatch, Judgement, carried, judge, judge_fields, outlet_mask, poll
 from .restore import Outcome, RestoreCheck, StartState, capture_start, check_restore, restore_start
 from .summary import Summary, console_table, counts, gate_verdict
 
@@ -639,11 +639,11 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
             rec["readback_matches"] = None
         else:
             try:
-                st = await dev.update()
+                st, assigned = await poll(dev)
                 rec["readback"] = snapshot(st, run.plan.snapshot_keys, run.extra())
                 rec["readback_matches"] = step.expect(rec["readback"]) if step.expect else None
                 post = st
-                carried_map = carried(dev, run.watch.window(rmark), run.warnings)
+                carried_map = carried(dev, run.watch.window(rmark), run.warnings, assigned=assigned)
             except Exception as err:
                 rec["readback"] = _err(err, run.address, run.names, run.secrets)
                 rec["readback_matches"] = False
@@ -671,8 +671,8 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
             final = verdict_with(observed)
     rec.update(observed=observed, writes=writes, fields=final.fields, verdict=final.verdict,
                basis=final.basis, reason=final.reason and mask_text(final.reason, None, (), run.secrets))
-    if post is not None and run.kind != "card":
-        run.pre = _state_copy(dev, post)
+    # What the next step starts from: the read-back, else (a card row, a failed poll) what the library holds.
+    run.pre = _state_copy(dev, post)
     _say(f"    {final.verdict}" + (f" ({final.basis})" if final.basis else "")
           + (f": {rec['reason']}" if rec["reason"] else ""))
     return rec
@@ -955,9 +955,9 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         run.connected = True
         report["device"]["encryption"] = str(getattr(dev, "encryption", None))
         mark = watch.mark()
-        st = await dev.update()
+        st, assigned = await poll(dev)
         start = await capture_start(dev, target.adv, watch.window(mark), kind=kind, polled=st,
-                                    ask=_ask_yes_no if policy.prompts else None)
+                                    assigned=assigned, ask=_ask_yes_no if policy.prompts else None)
         initial = snapshot(st, plan.snapshot_keys, extra())
         report["initial_state"] = initial
         report["start"] = start.summary()

@@ -2,8 +2,15 @@
 
 The library's state is optimistic: a setter writes its intent into ``Device.state`` and a poll overwrites
 only the fields a reply carried. Comparing the state after ``update()`` with the intent would pass every
-field the row never reads back. So each field is judged only where the profile reads it AND a reply that
-carries it came back in that poll, which :class:`FrameWatch` sees on the library's frame logger.
+field the row never reads back, and every field whose reply the library dropped (a bad checksum) or
+rejected (a status stream the app's read fails on, a mode report too short for its layout). So each field
+is judged only where the profile reads it, a reply that carries it came back in that poll (which
+:class:`FrameWatch` sees on the library's frame logger), AND the poll assigned it in the device's state
+(:func:`assignments`, :func:`poll`): what the library applied, not which frames arrived. A write step's
+field whose intent is the value it had before the step proves nothing by matching (the read can't tell
+the write from no write), and an RGB read after a colour-temperature write proves nothing on a mode report
+that can't show a colour temperature (the ``_nocct`` decodes, ``rgb``): both are not read, and the tester
+is asked.
 
 :class:`FrameWatch` keeps, per frame, only its time, direction and first two bytes; for an ``33 xx`` ack
 its status byte, for an ``aa 05`` reply its sub-mode and for an ``aa 01`` reply its first byte (a plug's
@@ -13,10 +20,11 @@ blanks the ``33 b2`` / ``aa b1`` secret frames at its capture point).
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 if TYPE_CHECKING:
@@ -223,6 +231,52 @@ def _tlv_tags(data: bytes | None) -> tuple[frozenset[int] | None, int | None]:
     return frozenset(tags), mode_sub
 
 
+# -- what a poll set ------------------------------------------------------------------------------
+
+NOT_SEEN = "the tool could not see which fields the poll set"
+NOT_SET = "the poll's reply set nothing here (the library dropped or rejected it)"
+COLOURS = ("rgb_color", "color_temp_kelvin")
+
+
+@contextlib.contextmanager
+def assignments(dev: Any) -> Iterator[set[str] | None]:
+    """The state fields the library assigns on ``dev``'s state object while the block runs (a poll: what its
+    replies set, a value equal to the one held included), or None where the tool can't see them (no
+    dataclass state). The state class's ``__setattr__`` records the assignments to that one object for the
+    block, and is put back after: every reader in the library assigns the field it sets (a new dict or list
+    for ``zone_power`` and ``segments``), so this is what the poll applied, whatever its frames were."""
+    state = getattr(dev, "state", None)
+    cls = type(state)
+    if state is None or not dataclasses.is_dataclass(state) or getattr(cls, "__slots__", None) is not None:
+        yield None
+        return
+    seen: set[str] = set()
+    target = id(state)
+    own = cls.__dict__.get("__setattr__")
+    inherited: Any = cls.__setattr__
+
+    def record(obj: Any, name: str, value: Any) -> None:
+        if id(obj) == target:
+            seen.add(name)
+        inherited(obj, name, value)
+
+    setattr(cls, "__setattr__", record)   # noqa: B010 - a method is assigned, mypy refuses the plain form
+    try:
+        yield seen
+    finally:
+        if own is None:
+            delattr(cls, "__setattr__")
+        else:
+            setattr(cls, "__setattr__", own)   # noqa: B010
+
+
+async def poll(dev: Any) -> tuple[Any, frozenset[str] | None]:
+    """``await dev.update()``, and the fields it assigned (:func:`assignments`)."""
+    with assignments(dev) as seen:
+        state = await dev.update()
+    return state, None if seen is None else frozenset(seen)
+
+
 # -- which fields a poll carried ------------------------------------------------------------------
 
 
@@ -277,10 +331,39 @@ def _brightness_pending(dev: Any) -> bool:
     return bool(getattr(p, "brightness_by_pact", ())) and dev.pact is None
 
 
-def carried(dev: Any, frames: Iterable[Frame], warnings: list[str] | None = None) -> dict[str, str | None]:
-    """``{field: None}`` for each state field the poll's replies (``frames``, one poll's window) carried,
-    ``{field: reason}`` for the others: what a step on this row can be judged on."""
+def carried(dev: Any, frames: Iterable[Frame], warnings: list[str] | None = None, *,
+            assigned: Iterable[str] | None = None) -> dict[str, str | None]:
+    """``{field: None}`` for each state field the poll's replies (``frames``, one poll's window) carried and
+    the poll set (``assigned``, :func:`poll`; None: unknown, so nothing counts), ``{field: reason}`` for the
+    others: what a step on this row can be judged on. A colour the poll's mode report set to a value counts
+    too where the decode table here says that report can't carry it: the library read it (a newer library's
+    fold, such as a Kelvin tint read as its colour temperature)."""
     warnings = [] if warnings is None else warnings
+    frames = list(frames)
+    out = _carried(dev, frames, warnings)
+    if assigned is None:
+        return {f: reason if reason is not None else NOT_SEEN for f, reason in out.items()}
+    seen = set(assigned)
+    state = getattr(dev, "state", None)
+    for field, reason in out.items():
+        if reason is None and field not in seen:
+            out[field] = NOT_SET
+        elif reason is not None and field in COLOURS and field in seen and _mode_reported(dev, frames) \
+                and getattr(state, field, None) is not None:
+            out[field] = None
+    return out
+
+
+def _mode_reported(dev: Any, frames: Iterable[Frame]) -> bool:
+    """The poll brought a mode report: an ``aa 05`` reply, or a status burst with its 0x05 TLV."""
+    if getattr(getattr(dev, "profile", None), "readback", "none") not in ("polled", "status"):
+        return False
+    return any(f.dir == "rx" and (f.op == "aa05" or (f.op == "ac" and f.tags is not None and 0x05 in f.tags))
+               for f in frames)
+
+
+def _carried(dev: Any, frames: list[Frame], warnings: list[str]) -> dict[str, str | None]:
+    """:func:`carried` by the frames alone: which fields this poll's replies can carry on this row."""
     out: dict[str, str | None] = {f: "not read back on this row" for f in FIELDS}
     p = getattr(dev, "profile", None)
     if p is None:
@@ -339,7 +422,8 @@ def carried(dev: Any, frames: Iterable[Frame], warnings: list[str] | None = None
     tags = burst.tags
     parse_name = getattr(p, "mode_color_parse_status", None) or p.mode_color_parse
     out["is_on"] = None   # a reply without TLV 0x01 reads off, as the app's does
-    if tags is None:      # the burst could not be joined: the request's types, the scheme's sub-mode
+    if tags is None:      # the burst could not be joined: the request's types, the scheme's sub-mode, and
+        # only where the poll set them (carried)
         warnings.append("a status burst could not be joined: fields counted from the request")
         got("brightness", not _brightness_pending(dev), "brightness range waits for the advertised pact")
         out["scene_code"] = None
@@ -392,8 +476,18 @@ def _same(field: str, want: Any, got: Any, *, raw: bool) -> bool:
     return bool(want == got)
 
 
+UNCHANGED = "the step left it as it was, so the read can't tell the write from none"
+CCT_BLIND = "the mode report shows no colour temperature, so its RGB can't tell a Kelvin write"
+
+
+def _value(attr: str, seg: Any) -> Any:
+    value = getattr(seg, attr, None)
+    return tuple(value) if attr == "rgb" and value is not None else value
+
+
 def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str) -> tuple[str, str | None]:
-    """A segment step: the touched indices as intended, the others as they read before the step."""
+    """A segment step: the touched indices as intended, the others as they read before the step. Touched
+    segments that already read as intended before it prove nothing by reading so again."""
     after, wanted, before = _segments(post), _segments(intent), _segments(pre)
     if not after:
         return "not read: no segments in the read-back", None
@@ -409,7 +503,13 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str) -> 
     missing = [i for i in step.touched if i not in after]
     if missing:
         bad.append(f"segments {missing} missing from the read-back")
-    return ("fail", "; ".join(bad[:4])) if bad else ("pass", None)
+    if bad:
+        return "fail", "; ".join(bad[:4])
+    if step.kind == "write" and all(i in before and i in wanted and _value(attr, before[i]) is not None
+                                    and _value(attr, before[i]) == _value(attr, wanted[i])
+                                    for i in step.touched):
+        return f"not read: {UNCHANGED}", None
+    return "pass", None
 
 
 def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
@@ -438,14 +538,27 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                 out[field] = "not read: " + ("no RGB intended" if want is None else "no segments read")
                 continue
             off = [i for i, s in segs.items() if s.rgb is None or tuple(s.rgb) != tuple(want)]
+            was = _segments(pre)
+            if not off and step.kind == "write" and was and all(
+                    s.rgb is not None and tuple(s.rgb) == tuple(want) for s in was.values()):
+                out[field] = f"not read: {UNCHANGED}"
+                continue
             out[field] = "fail" if off else "pass"
             if off:
                 fails.append(f"rgb_color (segments): {len(off)} of {len(segs)} segments not {tuple(want)}")
+            continue
+        kelvin_intended = getattr(intent, "color_temp_kelvin", None) is not None
+        if field == "rgb_color" and reason is None and kelvin_intended \
+                and carried_map.get("color_temp_kelvin") is not None:
+            # A colour-temperature write, read back by a report that has no Kelvin (rgb_kelvin_0d_nocct,
+            # rgb): it shows an RGB whatever the device does, so that RGB says nothing of the write.
+            out[field] = f"not read: {CCT_BLIND}"
             continue
         if reason is not None:
             out[field] = f"not read: {reason}"
             continue
         want, got = getattr(intent, field, None), getattr(post, field, None)
+        before = getattr(pre, field, None)
         if field == "zone_power":
             # The library forgets a zone it can no longer vouch for (an H6047 33 01 on forgets the bars):
             # only the zones it holds are judged.
@@ -453,11 +566,14 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                 out[field] = "not read: the library holds no zone power after this write"
                 continue
             got = {k: v for k, v in (got or {}).items() if k in want}
-        if _same(field, want, got, raw=raw):
-            out[field] = "pass"
-        else:
+            before = {k: v for k, v in (before or {}).items() if k in want}
+        if not _same(field, want, got, raw=raw):
             out[field] = "fail"
             fails.append(f"{field}: read {got!r}, intended {want!r}")
+        elif step.kind == "write" and pre is not None and _same(field, want, before, raw=raw):
+            out[field] = f"not read: {UNCHANGED}"   # e.g. a None intended and already None
+        else:
+            out[field] = "pass"
     return out, fails
 
 

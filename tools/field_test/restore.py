@@ -16,7 +16,7 @@ import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .readback import FIELDS, FrameWatch, carried, outlet_mask, relay_bits
+from .readback import FIELDS, FrameWatch, carried, outlet_mask, poll, relay_bits
 
 SCENE_NOTE = ("scene: re-activated by code; its animation restarts, and a DIY or uploaded effect shows "
               "whatever the device now holds for that code")
@@ -61,10 +61,11 @@ class StartState:
 
 
 async def capture_start(dev: Any, adv: Any, frames: list[Any], *, kind: str, ask: Ask | None = None,
-                        polled: Any = None) -> StartState:
+                        polled: Any = None, assigned: frozenset[str] | None = None) -> StartState:
     """The start state after the first poll (``frames``: that poll's window of the FrameWatch; ``polled``:
-    the state it returned, kept where the device has no ``snapshot()``)."""
-    read = frozenset(f for f, reason in carried(dev, frames).items() if reason is None)
+    the state it returned, kept where the device has no ``snapshot()``; ``assigned``: the fields that poll
+    set, :func:`.readback.poll`)."""
+    read = frozenset(f for f, reason in carried(dev, frames, assigned=assigned).items() if reason is None)
     advertised: bool | None = None
     if "is_on" not in read and adv is not None:
         try:
@@ -102,15 +103,21 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
 
     It polls first: a write that was cut short (a Ctrl-C, a timeout) applied nothing to ``dev.state``
     though its frame may have reached the device, so the comparisons below (relay, gradual, zones, segment
-    levels) are made against what the device reads back. Where that poll fails, those are sent anyway."""
+    levels) are made against what the device reads back. Where that poll fails, or doesn't set the field
+    (:func:`.readback.poll`), those are sent anyway."""
     out = Outcome()
     caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
     fresh = getattr(p, "readback", "none") != "none" and start.kind != "card"
+    polled: frozenset[str] = frozenset()
     if fresh:
         try:
-            await dev.update()
+            polled = (await poll(dev))[1] or frozenset()
         except Exception:
             fresh = False
+
+    def known(field: str) -> bool:
+        """The restore's poll set ``field``: ``dev.state`` holds what the device reports, not an intent."""
+        return fresh and field in polled
 
     async def do(label: str, fn: Callable[..., Awaitable[None]], *args: Any) -> None:
         try:
@@ -123,15 +130,15 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
     if start.kind == "plug":
         if started_on is None:
             out.unrestorable.append("relay: start state unknown")
-        elif not fresh or dev.state.is_on is not started_on:
+        elif not known("is_on") or dev.state.is_on is not started_on:
             await do(f"relay {'on' if started_on else 'off'}", dev.set_power, started_on)
         return out
-    colour = _colour_actions(dev, start, out, fresh)
+    colour = _colour_actions(dev, start, out, known("segments"))
     restore_brightness = "brightness" in caps and "brightness" in read and bool(st.brightness)
     if "brightness" in caps and not restore_brightness:
         out.unrestorable.append("brightness: unknown at the start (not read back)")
     if getattr(p, "gradual", False) and "gradual" in read and st.gradual is not None \
-            and (not fresh or dev.state.gradual != st.gradual):
+            and (not known("gradual") or dev.state.gradual != st.gradual):
         await do("gradual", dev.set_gradual, bool(st.gradual))
     if started_on is None:
         out.unrestorable.append("power: unknown at the start")
@@ -144,7 +151,8 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
     if started_on and dev.zones and "zone_power" in read:
         for zone in dev.zones:
             want = st.zone_power.get(zone.power_index)
-            if want is not None and (not fresh or dev.state.zone_power.get(zone.power_index) != want):
+            held = dev.state.zone_power.get(zone.power_index)
+            if want is not None and (not known("zone_power") or held != want):
                 await do(f"zone {zone.name} {'on' if want else 'off'}", dev.set_zone_power, zone.name, want)
     if started_on is False:
         await do("power off", dev.set_power, False)
@@ -259,12 +267,12 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
         return check
     mark = watch.mark() if watch is not None else 0
     try:
-        post = await dev.update()
+        post, assigned = await poll(dev)
     except Exception as err:
         check.errors.append(f"final read-back: {type(err).__name__}")
         check.result = "failed"
         return check
-    now = carried(dev, watch.window(mark) if watch is not None else [])
+    now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned)
     raw = bool(getattr(profile, "brightness_range", None) or getattr(profile, "brightness_by_pact", ()))
     compared = 0
     for field in FIELDS:

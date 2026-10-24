@@ -9,10 +9,12 @@ list and the pact are known. Each step is one command, then a read-back where th
    with an unlock or a time sync) and ``relay_read`` (plugs);
 2. power off / on; brightness 25 % then 100 %; whole-device RGB red; colour temperature at the range's
    min, mid and max; an RGB pick of the mid Kelvin's tint (the app sends it as colour temperature);
-3. segments: a blue baseline, then RGB and brightness on the first and last segment, and colour
+3. segments: a blue baseline, then RGB and brightness on the first and last segment (brightness on their
+   whole groups where the row's strip dims a group at a time, ``segment_brightness_groups``), and colour
    temperature on them where the row allows it;
 4. per zone: off, on, its own colour, a colour temperature;
-5. the first catalog scene; the gradual flag there and back;
+5. the first catalog scene; the gradual flag there and back (skipped when the first poll read no start for
+   it, which nothing could then restore);
 6. expected refusals, each with its group, where the profile has the capability but a narrower fact
    refuses it (``segment_color_temp`` False, no segment brightness, ``gradual_read_only``, a brightness range
    that waits for the pact): pass when ``GoveeBleNotSupported`` is raised and nothing was sent.
@@ -301,6 +303,25 @@ def _ends(dev: Any) -> tuple[int, ...]:
     return tuple(sorted({0, n - 1})) if n >= 1 else ()
 
 
+def _brightness_pieces(dev: Any, ends: tuple[int, ...]) -> tuple[int, ...]:
+    """The segments a segment-brightness write to ``ends`` covers: on a profile with
+    ``segment_brightness_groups`` (read with ``getattr``: an older wheel has none) every segment of each group
+    holding one of them, below the segment count, as the screen's strip widens the selection before the
+    write (``Device.set_segment_brightness``); else ``ends``."""
+    groups = getattr(dev.profile, "segment_brightness_groups", ()) or ()
+    n = int(dev.segment_count or 0)
+    picked = set(ends)
+    widened = picked.union(*({i for i in g if i < n} for g in groups if picked.intersection(g)))
+    return tuple(sorted(widened))
+
+
+def _which(indices: tuple[int, ...]) -> str:
+    """``segment 0`` / ``segments 0 and 13`` / ``segments 0, 1, 2, 10, 11, 12 and 13``."""
+    if len(indices) == 1:
+        return f"segment {indices[0]}"
+    return f"segments {', '.join(map(str, indices[:-1]))} and {indices[-1]}"
+
+
 def _segment_brightness_ok(dev: Any) -> bool:
     return bool(getattr(dev, "supports_segment_brightness", getattr(dev.profile, "segment_brightness", True)))
 
@@ -327,9 +348,14 @@ def _segments(ctx: PlanContext) -> list[Step]:
     ]
     if _segment_brightness_ok(dev):
         dim = partial(dev.set_segment_brightness, idx, SEGMENT_LEVEL)
+        pieces = _brightness_pieces(dev, ends)
+        grouped = pieces != ends   # the strip dims whole groups: the write covers each group of an end
         steps.append(Step(f"segment_brightness_{tag}", dim, None,
-                          f"Are {which} clearly DIMMER than the others?",
-                          fields=("segment_brightness",), touched=ends))
+                          f"Are {_which(pieces)} clearly DIMMER than the others"
+                          + (" (whole groups: the app dims a group at a time)?" if grouped else "?"),
+                          fields=("segment_brightness",), touched=pieces,
+                          note="widened to the groups of segments " + " and ".join(map(str, ends))
+                          if grouped else ""))
     span = _kelvin_range(dev)
     if "color_temp" in caps and span is not None and _segment_cct_ok(dev):
         steps.append(Step(f"segment_color_temp_{tag}", partial(dev.set_segment_color_temp, idx, span[1]),
@@ -393,15 +419,19 @@ def _scene(ctx: PlanContext) -> list[Step]:
 
 
 def _gradual(ctx: PlanContext) -> list[Step]:
+    """The gradual flag there and back, from the start the first poll read (the restore puts it back). With
+    no start read (no ``aa a3`` reply), nothing could put it back: both steps are skipped."""
     dev = ctx.dev
     if not getattr(dev.profile, "gradual", False):
         return _refusals(ctx, "gradual")
-    start = bool(ctx.start.state.gradual) if ctx.start is not None and "gradual" in ctx.start.read else False
+    known = ctx.start is not None and "gradual" in ctx.start.read and ctx.start.state.gradual is not None
+    start = bool(ctx.start.state.gradual) if known else False
+    skip = "" if known else "gradual not read at the start: it couldn't be restored"
     question = "Did the light carry on normally (no flicker, no colour change)?"
     return [Step("gradual_toggle", partial(dev.set_gradual, not start), None, question, fields=("gradual",),
-                 note=f"33 a3 {int(not start):02x}; no visible effect expected"),
+                 note=f"33 a3 {int(not start):02x}; no visible effect expected", skip=skip),
             Step("gradual_back", partial(dev.set_gradual, start), None, question, fields=("gradual",),
-                 note=f"33 a3 {int(start):02x}")]
+                 note=f"33 a3 {int(start):02x}", skip=skip)]
 
 
 def _refusal(name: str, action: Any, why: str) -> Step:
