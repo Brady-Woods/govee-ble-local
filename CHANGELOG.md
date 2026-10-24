@@ -303,8 +303,9 @@ model, from which the shipped readers are generated).
     them, with no segment brightness and with whole-device Kelvin (the segment split, Added); their whole-device
     frames are 1.7.0's.
 
-  Each other one resolves to the same profile, field by field (every new field at its default), at every pact
-  its rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged.
+  Each other one resolves to the same profile, field by field (every new field at its default; H615A-E join
+  the `skus` of the profile H6159 heads, and H6159 stays first), at every pact its rows list and at none, with
+  and without `allow_modelled`, so its frames and decoded state are unchanged.
   Two SKU-specific changes are outside the profile: H6113 at its BK pacts keeps an RGB pick of a Kelvin tint
   colour as that colour (the `legacy_02` entry, below), and H6118 / H6194 / H6179 follow a later advert's pact
   to the row it routes them to (`reroute`, Added).
