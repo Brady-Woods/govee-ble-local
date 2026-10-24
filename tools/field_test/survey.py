@@ -21,6 +21,7 @@ import os
 import secrets
 import stat
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -35,7 +36,8 @@ REUSE_SECONDS = 20.0
 ACQUIRE_TIMEOUTS = (10.0, 20.0, 30.0)
 # The ref key: random, owner-only, created on first use. GOVEE_FIELD_TEST_REF_KEY points elsewhere.
 REF_KEY_ENV = "GOVEE_FIELD_TEST_REF_KEY"
-# Set (the test suite sets it for every test): every scan raises instead of reaching the Bluetooth stack.
+# Set (the suite sets it for every test), or under pytest (``PYTEST_CURRENT_TEST``) whatever a tree's
+# conftest sets: every real scan or connect raises instead of reaching the Bluetooth stack.
 NO_SCAN_ENV = "GOVEE_FIELD_TEST_NO_SCAN"
 _DEFAULT_REF_KEY = Path("~/.cache/govee-ble-local/field-test-ref.key")
 TIERS = ("default", "modelled", "unsupported")
@@ -73,14 +75,51 @@ class Heard:
                 "reason": self.reason}
 
 
+def _radio_off() -> str | None:
+    """Why the real Bluetooth stack is off limits (:data:`NO_SCAN_ENV`, or a pytest test running), or None."""
+    for env in (NO_SCAN_ENV, "PYTEST_CURRENT_TEST"):
+        if os.environ.get(env):
+            return f"{env} is set"
+    return None
+
+
+def _real(obj: Any) -> bool:
+    return str(getattr(obj, "__module__", "")).startswith("bleak")
+
+
 def _scanner() -> Any:
-    """bleak's ``BleakScanner`` (looked up at each call, so a test can fake it), unless scanning is disabled
-    (:data:`NO_SCAN_ENV`) and it is the real one."""
+    """bleak's ``BleakScanner`` (looked up at each call, so a test can fake it), unless the radio is off
+    (:func:`_radio_off`) and it is the real one."""
     from bleak import BleakScanner
 
-    if os.environ.get(NO_SCAN_ENV) and str(getattr(BleakScanner, "__module__", "")).startswith("bleak"):
-        raise RuntimeError(f"scanning is disabled ({NO_SCAN_ENV} is set)")
+    why = _radio_off()
+    if why and _real(BleakScanner):
+        raise RuntimeError(f"scanning is disabled ({why})")
     return BleakScanner
+
+
+@contextlib.contextmanager
+def no_radio() -> Iterator[None]:
+    """For the block's length, while the radio is off (:func:`_radio_off`), every library connect that
+    would reach bleak (``establish_connection`` still bleak-retry-connector's, not a test's fake) raises
+    instead: connect, a write's reconnect, a restore's."""
+    why = _radio_off()
+    from govee_ble_local.transport import connection
+
+    real = getattr(connection, "establish_connection", None)
+    if not why or not _real(real):
+        yield
+        return
+
+    async def refused(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError(f"connecting is disabled ({why})")
+
+    setattr(connection, "establish_connection", refused)  # noqa: B010 - a module attribute, by name
+    try:
+        yield
+    finally:
+        if getattr(connection, "establish_connection", None) is refused:
+            setattr(connection, "establish_connection", real)  # noqa: B010
 
 
 def _ref_key_path() -> Path:
@@ -88,12 +127,18 @@ def _ref_key_path() -> Path:
 
 
 def _ref_key(path: Path) -> bytes:
+    """The ref key at ``path``: created 0600 (its folder 0700) on first use; one group or others can read is
+    refused (its refs are no longer private), as is one that is not a regular file or is too short."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     with contextlib.suppress(FileNotFoundError):
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as fh:
-            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            mode = os.fstat(fh.fileno()).st_mode
+            if not stat.S_ISREG(mode):
                 raise OSError(f"{path} is not a regular file")
+            if mode & 0o077:
+                raise OSError(f"{path}: the ref key is readable by group or others (mode "
+                              f"{stat.S_IMODE(mode):04o}); delete it to make a new one (mode 0600)")
             key = fh.read()
         if len(key) >= 16:
             return key

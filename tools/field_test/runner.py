@@ -101,6 +101,9 @@ CARD_RESCAN_SECONDS = 4.0
 KIND_ORDER = {"light": 0, "card": 1, "plug": 2}
 EXIT_OK, EXIT_FAIL, EXIT_NOTHING, EXIT_REFUSED, EXIT_INCOMPLETE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
 SURVEY_SECONDS = 20.0   # --list / --all
+# The plugs' secrets: a 0600 JSON file on the host that runs the tool, never in a checkout.
+SECRETS_ENV = "GOVEE_FIELD_TEST_SECRETS"
+DEFAULT_SECRETS = "~/.config/govee-ble-local/field-test-secrets.json"
 NO_TERMINAL = "no terminal on stdin: read steps only this run (--unattended allows visible writes)"
 # What single-device discovery scans with, set by run() for its own call only (--scan-seconds, --generic).
 DISCOVER_OPTIONS: dict[str, Any] = {}
@@ -446,18 +449,33 @@ def _on_a_terminal() -> bool:
         return False
 
 
-def _read_secrets(path: str | None) -> dict[str, bytes]:
-    """``{ref or address (upper): secret}`` from a 0600 JSON file of hex secrets (read once, never logged)."""
-    if not path:
-        return {}
+def secrets_path(given: str | None) -> Path:
+    """The secrets file: ``--secrets-file``, else :data:`SECRETS_ENV`, else :data:`DEFAULT_SECRETS` (outside
+    every checkout, so it can never be committed)."""
+    return Path(given or os.environ.get(SECRETS_ENV) or DEFAULT_SECRETS).expanduser()
+
+
+def _read_secrets(given: str | None) -> dict[str, bytes]:
+    """``{ref or address (upper): secret}`` from the 0600 JSON file of hex secrets (:func:`secrets_path`;
+    read once, no value ever printed or logged). No file: none, never a failure (a device that needs one
+    and is given none stays read-only, its gate incomplete). One group or others can read is refused."""
+    if not (given or os.environ.get(SECRETS_ENV)) and os.environ.get("PYTEST_CURRENT_TEST"):
+        return {}   # a test never reads the tester's own file
+    path = secrets_path(given)
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        _say(f"No secrets file at {path}: a device that needs a secret and is given none stays read-only")
+        return {}
     except OSError as err:
-        raise Refused(f"--secrets-file: cannot open it ({err.strerror})") from None
+        raise Refused(f"--secrets-file {path}: cannot open it ({err.strerror})") from None
     with os.fdopen(fd, encoding="utf-8") as fh:
         st = os.fstat(fh.fileno())
-        if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
-            raise Refused("--secrets-file must be a regular file with mode 0600")
+        if not stat.S_ISREG(st.st_mode):
+            raise Refused(f"--secrets-file {path}: not a regular file")
+        if st.st_mode & 0o077:
+            raise Refused(f"--secrets-file {path}: group or others can read it (mode "
+                          f"{stat.S_IMODE(st.st_mode):04o}); chmod 600 it")
         try:
             data = json.load(fh)
         except ValueError:
@@ -1007,6 +1025,13 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
 
 async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namespace, out_dir: Path,
                      stamp: str, policy: Policy, lib: dict[str, Any] | None = None) -> dict[str, Any]:
+    """:func:`_run_device`, never reaching the radio from a test (:func:`.survey.no_radio`)."""
+    with _survey.no_radio():
+        return await _run_device(target, n, args, out_dir, stamp, policy, lib)
+
+
+async def _run_device(target: _survey.Heard, n: int | None, args: argparse.Namespace, out_dir: Path,
+                      stamp: str, policy: Policy, lib: dict[str, Any] | None = None) -> dict[str, Any]:
     """Test one device: acquire it, connect (with retries), capture its start state, run its plan's steps,
     and in every case restore and check it, stop, flush and redact. Returns its summary record; a Ctrl-C
     marks it ``interrupted`` (``result: "interrupted"`` when it landed before the plan's end) after the
@@ -1491,8 +1516,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="plugs (by ref or address) whose relay may toggle; each still needs the run-time "
                          "confirmation, and every other plug gets read-only steps")
     ap.add_argument("--secrets-file", metavar="PATH",
-                    help="JSON {ref or address: hex secret}, a regular file with mode 0600 (else asked, "
-                         "hidden)")
+                    help=f"JSON {{ref or address: hex secret}}, a regular file with mode 0600 (default "
+                         f"${SECRETS_ENV}, else {DEFAULT_SECRETS}; none there: a plug's secret is asked, "
+                         "hidden, and every other device that needs one stays read-only)")
     ap.add_argument("--force-hours", action="store_true",
                     help="allow visible writes outside the daytime window (recorded in every report)")
     ap.add_argument("--day-start", type=parse_hhmm, default=parse_hhmm("07:00"), metavar="HH:MM",

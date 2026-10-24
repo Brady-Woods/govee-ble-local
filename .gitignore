@@ -15,6 +15,9 @@ venv/
 # userland Node + the pure-JS Kaitai compiler for `tools/gen_kaitai.sh --read-only` scratch builds
 # (the read-write classes in src/govee_ble_local/_generated need the JVM compiler)
 .toolchain/
+# tools/field_test's plug secrets and ref key live in ~/.config and ~/.cache (0600); never in a checkout
+field-test-secrets*.json
+field-test-ref.key
 # local BLE captures / frame logs — never commit raw captures
 *.jsonl
 btsnoop*.log

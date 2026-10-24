@@ -229,13 +229,15 @@ class FakeSceneFiles:
 # -- tools/field_test, offline ---------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def field_test_offline(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
-    """tools/field_test never scans for a real device in a test (its scans raise), its device refs are
-    keyed by a key of the test session's, never the tester's own (~/.cache/govee-ble-local), and its clock
-    reads midday, inside the write window, so a test passes at any hour (CI runs in UTC); a window test
-    sets guard.now itself."""
+    """tools/field_test never scans for or connects to a real device in a test (both raise), its device refs
+    are keyed by a key of the test session's and its secrets file is the session's (absent), never the
+    tester's own (~/.cache, ~/.config/govee-ble-local), and its clock reads midday, inside the write window,
+    so a test passes at any hour (CI runs in UTC); a window test sets guard.now itself."""
+    base = tmp_path_factory.getbasetemp()
     monkeypatch.setenv("GOVEE_FIELD_TEST_NO_SCAN", "1")
     monkeypatch.setenv("GOVEE_FIELD_TEST_NOW", "2026-10-23T12:00:00")
-    monkeypatch.setenv("GOVEE_FIELD_TEST_REF_KEY", str(tmp_path_factory.getbasetemp() / "field-test-ref.key"))
+    monkeypatch.setenv("GOVEE_FIELD_TEST_REF_KEY", str(base / "field-test-ref.key"))
+    monkeypatch.setenv("GOVEE_FIELD_TEST_SECRETS", str(base / "field-test-secrets.json"))
 
 
 # -- firmware-image provenance ----------------------------------------------------------------

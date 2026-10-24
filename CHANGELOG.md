@@ -343,7 +343,7 @@ model, from which the shipped readers are generated).
   - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
     (each shown by its advertised name as its label shows it, and its signal, on the console only; what it
     powers is asked and never stored; its ref typed to allow the toggle) and given a secret
-    (`--secrets-file`, mode 0600, or a hidden prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
+    (the secrets file, or a hidden prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
     plug's power write sets every outlet (`33 01 FF / F0`, the H5089's `33 02`), so it toggles only when the
     first `aa 01` read finds its outlets all on or all off (all off where the row doesn't say which relay bits
     are outlets, listed as `2+ outlets`); its restore is checked outlet by outlet.
@@ -383,10 +383,18 @@ model, from which the shipped readers are generated).
     restore), 4 `incomplete` (a device not reached or skipped, a write skipped by the window or not verified,
     a device whose row needs a secret, every plug, tested without one). Both exit 2 with nothing to test, 3
     when refused and 130 when interrupted (`tools/README.md`'s exit-code table).
-  - The test suite sets `GOVEE_FIELD_TEST_NO_SCAN` (the tool's scans then raise instead of reaching bleak's
-    real scanner), a session ref key and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every test
-    (`tests/conftest.py`); the clock pin is honoured only while pytest runs a test (`PYTEST_CURRENT_TEST`), and a
-    real run that finds it exported says it is ignored.
+  - **Secrets and the ref key stay owner-only, outside the checkout.** The secrets file (JSON `{ref or
+    address: hex secret}`) defaults to `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file`
+    or `GOVEE_FIELD_TEST_SECRETS` elsewhere; `field-test-secrets*.json` is git-ignored). One group or others
+    can read is refused (exit 3), saying why and printing no value; no file is no failure (a device that
+    needs a secret and is given none stays read-only, the gate `incomplete`). The ref key
+    (`~/.cache/govee-ble-local/field-test-ref.key`) is made 0600, and one group or others can read is refused.
+  - Under pytest (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real
+    scan and connect (bleak's `BleakScanner`; a library connect while `establish_connection` is bleak's), so a
+    test reaches only a fake whatever its tree's conftest sets. The suite sets `GOVEE_FIELD_TEST_NO_SCAN`, a
+    session ref key, an absent session secrets file and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every
+    test (`tests/conftest.py`), and under pytest the default secrets file is never read; the clock pin is
+    honoured only while pytest runs a test, and a real run that finds it exported says it is ignored.
   - The one-device field-test runs in the suite pass `--unattended` (pytest's stdin is no terminal).
   - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
     rows too; the visible connect write the tool reads is what the library's connect sends) and

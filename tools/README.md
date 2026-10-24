@@ -60,7 +60,10 @@ and BLE MAC are always redacted), `restore(dev, initial_snapshot)` (default: bri
 colour temperature / RGB, then power; it runs only once a write step was sent, under `--all` the generic
 restore from the captured start follows it, and the generic restore check polls after them), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
 already matched from the name and the SKU's own digits). Test it offline next to
-`tests/test_field_test.py` with a fake device, within the suite's test budget.
+`tests/test_field_test.py` with a fake device, within the suite's test budget. Under pytest
+(`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real Bluetooth scan
+and connect (bleak's own `BleakScanner`, and every library connect while `establish_connection` is
+still bleak-retry-connector's), so a test reaches only a fake, whatever its tree's conftest sets.
 
 ## Release-gate pass (all devices)
 
@@ -81,8 +84,8 @@ never at the same time.
    The tool lists every device, shows each allow-listed plug by its ref, its advertised name as the Govee
    app and the plug's label show it (with its MAC digits, on the console only, never in a file) and its
    signal, asks what it powers (the answer is never stored) and has you type that plug's ref to let it
-   toggle (anything else keeps it read-only), asks for its secret unless `--secrets-file` (JSON
-   `{ref: hex}`, mode 0600) has it (every other device whose row needs a secret, every plug among them,
+   toggle (anything else keeps it read-only), asks for its secret unless the secrets file (below) has it
+   (every other device whose row needs a secret, every plug among them,
    takes it from that file only, and without one it can't pass, unless its connect sends the app's empty
    `33 b2` check and that check is acked: H6071 / H6075, H6058 on 1.9.0), then asks once before the first
    visible change. That answer (or
@@ -90,6 +93,17 @@ never at the same time.
    its end, even once the window opens. Each device then runs over its own connection, one at a time, and is restored before the next
    starts. With `--ask unverifiable` (the `--all` default) the tester answers only where nothing was read
    back.
+   The secrets file is `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file PATH` or
+   `$GOVEE_FIELD_TEST_SECRETS` point elsewhere; never put it in a checkout: `field-test-secrets*.json` is
+   git-ignored for that case): JSON `{"<ref or address>": "<16 hex digits>"}`, on each host that runs the
+   tool, owner-only. Make it with
+   `install -d -m 700 ~/.config/govee-ble-local && install -m 600 /dev/null ~/.config/govee-ble-local/field-test-secrets.json`,
+   then edit it. A file group or others can read is refused (exit 3; the message gives the path and
+   mode, never a value: `chmod 600` it), and no value is ever printed or written to a report. No file is
+   no failure: a device that needs a secret and is given none stays read-only and the gate is
+   `incomplete`. The device refs are keyed by `~/.cache/govee-ble-local/field-test-ref.key`
+   (`$GOVEE_FIELD_TEST_REF_KEY` elsewhere), made 0600 in a 0700 folder on first use; one group or others
+   can read is refused: delete it to make a new one (every ref changes, so run `--list` again).
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
    was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close

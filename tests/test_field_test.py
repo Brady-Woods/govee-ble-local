@@ -71,8 +71,8 @@ def test_masks_address_serial_and_wifi_mac(masking: ModuleType, tmp_path: Path) 
     secret = bytes.fromhex("0011aabbccddeeff")
     text = masking.mask_text("key 0011AABBCCDDEEFF / 0011aabbccddeeff", secrets=[secret])
     assert text == "key <redacted> / <redacted>"
-    assert "aabbcc" not in masking.mask_text_all(f"{secret.hex()} 5C:E7:53:F4:74:57",
-                                                 [("5C:E7:53:F4:74:57", ())], [secret]).lower()
+    assert "aabbcc" not in masking.mask_text_all(f"{secret.hex()} 02:00:5E:00:53:57",
+                                                 [("02:00:5E:00:53:57", ())], [secret]).lower()
 
 
 def test_snapshot_redacts_identifiers_even_if_a_plan_asks_for_them(masking: ModuleType) -> None:
@@ -227,7 +227,7 @@ def test_sku_flag_is_passed_to_discovery_case_insensitively(
 
 
 def test_runner_reports_not_found_and_unplanned_sku(
-    ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     async def nothing(_a: Any, _s: Any) -> tuple[Any, Any, list[Any], None]:
         return None, None, [{"name": "x"}], None
@@ -244,6 +244,36 @@ def test_runner_reports_not_found_and_unplanned_sku(
     monkeypatch.setattr(runner, "discover", unknown)
     assert asyncio.run(runner.run(runner.parse_args(["--address", "x"]), tmp_path, "U")) == 2
     assert "no test plan" in json.loads((tmp_path / "fieldtest-report-U.json").read_text())["result"]
+
+    # the secrets file: none there (the session's) is no failure; one group or others can read is refused,
+    # saying why and printing no value; the ref key is made 0600 and refused once wider
+    from fake_ble import ble_device
+
+    from govee_ble_local import GoveeBleError, create_device
+    from govee_ble_local.transport import connection as conn_mod
+    survey = importlib.import_module("field_test.survey")
+    assert runner._read_secrets(None) == {}
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps({"AA:BB:CC:DD:EE:11": "0011aabbccddeeff"}))
+    secrets.chmod(0o644)
+    with pytest.raises(runner.Refused, match=r"group or others can read it \(mode 0644\); chmod 600"):
+        runner._read_secrets(str(secrets))
+    secrets.chmod(0o600)
+    assert runner._read_secrets(str(secrets)) == {"AA:BB:CC:DD:EE:11": bytes.fromhex("0011aabbccddeeff")}
+    assert "aabbcc" not in capsys.readouterr().out.lower()
+    key = tmp_path / "keys" / "ref.key"
+    assert len(survey._ref_key(key)) == 32 and key.stat().st_mode & 0o777 == 0o600
+    key.chmod(0o640)
+    with pytest.raises(OSError, match=r"readable by group or others \(mode 0640\)"):
+        survey._ref_key(key)
+    # under pytest no real scan or connect, even in a tree whose conftest sets no GOVEE_FIELD_TEST_NO_SCAN
+    monkeypatch.delenv("GOVEE_FIELD_TEST_NO_SCAN")
+    with pytest.raises(RuntimeError, match=r"scanning is disabled \(PYTEST_CURRENT_TEST"):
+        survey._scanner()
+    dev = create_device(ble_device("AA:BB:CC:DD:EE:47", "ihoment_H6047_1A2B"), "H6047")
+    with survey.no_radio(), pytest.raises(GoveeBleError, match=r"connecting is disabled \(PYTEST_CUR"):
+        asyncio.run(dev.connect())
+    assert conn_mod.establish_connection.__module__.startswith("bleak_retry_connector")   # put back
 
 
 def test_help_runs_as_a_directory_and_lists_plans() -> None:
