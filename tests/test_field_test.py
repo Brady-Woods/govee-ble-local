@@ -299,13 +299,20 @@ def test_runner_reports_not_found_and_unplanned_sku(
         shared.mkdir(mode=0o700)
         subprocess.run(["/bin/chmod", "+a", "everyone allow read,file_inherit", str(shared)],  # noqa: S603
                        check=True)
-        for _made_then_read in range(2):
+        for _made_each_time in range(2):   # a new key that took its folder's ACL is deleted, never kept
             with pytest.raises(OSError) as refused_key:
                 survey._ref_key(shared / "ref.key")
-            assert str(refused_key.value).startswith(
-                f"{shared / 'ref.key'}: the ref key is not private; {acl}")
+            assert str(refused_key.value) == (
+                f"{shared / 'ref.key'}: a new ref key is not private; {acl}, so it was deleted: remove the "
+                f"inheritable ACL entry on {shared} (chmod -N), then run again")
+            assert not (shared / "ref.key").exists()
     key = tmp_path / "keys" / "ref.key"
     assert len(survey._ref_key(key)) == 32 and key.stat().st_mode & 0o777 == 0o600
+    if sys.platform == "darwin":   # one with an ACL entry of its own: its refs may be known, so delete it
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read", str(key)], check=True)  # noqa: S603
+        with pytest.raises(OSError, match=r"the ref key is not private; it has an ACL .*; delete it to make"):
+            survey._ref_key(key)
+        subprocess.run(["/bin/chmod", "-N", str(key)], check=True)  # noqa: S603
     key.chmod(0o640)
     with pytest.raises(OSError, match=r"readable by group or others \(mode 0640\)"):
         survey._ref_key(key)

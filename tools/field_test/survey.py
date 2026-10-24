@@ -150,8 +150,7 @@ class NotPrivate(Exception):
         """The ACL refusal (``why`` ``"acl"`` or ``"acl?"``), in words without the path."""
         if self.why == "acl?":
             return "its ACL could not be checked (/bin/ls -le failed)"
-        return ("it has an ACL entry (ls -le lists it), which can let others read it whatever its mode: "
-                "remove it with chmod -N (and any inheritable one on its folder)")
+        return "it has an ACL entry (ls -le lists it), which can let others read it whatever its mode"
 
 
 def _acl(path: Path) -> str | None:
@@ -175,11 +174,12 @@ def _acl(path: Path) -> str | None:
 
 def read_private(path: Path) -> bytes:
     """``path``'s bytes, when it is the tester's own: opened without following a symlink or waiting for a
-    FIFO's writer (``O_NOFOLLOW | O_NONBLOCK``), then judged on that descriptor (``fstat``) before a byte is
-    read: a regular file whose mode gives group and others no permission at all (``mode & 0o077`` is 0:
-    0600, 0400) and, on macOS, with no ACL entry (:func:`_acl`). The descriptor is closed on every path.
-    ``FileNotFoundError`` when there is none, :class:`NotPrivate` when it is refused, another ``OSError``
-    when it can't be opened (a symlink: ``ELOOP``)."""
+    FIFO's writer (``O_NOFOLLOW | O_NONBLOCK``), then, before a byte is read, judged on that descriptor
+    (``fstat``): a regular file whose mode gives group and others no permission at all (``mode & 0o077`` is
+    0: 0600, 0400); and on macOS, by its path, with no ACL entry (:func:`_acl` runs ``ls`` on the path, since
+    no ``fstat`` field shows an ACL: someone who can write to its folder could swap the file in between).
+    The descriptor is closed on every path. ``FileNotFoundError`` when there is none, :class:`NotPrivate`
+    when it is refused, another ``OSError`` when it can't be opened (a symlink: ``ELOOP``)."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         mode = os.fstat(fd).st_mode
@@ -202,20 +202,30 @@ def _ref_key_path() -> Path:
     return Path(os.environ.get(REF_KEY_ENV) or _DEFAULT_REF_KEY).expanduser()
 
 
-def _ref_key_refused(path: Path, err: NotPrivate) -> str:
+def _ref_key_refused(path: Path, err: NotPrivate, *, made: bool = False) -> str:
+    """Why the ref key at ``path`` is refused. A key others could read gives refs that are no longer
+    private, so the fix is a new one, never the old one kept (as for a wide mode). ``made``: a key this run
+    just made, already deleted again (its folder passed an ACL entry on, which a new one would take too)."""
     if err.why == "type":
         return f"{path} is not a regular file"
     if err.why == "mode":
         return (f"{path}: the ref key is readable by group or others (mode {err.mode:04o}); delete it to "
                 "make a new one (mode 0600)")
-    return f"{path}: the ref key is not private; {err.acl}"
+    acl = err.why == "acl"
+    if made:
+        fix = f": remove the inheritable ACL entry on {path.parent} (chmod -N), then run again" if acl else ""
+        return f"{path}: a new ref key is not private; {err.acl}, so it was deleted{fix}"
+    fix = ("; delete it to make a new one, since its refs may no longer be private (first remove any "
+           "inheritable ACL entry on its folder with chmod -N, or the new one takes it too)") if acl else ""
+    return f"{path}: the ref key is not private; {err.acl}{fix}"
 
 
 def _ref_key(path: Path) -> bytes:
     """The ref key at ``path``: created 0600 (its folder 0700) on first use. One :func:`read_private`
     refuses (not a regular file, group or others have a permission bit, an ACL entry on macOS: its refs are
-    no longer private), a new one its folder gave an ACL entry, and one too short are an ``OSError`` that
-    names the path."""
+    no longer private, so the refusal says to delete it), a new one its folder gave an ACL entry (deleted at
+    once, never left on disk readable by others), and one too short are an ``OSError`` that names the
+    path."""
     try:
         key = read_private(path)
     except FileNotFoundError:
@@ -226,7 +236,9 @@ def _ref_key(path: Path) -> bytes:
             fh.write(key)
         acl = _acl(path)   # one its folder passes on (inherited) is in no mode bit
         if acl:
-            raise OSError(_ref_key_refused(path, NotPrivate(acl, 0o600))) from None
+            with contextlib.suppress(OSError):
+                path.unlink()
+            raise OSError(_ref_key_refused(path, NotPrivate(acl, 0o600), made=True)) from None
         return key
     except NotPrivate as err:
         raise OSError(_ref_key_refused(path, err)) from None

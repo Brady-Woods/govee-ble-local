@@ -480,7 +480,8 @@ def _read_secrets(given: str | None) -> dict[str, bytes]:
     except _survey.NotPrivate as err:
         why = ("not a regular file" if err.why == "type" else
                f"group or others can read it (mode {err.mode:04o}); chmod 600 it" if err.why == "mode" else
-               err.acl)
+               f"{err.acl}: remove it with chmod -N (and any inheritable one on its folder)"
+               if err.why == "acl" else err.acl)
         raise Refused(f"--secrets-file {path}: {why}") from None
     except OSError as err:
         raise Refused(f"--secrets-file {path}: cannot open it ({err.strerror})") from None

@@ -105,19 +105,21 @@ never at the same time.
    git-ignored for that case): JSON `{"<ref or address>": "<16 hex digits>"}`, on each host that runs the
    tool, owner-only. Make it with
    `install -d -m 700 ~/.config/govee-ble-local && install -m 600 /dev/null ~/.config/govee-ble-local/field-test-secrets.json`,
-   then edit it. What is checked, on the open file itself (never through a symlink, and a FIFO is never
-   waited on): it is a regular file, its mode gives group and others no permission at all (`mode & 077` is
-   0: 0600 or 0400; 0640, 0604 or 0610 are refused: `chmod 600` it), and on macOS it has no ACL entry
-   (`ls -le` lists none; an ACL, such as an `everyone allow read` its folder passes on, is in no mode bit:
-   `chmod -N` removes it). On Linux a POSIX ACL entry shows in the group bits, so the mode check covers it.
-   Its owner and its folder's permissions are not checked. Anything else (a symlink, a folder, a FIFO, a
+   then edit it. What is checked: on the open file itself (never through a symlink, and a FIFO is never
+   waited on), that it is a regular file and its mode gives group and others no permission at all
+   (`mode & 077` is 0: 0600 or 0400; 0640, 0604 or 0610 are refused: `chmod 600` it); and on macOS, by its
+   path once it is open (`/bin/ls -le`: no mode bit shows an ACL, so someone who can write to its folder
+   could swap the file in between), that it has no ACL entry (an ACL, such as an `everyone allow read` its
+   folder passes on, is in no mode bit: `chmod -N` removes it). On Linux a POSIX ACL entry shows in the
+   group bits, so the mode check covers it. Its owner and its folder's permissions are not checked. Anything else (a symlink, a folder, a FIFO, a
    file that isn't JSON) is refused (exit 3; the message gives the path, and the mode or the ACL, never a
    value), and no value is ever printed or written to a report. No file is no failure: a device that needs
    a secret and is given none stays read-only and the gate is `incomplete`. The device refs are keyed by
    `~/.cache/govee-ble-local/field-test-ref.key` (`$GOVEE_FIELD_TEST_REF_KEY` elsewhere), made 0600 in a
-   0700 folder on first use; the same checks refuse it before any scan (exit 3, the path and why; a new
-   one too, when its folder passes an ACL entry on): delete it to make a new one (every ref changes, so run
-   `--list` again).
+   0700 folder on first use; the same checks refuse it before any scan (exit 3, the path and why): delete a
+   refused one to make a new one, since a key others could read gives refs that are no longer private
+   (every ref changes, so run `--list` again). A new one its folder passes an ACL entry on is deleted at
+   once, never left readable: remove that folder's inheritable entry (`chmod -N`) and run again.
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
    was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close

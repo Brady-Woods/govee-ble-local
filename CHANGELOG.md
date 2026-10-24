@@ -136,14 +136,16 @@ model, from which the shipped readers are generated).
   - **Secrets and the ref key stay owner-only, outside the checkout.** The secrets file (JSON `{ref or
     address: hex secret}`) defaults to `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file`
     or `GOVEE_FIELD_TEST_SECRETS` elsewhere; `field-test-secrets*.json` is git-ignored). It is opened without
-    following a symlink or waiting on a FIFO (`O_NOFOLLOW | O_NONBLOCK`) and judged on that descriptor, which
-    is closed on every path: one that isn't a regular file (a folder, a FIFO), whose mode gives group or
-    others any permission bit, that has an ACL entry on macOS (an inherited `everyone allow read` is in no
-    mode bit; `ls -le` lists it), or that isn't JSON (nested past the parser's depth too) is refused (exit
-    3) by its path and why, printing no value; no file is no failure (a device that needs a secret and is
-    given none stays read-only, the gate `incomplete`). The ref key
-    (`~/.cache/govee-ble-local/field-test-ref.key`) is made 0600, and the same checks refuse it (exit 3)
-    before any scan, a new one too when its folder passes an ACL entry on.
+    following a symlink or waiting on a FIFO (`O_NOFOLLOW | O_NONBLOCK`), its type and mode are judged on
+    that descriptor (closed on every path), and on macOS its ACL by its path (`/bin/ls -le`, since no mode
+    bit shows one): one that isn't a regular file (a folder, a FIFO), whose mode gives group or others any
+    permission bit, that has an ACL entry on macOS (an inherited `everyone allow read` is in no mode bit),
+    or that isn't JSON (nested past the parser's depth too) is refused (exit 3) by its path and why,
+    printing no value; no file is no failure (a device that needs a secret and is given none stays
+    read-only, the gate `incomplete`). The ref key (`~/.cache/govee-ble-local/field-test-ref.key`) is made
+    0600, and the same checks refuse it (exit 3) before any scan, saying to delete it (a key others could
+    read gives refs that are no longer private); a new one its folder passes an ACL entry on is deleted at
+    once, never left on disk readable by others.
   - Under pytest (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real
     scan and connect (bleak's `BleakScanner`; a library connect while `establish_connection` is bleak's), so a
     test reaches only a fake whatever its tree's conftest sets; outside pytest, `GOVEE_FIELD_TEST_NO_SCAN`
