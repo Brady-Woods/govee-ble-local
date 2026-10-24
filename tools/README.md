@@ -78,18 +78,27 @@ never at the same time.
    --toggle-plugs <ref>[,<ref>] --out gate-X.Y.Z` (add `--allow-modelled` to include the opt-in rows).
    The tool lists every device, asks what each allow-listed plug powers and whether to toggle it (the
    answer is never stored), asks for its secret unless `--secrets-file` (JSON `{ref: hex}`, mode 0600)
-   has it, then asks once before the first visible change. Each device then runs over its own
-   connection, one at a time, and is restored before the next starts. With `--ask unverifiable` (the
-   `--all` default) the tester answers only where nothing was read back.
+   has it, then asks once before the first visible change. That answer (or `--yes`) is the whole run's:
+   a run started before the window opens without `--yes` stays read-only to its end, even once the window
+   opens. Each device then runs over its own connection, one at a time, and is restored before the next
+   starts. With `--ask unverifiable` (the `--all` default) the tester answers only where nothing was read
+   back.
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
-   was partial or failed) or `incomplete` (a device not reached, a write skipped by the window, a
-   plug without a secret, an interrupted run).
+   was partial or failed) or `incomplete` (a device not reached, a write skipped by the window, a write
+   step nothing verified: no read-back and no answer, as with `--no-prompt` or an `s`; a plug without a
+   secret, an interrupted run). Only `pass` clears the gate; the exit code is 0 for `incomplete` too.
 
 Notes:
 
 - Ctrl-C once restores the current device, marks the rest "not run (interrupted)" and saves the summary
-  (exit 130); a second Ctrl-C abandons that restore.
+  (exit 130), wherever it lands: in a step (even between a command's frame and its ack), during the
+  restore (which carries on) or at its question (left unanswered). A second Ctrl-C abandons that restore
+  (`restore: abandoned`).
+- A 2- or 3-outlet plug (H5082, H5089, H5160, H5161) switches every outlet with one frame, so it toggles
+  only when the first read finds its outlets all on or all off (all off where the row doesn't say which
+  relay bits are outlets: `--list` shows `2+ outlets`); from a mixed start its toggle is skipped. Its
+  restore is checked outlet by outlet.
 - Expect "not reached: connect failed" on devices Home Assistant (or the Govee app) is holding: a Govee
   light takes one central. The Home Assistant route covers those.
 - Read steps still make the library's connect writes (the handshake, a plug's unlock and time sync, a

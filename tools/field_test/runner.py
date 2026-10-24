@@ -36,10 +36,10 @@ import stat
 import sys
 import threading
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Coroutine
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from . import survey as _survey
 from .generic import device_kind, generic_plan, generic_steps
@@ -57,7 +57,7 @@ from .masking import (
     write_text_atomic,
 )
 from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step
-from .readback import FrameWatch, Judgement, carried, judge, judge_fields
+from .readback import FrameWatch, Judgement, carried, judge, judge_fields, outlet_mask
 from .restore import Outcome, RestoreCheck, StartState, capture_start, check_restore, restore_start
 from .summary import Summary, console_table, counts, device_failed
 
@@ -82,6 +82,7 @@ SURVEY_SECONDS = 20.0   # --list / --all
 DISCOVER_OPTIONS: dict[str, Any] = {}
 
 Names: TypeAlias = tuple[str | None, ...]   # the device's advertised names (local name, BLEDevice.name)
+T = TypeVar("T")
 
 
 class Refused(Exception):
@@ -314,6 +315,7 @@ class Policy:
     settle: float = 1.0
     route: str = "mac"
     gate: bool = False        # --all: a device that can't be reached is "not reached", not a failure
+    writes_off: str | None = None   # --all started outside the window without --yes: no write all run
 
     @property
     def prompts(self) -> bool:
@@ -389,6 +391,9 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
         if h.kind != "plug" or not _wanted(h, allow):
             continue
         line = f"  {h.ref} {h.sku} {mask_name(h.name)} {mask_address(h.address)}"
+        if outlet_mask(_survey.classify(h.sku, h.pact)[2]) != 0x01:
+            line += (f" ({h.outlets} outlets, switched together: it toggles only if they all start on, or "
+                     "all off)")
         if not policy.prompts:
             print(f"{line}: allow-listed, but a relay toggle needs the run-time confirmation: read-only")
             continue
@@ -479,6 +484,8 @@ class _Run:
     extra: Callable[[], dict[str, Any]]
     pre: Any = None
     wrote: bool = False
+    interrupted: bool = False   # a first Ctrl-C reached this device's run (it then restores and stops)
+    abandon: bool = False       # a second one: the restore is abandoned
     warnings: list[str] = dataclasses.field(default_factory=list)
 
 
@@ -487,6 +494,8 @@ def _skip_reason(step: Step, run: _Run) -> str | None:
         return step.skip
     if step.kind == "write" and run.policy.read_only:
         return "read-only run"
+    if step.kind == "write" and run.policy.writes_off:
+        return run.policy.writes_off
     if step.kind == "write" and not run.policy.window.allows_writes():
         return "outside the daytime window"
     return None
@@ -512,6 +521,8 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     mark = run.watch.mark()
     raised: BaseException | None = None
     sent_error: str | None = None
+    # Before the send: a Ctrl-C (CancelledError) can land after its frame went out and before its ack.
+    run.wrote = run.wrote or (step.kind == "write" and step.refusal is None)
     try:
         await step.action()
         rec["sent"] = "ok"
@@ -523,8 +534,8 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
             sent_error = _err(err, run.address, run.names, run.secrets)
             rec["sent"] = sent_error
             print(f"    send failed: {sent_error}")
-    if step.kind == "write" and step.refusal is None:
-        run.wrote = True
+    finally:
+        run.wrote = run.wrote or bool(run.watch.writes(mark))   # a refusal that sent something after all
     writes = len(run.watch.writes(mark))
     intent = _state_copy(dev) if step.fields else None
     post: Any = None
@@ -604,55 +615,141 @@ async def _connect(dev: Any, target: _survey.Heard, retries: int) -> None:
         raise last
 
 
+def _absorb(run: _Run) -> bool:
+    """A CancelledError reached a device's run. The first Ctrl-C (``asyncio.run`` cancels the main task) is
+    absorbed: noted on ``run`` and the task uncancelled, so the device is restored and the run stops after
+    it (True). A later one is the abandonment (False, and ``run.abandon`` set): the second Ctrl-C makes
+    ``asyncio.run`` raise KeyboardInterrupt and cancel every task, here or in the same breath as the first
+    (a task with two cancellations requested)."""
+    task = asyncio.current_task()
+    if run.interrupted or (task is not None and task.cancelling() > 1):
+        run.interrupted = run.abandon = True
+        return False
+    run.interrupted = True
+    if task is not None:
+        task.uncancel()
+    return True
+
+
+async def _carry_on(aw: Coroutine[Any, Any, T], run: _Run) -> T:
+    """Await ``aw`` to its end in a task of its own, so that a first Ctrl-C meanwhile doesn't cut it short (it
+    only marks the run interrupted, :func:`_absorb`); a cancellation after that one cancels it and passes
+    through (the second Ctrl-C abandons it)."""
+    task = asyncio.ensure_future(aw)
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled() or not _absorb(run):
+                run.abandon = True
+                task.cancel()
+                raise
+            print("\nInterrupted: this device's restore and clean-up carry on, then the run stops (a second "
+                  "Ctrl-C abandons them) ...")
+
+
+async def _plan_restore(run: _Run, initial: Snapshot) -> Outcome:
+    """A hand-written plan's restore as an :class:`Outcome`."""
+    result = await _restore_with(run.plan, run.dev, initial, run.address, run.names)
+    return Outcome(["the plan's restore"], [] if result == "ok" else [result])
+
+
+def _abandoned(report: dict[str, Any]) -> None:
+    report["restore"] = report.get("restore") or "abandoned"
+    if "restore_check" not in report:
+        report["restore_check"] = RestoreCheck(
+            "abandoned", errors=["a second Ctrl-C abandoned the restore"]).as_dict()
+    print("  restore: abandoned (second Ctrl-C)")
+
+
 async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, initial: Snapshot | None,
                   frames_path: Path) -> None:
     """Clean up, in this order: restore the start state (also after an error or Ctrl-C), check the
     restore with one more poll, disconnect, let the frame log reach the disk, then redact it. The
     redaction runs even if disconnecting fails, and the flush is best effort: if it fails (say the
-    library's frame-log internals changed), the capture is redacted straight away rather than left raw."""
+    library's frame-log internals changed), the capture is redacted straight away rather than left raw.
+
+    One Ctrl-C at any point here (or before, in a step) still restores the device: the restore, the
+    disconnect and the flush run through :func:`_carry_on`, and one at the check's poll or its question
+    leaves that check unverified. A second Ctrl-C abandons the restore (``restore: abandoned``)."""
     dev = run.dev
     outcome: Outcome | None = None
+
+    async def ask(question: str) -> str | None:
+        try:
+            return await _ask_yes_no(question)
+        except asyncio.CancelledError:
+            if not _absorb(run):
+                raise
+            print("\nInterrupted: the question is left unanswered; the run stops after this device.")
+            return None
+
     try:
-        if run.generic and start is not None and run.wrote:
-            print("  restoring the start state ...")
-            outcome = await restore_start(dev, start, lambda e: _err(e, run.address, run.names, run.secrets))
-            report["restore"] = "ok" if not outcome.errors else "error: " + "; ".join(outcome.errors)
+        restore: Coroutine[Any, Any, Outcome] | None = None
+        if run.abandon:
+            pass
+        elif run.generic and start is not None and run.wrote:
+            restore = restore_start(dev, start, lambda e: _err(e, run.address, run.names, run.secrets))
         elif not run.generic and initial is not None and run.wrote:
-            report["restore"] = await _restore_with(run.plan, dev, initial, run.address, run.names)
-            errors = [] if report["restore"] == "ok" else [report["restore"]]
-            outcome = Outcome(["the plan's restore"], errors)
-        check = RestoreCheck("not_needed")
-        if outcome is not None and start is not None:
-            try:
-                check = await check_restore(dev, start, outcome, run.watch,
-                                            ask=_ask_yes_no if run.policy.prompts else None)
-            except Exception as err:
-                check = RestoreCheck("failed", list(outcome.unrestorable),
-                                     errors=[*outcome.errors, _err(err, run.address, run.names)])
-        elif outcome is not None:
-            check = RestoreCheck("failed" if outcome.errors else "unverified", errors=list(outcome.errors))
-        report["restore_check"] = check.as_dict()
-        notes = f" ({'; '.join(check.unrestorable)})" if check.unrestorable else ""
-        print(f"  restore: {check.result}{notes}")
-        if run.kind != "card":
-            with contextlib.suppress(Exception):
-                report["final_state"] = snapshot(await dev.update(), run.plan.snapshot_keys)
+            restore = _plan_restore(run, initial)
+        if restore is not None:
+            print("  restoring the start state ...")
+            outcome = await _carry_on(restore, run)
+            joined = "; ".join(outcome.errors)
+            report["restore"] = ("ok" if not outcome.errors
+                                 else f"error: {joined}" if run.generic else joined)
+        if run.abandon:
+            _abandoned(report)
+        else:
+            check = RestoreCheck("not_needed")
+            if outcome is not None and start is not None:
+                try:
+                    check = await check_restore(dev, start, outcome, run.watch,
+                                                ask=ask if run.policy.prompts else None)
+                except asyncio.CancelledError:
+                    if not _absorb(run):
+                        raise
+                    cut = "not checked: a Ctrl-C cut the check's poll short"
+                    check = RestoreCheck("unverified", [*outcome.unrestorable, cut],
+                                         errors=list(outcome.errors), actions=list(outcome.actions))
+                except Exception as err:
+                    check = RestoreCheck("failed", list(outcome.unrestorable),
+                                         errors=[*outcome.errors, _err(err, run.address, run.names)])
+            elif outcome is not None:
+                check = RestoreCheck("failed" if outcome.errors else "unverified",
+                                     errors=list(outcome.errors))
+            report["restore_check"] = check.as_dict()
+            notes = f" ({'; '.join(check.unrestorable)})" if check.unrestorable else ""
+            print(f"  restore: {check.result}{notes}")
+            if run.kind != "card":
+                try:
+                    with contextlib.suppress(Exception):
+                        report["final_state"] = snapshot(await dev.update(), run.plan.snapshot_keys)
+                except asyncio.CancelledError:
+                    if not _absorb(run):
+                        raise
+    except asyncio.CancelledError:
+        _abandoned(report)
+        raise
     finally:
         try:
-            await dev.stop()
+            await _carry_on(dev.stop(), run)
         finally:
-            with contextlib.suppress(Exception):
-                await asyncio.to_thread(_flush_frame_log)
-            run.watch.detach()
-            report["frames_redacted"] = redact_frames(frames_path, run.address)
-            report["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            try:
+                with contextlib.suppress(Exception):
+                    await _carry_on(asyncio.to_thread(_flush_frame_log), run)
+            finally:
+                run.watch.detach()
+                report["frames_redacted"] = redact_frames(frames_path, run.address)
+                report["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namespace, out_dir: Path,
                      stamp: str, policy: Policy, lib: dict[str, Any] | None = None) -> dict[str, Any]:
     """Test one device: acquire it, connect (with retries), capture its start state, run its plan's steps,
     and in every case restore and check it, stop, flush and redact. Returns its summary record; a Ctrl-C
-    ends it with ``result: "interrupted"`` after the restore."""
+    marks it ``interrupted`` (``result: "interrupted"`` when it landed before the plan's end) after the
+    restore, and a second one abandons the restore (``restore: abandoned``)."""
     from govee_ble_local import GoveeBleAuthError, create_device
     from govee_ble_local.scenes import load_scenes
 
@@ -667,8 +764,9 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     report: dict[str, Any] = {
         "tool_version": TOOL_VERSION, "library_version": (lib or {}).get("version"), "library": lib,
         "python": sys.version.split()[0], "platform": platform.platform(),
-        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "session": {"route": policy.route, "ask": policy.ask,
-                                                                     "read_only": policy.read_only},
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "session": {"route": policy.route, "ask": policy.ask, "read_only": policy.read_only,
+                    "writes_off": policy.writes_off},
         "window": policy.window.as_dict(), "tier": target.tier, "kind": target.kind, "steps": [],
     }
     rec: dict[str, Any] = {"ref": target.ref, "sku": sku, "tier": target.tier, "kind": target.kind,
@@ -682,10 +780,12 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         text = json.dumps(report, indent=1, default=json_default) + "\n"
         write_text_atomic(report_path, mask_text(text, address, names, secrets))
 
-    def done(result: str) -> dict[str, Any]:
+    def done(result: str, interrupted: bool = False) -> dict[str, Any]:
         report["result"] = result
+        report["interrupted"] = interrupted
         save()
         rec["result"] = mask_text(result, address, names, secrets)
+        rec["interrupted"] = interrupted
         rec["steps"] = [{"step": s["step"], "kind": s.get("kind"), "verdict": s.get("verdict"),
                          "basis": s.get("basis"), "reason": s.get("reason")} for s in report["steps"]]
         rec["counts"] = counts(report["steps"])
@@ -700,8 +800,11 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     try:
         if not await _survey.acquire(target, policy.retries):
             return done("not reached: not heard again")
-    except asyncio.CancelledError:
-        return done("interrupted")
+    except asyncio.CancelledError:   # the first Ctrl-C (a device's run is where the run is interruptible)
+        task = asyncio.current_task()
+        if task is not None:
+            task.uncancel()
+        return done("interrupted", interrupted=True)
     kwargs: dict[str, Any] = {"idle_disconnect": 0, "frame_log": str(frames_path)}
     if target.tier == "modelled":
         kwargs["allow_modelled"] = True
@@ -763,7 +866,8 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         result = "completed"
     except asyncio.CancelledError:
         result = "interrupted"
-        print("\nInterrupted: restoring this device (a second Ctrl-C abandons the restore) ...")
+        if _absorb(run):
+            print("\nInterrupted: restoring this device (a second Ctrl-C abandons the restore) ...")
     except GoveeBleAuthError as err:
         result = f"auth failed: {describe_error(err, address, names)}"
     except Exception as err:
@@ -774,12 +878,15 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     finally:
         if run.warnings:
             report["warnings"] = sorted(set(run.warnings))
-        with contextlib.suppress(Exception):
-            await _finish(report, run, start, initial, frames_path)
+        try:
+            with contextlib.suppress(Exception):
+                await _finish(report, run, start, initial, frames_path)
+        except asyncio.CancelledError:   # the second Ctrl-C: _finish recorded the restore as abandoned
+            run.abandon = run.interrupted = True
         watch.detach()
     report["result"] = result
     _print_steps(report)
-    return done(result)
+    return done(result, interrupted=run.interrupted)
 
 
 def _print_steps(report: dict[str, Any]) -> None:
@@ -883,28 +990,36 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     order = sorted(chosen, key=lambda h: (KIND_ORDER.get(h.kind or "light", 0),
                                           -(h.rssi if h.rssi is not None else -999)))
     visible = [h for h in order if h.kind != "plug" or h.address.upper() in policy.toggle]
-    if visible and window.allows_writes() and not policy.read_only and not args.yes:
-        if not policy.prompts:
+    if visible and not policy.read_only and not args.yes:
+        if not window.allows_writes():
+            # The start confirmation is the run's: a run started before the window opens without --yes
+            # writes nothing visible all the way through, even once the window opens.
+            policy.writes_off = f"started outside {window.label()} without --yes: read steps only this run"
+            print(f"{len(visible)} device(s) would change visibly, but the run started outside "
+                  f"{window.label()} without --yes: read steps only, for the whole run.")
+        elif not policy.prompts:
             summary.save()
             print(f"{len(visible)} device(s) would change visibly: a run without prompts needs --yes.")
             return EXIT_REFUSED
-        reply = await _ask(f"{len(visible)} device(s) will change visibly (each is restored after); start?",
-                           True)
-        if reply != "yes":
-            summary.save()
-            print("Not started.")
-            return EXIT_REFUSED
+        else:
+            reply = await _ask(f"{len(visible)} device(s) will change visibly (each is restored after); "
+                               "start?", True)
+            if reply != "yes":
+                summary.save()
+                print("Not started.")
+                return EXIT_REFUSED
+    summary.data["options"]["writes_off"] = policy.writes_off
     summary.save()
     interrupted = False
     for n, target in enumerate(order, 1):
         if interrupted:
             summary.add_device(_not_run(target))
             continue
-        if not window.allows_writes() and not policy.read_only:
+        if not window.allows_writes() and not policy.read_only and not policy.writes_off:
             print(f"\n({window.banner()})")
         rec = await run_device(target, n, args, out_dir, stamp, policy, lib)
         summary.add_device(rec)
-        interrupted = rec["result"] == "interrupted"
+        interrupted = bool(rec.get("interrupted"))
     summary.save()
     print("\nSummary")
     print(console_table(summary.data, summary.path))
@@ -975,7 +1090,7 @@ async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Wi
     print("\nPlease attach the report and the frame capture (and the summary) to the GitHub issue "
           f"(addresses, serial and Wi-Fi MAC are masked):\n  {out_dir / str(rec['report'])}\n"
           f"  {out_dir / str(rec['frames'])}")
-    if rec["result"] == "interrupted":
+    if rec.get("interrupted"):
         return EXIT_INTERRUPTED
     # One device, as the tool always did: 0 once the plan completed (its verdicts are in the report and the
     # summary), 1 when it could not (``--all`` fails on a failed step too).

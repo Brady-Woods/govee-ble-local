@@ -310,15 +310,24 @@ model, from which the shipped readers are generated).
   - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
     `exact`, `close` (what can't be restored exactly is listed, such as a scene re-activated by code), `partial`,
-    `failed`, `unverified` or `not_needed`.
+    `failed`, `unverified` or `not_needed`. One Ctrl-C restores the device wherever it lands: in a step (also
+    between a command's frame and its ack, so the device counts as written to before the send), during the
+    restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
+    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`). The restore polls
+    first, since a write cut short applies nothing to the library's state.
   - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
     (what it powers is asked and never stored) and given a secret (`--secrets-file`, mode 0600, or a hidden
-    prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read).
+    prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
+    plug's power write sets every outlet (`33 01 FF / F0`, the H5089's `33 02`), so it toggles only when the
+    first `aa 01` read finds its outlets all on or all off (all off where the row doesn't say which relay bits
+    are outlets, listed as `2+ outlets`); its restore is checked outlet by outlet.
   - **Daytime guard** (`guard.py`): visible writes only from 07:00 to 22:00 local time (`--day-start`,
     `--day-end`, `--force-hours`, `--read-only`); listing and read steps run at any hour, and a restore is
-    never gated.
+    never gated. `--all`'s start confirmation (or `--yes`) is the whole run's: a run started outside the window
+    without `--yes` stays read-only, even once the window opens.
   - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
-    verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`) beside each device's
+    verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`, where a write step
+    nothing verified, a skipped one or a Ctrl-C keeps a device from `pass`) beside each device's
     report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug secrets are scrubbed
     from every file. `--library checkout` / `installed` and `--expect-version` pick and pin the library under test;
     `installed` refuses a source tree or an editable install. `TOOL_VERSION` is 3.

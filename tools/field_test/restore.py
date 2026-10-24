@@ -1,11 +1,13 @@
 """Snapshot the device's start state, put it back at the end, and check how close the result is.
 
 The start state is held in memory only: ``Device.snapshot()`` after the first poll, which fields that poll
-really read back (:func:`.readback.carried`), the advertised on/off and, where nothing else tells it, the
-tester's answer. :func:`restore_start` puts back power, brightness, colour (a scene, per-bar Kelvin,
-whole-device Kelvin, per-segment colours and levels, or a whole-device RGB) and zone power, each action on
-its own so one error doesn't skip the rest; :func:`check_restore` polls once more and compares what that
-poll reads back with the start.
+really read back (:func:`.readback.carried`), a plug's relay bits, the advertised on/off and, where nothing
+else tells it, the tester's answer. :func:`restore_start` polls once (a write cut short by a Ctrl-C or an
+error applies nothing to the library's state, though its frame may have landed), then puts back power,
+brightness, colour (a scene, per-bar Kelvin, whole-device Kelvin, per-segment colours and levels, or a
+whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest;
+:func:`check_restore` polls once more and compares what that poll reads back with the start (a plug: its
+outlets' relay bits too).
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .readback import FIELDS, FrameWatch, carried
+from .readback import FIELDS, FrameWatch, carried, outlet_mask, relay_bits
 
 SCENE_NOTE = ("scene: re-activated by code; its animation restarts, and a DIY or uploaded effect shows "
               "whatever the device now holds for that code")
@@ -33,6 +35,7 @@ class StartState:
     answered_on: bool | None = None         # the tester's answer, where nothing else tells it
     active_scene: str | None = None
     segment_count: int = 0
+    relay_bits: int | None = None           # a plug's aa 01 relay byte (one bit per outlet), if read
 
     @property
     def is_on(self) -> bool | None:
@@ -53,7 +56,8 @@ class StartState:
                 "scene_code": st.scene_code if "scene_code" in self.read else None,
                 "active_scene": self.active_scene, "segment_count": self.segment_count,
                 "zone_power": dict(st.zone_power) if "zone_power" in self.read else None,
-                "gradual": st.gradual if "gradual" in self.read else None}
+                "gradual": st.gradual if "gradual" in self.read else None,
+                "relay_bits": f"{self.relay_bits:08b}" if self.relay_bits is not None else None}
 
 
 async def capture_start(dev: Any, adv: Any, frames: list[Any], *, kind: str, ask: Ask | None = None,
@@ -78,7 +82,8 @@ async def capture_start(dev: Any, adv: Any, frames: list[Any], *, kind: str, ask
     take = getattr(dev, "snapshot", None)
     state = take() if callable(take) else copy.copy(polled)
     count = int(getattr(dev, "segment_count", 0) or 0)
-    return StartState(state, read, kind, advertised, answered, scene, count)
+    relay = relay_bits(frames) if kind == "plug" else None
+    return StartState(state, read, kind, advertised, answered, scene, count, relay)
 
 
 @dataclasses.dataclass
@@ -93,9 +98,19 @@ def _caps(dev: Any) -> set[str]:
 
 
 async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outcome:
-    """Put the start state back as far as the API allows; never raises (each action on its own)."""
+    """Put the start state back as far as the API allows; never raises an error (each action on its own).
+
+    It polls first: a write that was cut short (a Ctrl-C, a timeout) applied nothing to ``dev.state``
+    though its frame may have reached the device, so the comparisons below (relay, gradual, zones, segment
+    levels) are made against what the device reads back. Where that poll fails, those are sent anyway."""
     out = Outcome()
     caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
+    fresh = getattr(p, "readback", "none") != "none" and start.kind != "card"
+    if fresh:
+        try:
+            await dev.update()
+        except Exception:
+            fresh = False
 
     async def do(label: str, fn: Callable[..., Awaitable[None]], *args: Any) -> None:
         try:
@@ -108,15 +123,15 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
     if start.kind == "plug":
         if started_on is None:
             out.unrestorable.append("relay: start state unknown")
-        elif dev.state.is_on is not started_on:
+        elif not fresh or dev.state.is_on is not started_on:
             await do(f"relay {'on' if started_on else 'off'}", dev.set_power, started_on)
         return out
-    colour = _colour_actions(dev, start, out)
+    colour = _colour_actions(dev, start, out, fresh)
     restore_brightness = "brightness" in caps and "brightness" in read and bool(st.brightness)
     if "brightness" in caps and not restore_brightness:
         out.unrestorable.append("brightness: unknown at the start (not read back)")
     if getattr(p, "gradual", False) and "gradual" in read and st.gradual is not None \
-            and dev.state.gradual != st.gradual:
+            and (not fresh or dev.state.gradual != st.gradual):
         await do("gradual", dev.set_gradual, bool(st.gradual))
     if started_on is None:
         out.unrestorable.append("power: unknown at the start")
@@ -129,7 +144,7 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
     if started_on and dev.zones and "zone_power" in read:
         for zone in dev.zones:
             want = st.zone_power.get(zone.power_index)
-            if want is not None and dev.state.zone_power.get(zone.power_index) != want:
+            if want is not None and (not fresh or dev.state.zone_power.get(zone.power_index) != want):
                 await do(f"zone {zone.name} {'on' if want else 'off'}", dev.set_zone_power, zone.name, want)
     if started_on is False:
         await do("power off", dev.set_power, False)
@@ -139,7 +154,7 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
 Action = tuple[str, Callable[..., Awaitable[None]], tuple[Any, ...]]
 
 
-def _colour_actions(dev: Any, start: StartState, out: Outcome) -> list[Action]:
+def _colour_actions(dev: Any, start: StartState, out: Outcome, fresh: bool) -> list[Action]:
     """The colour to put back, by precedence: scene, per-bar Kelvin, whole Kelvin, mixed segments, RGB."""
     caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
     if not caps & {"rgb", "color_temp", "scenes"}:
@@ -171,16 +186,17 @@ def _colour_actions(dev: Any, start: StartState, out: Outcome) -> list[Action]:
         out.unrestorable.append("colour: not read back at the start (or a mode the library doesn't know: "
                                 "music, DIY), so it is left as the plan's last colour")
         return []
-    if "segments" in read and "segments" in caps:
-        actions += _segment_levels(dev, start)
+    if "segments" in read:
+        actions += _segment_levels(dev, start, fresh)
     return actions
 
 
-def _segment_levels(dev: Any, start: StartState) -> list[Action]:
-    """Per-segment brightness back where it was read and the run changed it."""
-    if not getattr(dev, "supports_segment_brightness", True):
+def _segment_levels(dev: Any, start: StartState, fresh: bool) -> list[Action]:
+    """Per-segment brightness back where it was read and the run changed it (every level, when the
+    restore's first poll failed)."""
+    if "segments" not in _caps(dev) or not getattr(dev, "supports_segment_brightness", True):
         return []
-    now = {s.index: s.brightness for s in (dev.state.segments or [])}
+    now = {s.index: s.brightness for s in (dev.state.segments or [])} if fresh else {}
     levels: dict[int, list[int]] = {}
     for seg in start.state.segments or []:
         if seg.brightness is not None and now.get(seg.index) != seg.brightness:
@@ -258,6 +274,14 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
         want, got = getattr(start.state, field, None), getattr(post, field, None)
         if _differs(field, want, got, raw):
             check.diffs[field] = {"start": _show(field, want), "end": _show(field, got)}
+    end_bits = relay_bits(watch.window(mark)) if watch is not None else None
+    if start.kind == "plug" and start.relay_bits is not None and end_bits is not None:
+        # is_on is "any outlet on": a 2- or 3-outlet plug's outlets are compared bit by bit
+        compared += 1
+        mask = outlet_mask(profile) or 0xFF
+        if (start.relay_bits ^ end_bits) & mask:
+            check.diffs["relay_bits"] = {"start": f"{start.relay_bits & mask:08b}",
+                                         "end": f"{end_bits & mask:08b}"}
     check.basis = "readback" if compared else None
     if check.errors:
         check.result = "failed"

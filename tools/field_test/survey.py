@@ -56,7 +56,7 @@ class Heard:
     reason: str | None = None
     kind: str | None = None         # light / plug / card (generic.device_kind), None when unsupported
     plan: str | None = None         # "hand" (a plans/<sku>.py), "generic", or None (not tested)
-    outlets: str | None = None      # plugs only: popcount of the relay mask, "?" when any bit counts
+    outlets: str | None = None      # plugs only: popcount of the relay mask; "2+" / "?" when any bit counts
     seen_at: float = 0.0            # time.monotonic() of the latest advertisement
 
     @property
@@ -118,11 +118,15 @@ def device_ref(address: str) -> str:
 
 
 def outlets(profile: DeviceProfile | None) -> str | None:
-    """A plug's outlet count from its read-back relay mask (``?`` where any bit counts); None for a light."""
+    """A plug's outlet count from its read-back relay mask; where any bit counts, ``2+`` for a row whose
+    power write sets every outlet (``relay_power`` ``all_outlets`` / ``total_switch``), else ``?``. None for
+    a light."""
     if profile is None or not getattr(profile, "relay", False):
         return None
     mask = int(getattr(profile, "relay_on_mask", 0xFF))
-    return "?" if mask == 0xFF else str(bin(mask).count("1"))
+    if mask != 0xFF:
+        return str(bin(mask).count("1"))
+    return "?" if getattr(profile, "relay_power", "outlet0") == "outlet0" else "2+"
 
 
 def classify(sku: str | None, pact: tuple[int, int] | None) -> tuple[str, str | None, Any]:

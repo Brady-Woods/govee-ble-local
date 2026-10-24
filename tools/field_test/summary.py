@@ -38,6 +38,20 @@ def device_completed(dev: dict[str, Any]) -> bool:
     return dev.get("result") == "completed"
 
 
+def unverified_writes(dev: dict[str, Any]) -> int:
+    """The write steps nothing verified: no read-back carried the field, and no tester's answer
+    (``--no-prompt``, or ``s``)."""
+    return sum(1 for s in dev.get("steps", [])
+               if s.get("kind") == "write" and s.get("verdict") == "unverifiable")
+
+
+def device_passed(dev: dict[str, Any]) -> bool:
+    """Completed, nothing failed, every write step ran and was verified (by a read-back or the tester), and no
+    Ctrl-C reached it (one during its restore lets the restore finish, but the tester stopped the run)."""
+    return (device_completed(dev) and not device_failed(dev) and not dev.get("counts", {}).get("skipped", 0)
+            and not unverified_writes(dev) and not dev.get("interrupted"))
+
+
 def totals(data: dict[str, Any]) -> dict[str, int]:
     devices = data.get("devices", [])
     not_run = [d for d in devices if str(d.get("result", "")).startswith("not run")]
@@ -45,22 +59,21 @@ def totals(data: dict[str, Any]) -> dict[str, int]:
     failed = [d for d in tested if device_failed(d)]
     reached = [d for d in tested if device_completed(d)
                or str(d.get("result", "")).startswith(("aborted", "interrupted"))]
-    passed = [d for d in tested if device_completed(d) and not device_failed(d)]
+    passed = [d for d in tested if device_passed(d)]
     tested_refs = {d.get("ref") for d in devices}
     return {"heard": len(data.get("heard", [])), "tested": len(tested), "passed": len(passed),
-            "failed": len(failed), "not_reached": len(tested) - len(reached), "not_run": len(not_run),
+            "failed": len(failed), "unverified": len([d for d in tested if unverified_writes(d)]),
+            "not_reached": len(tested) - len(reached), "not_run": len(not_run),
             "listed_only": len([h for h in data.get("heard", []) if h.get("ref") not in tested_refs])}
 
 
 def gate_verdict(data: dict[str, Any]) -> str:
     """``fail`` (a step failed, a device aborted, a restore partial or failed), ``incomplete`` (a device not
-    reached or not run, a write skipped, nothing tested), else ``pass``."""
+    reached or not run, a write skipped or unverified, a Ctrl-C, nothing tested), else ``pass``."""
     devices = data.get("devices", [])
     if any(device_failed(d) for d in devices):
         return "fail"
-    if not devices or any(not device_completed(d) for d in devices):
-        return "incomplete"
-    if any(d.get("counts", {}).get("skipped", 0) for d in devices):
+    if not devices or not all(device_passed(d) for d in devices):
         return "incomplete"
     return "pass"
 

@@ -6,7 +6,8 @@ field the row never reads back. So each field is judged only where the profile r
 carries it came back in that poll, which :class:`FrameWatch` sees on the library's frame logger.
 
 :class:`FrameWatch` keeps, per frame, only its time, direction and first two bytes; for an ``33 xx`` ack
-its status byte and for an ``aa 05`` reply its sub-mode. A ``0xAC`` status burst is joined in memory to
+its status byte, for an ``aa 05`` reply its sub-mode and for an ``aa 01`` reply its first byte (a plug's
+relay bits, one per outlet). A ``0xAC`` status burst is joined in memory to
 read its TLV tags and the 0x05 TLV's sub-mode, then dropped: no payload is kept (the library already
 blanks the ``33 b2`` / ``aa b1`` secret frames at its capture point).
 """
@@ -66,7 +67,7 @@ class Frame:
     t: float
     dir: str              # "tx" / "rx"
     op: str               # first two bytes, hex ("3305", "aa05"); "ac" for a whole status burst
-    sub: int | None = None             # 33 xx ack: status; aa 05 reply: sub-mode; burst: 0x05 sub-mode
+    sub: int | None = None             # 33 xx ack: status; aa 05: sub-mode; aa 01: relay bits; burst: 05 sub
     tags: frozenset[int] | None = None  # status burst: its TLV tags (None: could not be joined)
 
 
@@ -120,7 +121,7 @@ class FrameWatch(logging.Handler):
             self._take_burst(now, plain)
             return
         sub: int | None = None
-        if len(plain) > 2 and direction == "rx" and (plain[0] == 0x33 or op == "aa05"):
+        if len(plain) > 2 and direction == "rx" and (plain[0] == 0x33 or op in ("aa05", "aa01")):
             sub = plain[2]
         self.frames.append(Frame(now, direction, op, sub))
 
@@ -169,6 +170,23 @@ class FrameWatch(logging.Handler):
 
     def sent(self, op: str, since: int = 0, until: int | None = None) -> bool:
         return any(f.op == op and f.dir == "tx" for f in self.window(since, until))
+
+
+def relay_bits(frames: Iterable[Frame]) -> int | None:
+    """The relay byte of the last ``aa 01`` reply among ``frames`` (one bit per outlet), or None."""
+    bits = [f.sub for f in frames if f.dir == "rx" and f.op == "aa01" and f.sub is not None]
+    return bits[-1] if bits else None
+
+
+def outlet_mask(profile: Any) -> int | None:
+    """The relay bits a plug's power write sets: bit 0 for the outlet-0 frame (``33 01 11 / 10``; also the
+    library's frame for every plug before ``relay_power``), the outlets' bits for the every-outlet frames
+    (``33 01 FF / F0``, the ``33 02`` total switch), or None where the row doesn't say which bits are
+    outlets (``relay_on_mask`` 0xFF: any bit)."""
+    if getattr(profile, "relay_power", "outlet0") == "outlet0":
+        return 0x01
+    mask = int(getattr(profile, "relay_on_mask", 0xFF))
+    return None if mask == 0xFF else mask
 
 
 def _join_burst(chunks: list[bytes]) -> bytes | None:

@@ -18,7 +18,10 @@ list and the pact are known. Each step is one command, then a read-back where th
    that waits for the pact): pass when ``GoveeBleNotSupported`` is raised and nothing was sent.
 
 A plug gets only read steps unless the tester allowed its relay to toggle (``--toggle-plugs`` and the
-run-time confirmation), and then one toggle and back. Fields added to ``DeviceProfile`` after 1.6 are read
+run-time confirmation), and then one toggle and back. A 2- or 3-outlet plug's power write sets every outlet
+at once (``33 01 FF / F0``, the ``33 02`` total switch), so it toggles only when the first poll read every
+outlet in the same state (its aa 01 relay bits); from a mixed start the toggle is skipped, since nothing
+could put the outlets back one by one. Fields added to ``DeviceProfile`` after 1.6 are read
 with ``getattr(..., default)``, so the tool loads against an older wheel.
 """
 from __future__ import annotations
@@ -29,6 +32,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from .plan import DEFAULT_SNAPSHOT_KEYS, RGB, DeviceKind, PlanContext, SkuPlan, Step
+from .readback import outlet_mask
 
 if TYPE_CHECKING:
     from govee_ble_local import Device
@@ -156,6 +160,8 @@ def _plug_steps(ctx: PlanContext) -> list[Step]:
     skip = "" if ctx.has_secret else "no secret"
     if start_on is None and not skip:
         skip = "relay start state unknown: it couldn't be restored"
+    if not skip:
+        skip = _outlets_skip(dev.profile, ctx.start.relay_bits if ctx.start is not None else None)
     first = not start_on if start_on is not None else False
     steps += [
         Step("relay_toggle", partial(dev.set_power, first), None,
@@ -165,6 +171,23 @@ def _plug_steps(ctx: PlanContext) -> list[Step]:
              f"Is the plug back {'ON' if not first else 'OFF'}?", fields=("is_on",), skip=skip),
     ]
     return steps
+
+
+def _outlets_skip(profile: Any, bits: int | None) -> str:
+    """Why a plug whose power write sets every outlet can't toggle from this start (``""``: it can): its
+    outlets must start all off, or all on where the row says which bits are outlets."""
+    mask = outlet_mask(profile)
+    if mask == 0x01:
+        return ""
+    why = "its power write sets every outlet at once, so the start couldn't be put back"
+    if bits is None:
+        return f"outlets not read at the start: {why}"
+    if mask is None:
+        return "" if bits == 0 else (f"relay bits {bits:08b} at the start and the row doesn't say which are "
+                                     f"outlets: {why}")
+    if (bits & mask) in (0, mask):
+        return ""
+    return f"outlets start mixed (relay bits {bits & mask:0{mask.bit_length()}b}): {why}"
 
 
 def _card_steps(ctx: PlanContext) -> list[Step]:
