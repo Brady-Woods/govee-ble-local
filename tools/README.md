@@ -15,16 +15,20 @@ generated, not committed. Re-run it after a checkout or pull that changes `spec/
 | `btsnoop_mtu_scan.py <log>` | Decryption-free scan: ATT Exchange-MTU values + write-length histogram (`--protype` adds a first-byte histogram of 20-byte writes). Works on encrypted links (ATT headers are plaintext). Also holds the btsnoop record reader `decrypt_btsnoop.py` reuses (H4 / datalink 1002 only, same corrupt-record checks). |
 | `analyze_frame_log.py <frames.jsonl>` | Parse a captured plaintext frame log (from `GOVEE_FRAME_LOG` / `--capture`) against the generated Kaitai reader; reports a coverage histogram and flags frames the `.ksy` doesn't model (non-zero exit on a hard issue). A missing file exits 2; malformed lines are skipped, reported as `path:lineno: reason` on stderr, and counted in the summary. |
 | `h60a6_live_check.py` | Comprehensive live H60A6 command check over ONE persistent connection: power / brightness / RGB / kelvin / zones / all segments / scene dialects, each with ACK + status read-back. `--capture PATH` logs all wire frames. `GOVEE_H60A6_ADDRESS=…` or `--address`. Its `find_device` (address, else best-RSSI H60A6 scan) is shared by the two probes below. |
-| `field_test/` | Guided hardware test for a tester who has the device (runs from a checkout once its `_generated/` classes exist, else against the installed wheel): `python tools/field_test`. Scans (records every Govee name heard), detects the SKU and runs that SKU's plan over one connection: a read-back and a y/n/skip question per step, restore of the original state, and a JSON report + frame capture to send back. Snapshots always redact the serial number, device id, Wi-Fi MAC and BLE MAC; the report masks Bluetooth addresses, Wi-Fi MACs and the MAC digits of advertised names (`ihoment_H6188_xxxx`) in the device and advertisement fields and in error text; the frame capture drops every `wire` field and zeroes the `aa 07` and `ac` reply payloads (a status burst's first chunk keeps its 7-byte header, so the analyzer still checks its packet count). `--sku` picks a plan, `--address`, `--no-prompt`, `--out DIR`, `--settle S`. Exit 2 = no device/plan found. Plans: H6047, H6004, H6062, H6061, H6188. See [Adding a field-test plan](#adding-a-field-test-plan). |
+| `field_test/` | Guided hardware test for a tester who has the device, and the release-gate pass over every device in range (runs from a checkout once its `_generated/` classes exist, else against the installed wheel; `--library checkout` or `--library installed` picks one, `--expect-version X.Y.Z` stops on a mismatch): `python tools/field_test`. One device: scans (records every Govee name heard), detects the SKU and runs its plan over one connection: the SKU's hand-written plan if it has one, else the generic plan built from its profile (`--generic` forces it). Each step is one command, then a read-back, judged pass / fail / unverifiable from the fields the row really reads back, then an optional y/n/skip question (`--ask all`, `unverifiable` or `none`; `--no-prompt`); the start state is restored at the end, also after an error or Ctrl-C, and checked with one more poll. `--list` scans only (every Govee device heard with its ref, SKU, tier, pact, kind and plan, then the plugs and their outlets; no connection, any hour); `--all` tests every supported device one at a time (`--allow-modelled` adds the opt-in rows, `--only` / `--skip` narrow it). Plugs get read-only steps unless allow-listed with `--toggle-plugs REF[,REF]` and confirmed at run time (`--secrets-file` or a hidden prompt for the secret). Visible writes run only from 07:00 to 22:00 local time (`--day-start` / `--day-end`, `--force-hours`; `--read-only` for read steps only), and a device whose every connect writes visibly (a bulb's `33 25` effect stop, read from its profile's connect writes) is not connected to outside the window or with `--read-only`. Writes a masked summary, and per device a JSON report and a frame capture: snapshots always redact the serial number, device id, Wi-Fi MAC and BLE MAC; the files mask Bluetooth addresses, Wi-Fi MACs, the MAC digits of advertised names (`ihoment_H6188_xxxx`) and plug secrets; a device is named by a keyed 6-digit ref; the frame capture drops every `wire` field and zeroes the `aa 07` and `ac` reply payloads (a status burst's first chunk keeps its 7-byte header, so the analyzer still checks its packet count). `--sku`, `--address`, `--out DIR`, `--settle S`, `--scan-seconds S`, `--retries N` (connect and discovery attempts: 3 with `--all`, 1 for one device), `--unattended` (with no terminal on stdin, one device or `--all`, visible writes are allowed; recorded). Exit codes: see [the table](#exit-codes). Hand-written plans: H6047, H6004, H6062, H6061, H6188. See [Adding a field-test plan](#adding-a-field-test-plan) and [Release-gate pass](#release-gate-pass-all-devices). |
 | `power_semantics_probe.py <ADDRESS> <SKU>` | Hardware experiment: how the global power switch (`33 01`) interacts with zone power (`33 30`/`33 36`) and whether colour/brightness wake the device. Always restores the starting power/zone state, even on failure, with the same per-profile zone frames as the experiment (`33 36` for the bar light, `33 30` per zone otherwise); prints `RESTORE FAILED` if any restore frame isn't acked. |
 | `h60a6_cct_choreography.py` | Live H60A6 colour-temperature choreography over one persistent connection; prints an OBSERVE line per step. `--address`/`GOVEE_H60A6_ADDRESS`, `--capture PATH`. |
 | `h60a6_segment_map_probe.py` | Live H60A6 probe that maps segment indices to physical ring/top-panel positions. `--address`/`GOVEE_H60A6_ADDRESS`, `--capture PATH`. |
 
 ## Adding a field-test plan
 
-The runner (`field_test/runner.py`) knows nothing about any SKU. A device's plan is one module,
-`field_test/plans/<sku>.py`, which is imported automatically (`plans/__init__.py` loads every module
-in the directory), so a new device never edits the runner or another plan:
+The runner (`field_test/runner.py`) knows nothing about any SKU. Every supported SKU already gets the
+generic plan (`field_test/generic.py`), built from its profile and Device API: power, brightness, RGB,
+colour temperature at the range's ends and middle, an RGB pick of a Kelvin tint, segments, zones, a scene,
+the gradual flag, and the refusals the library must make before any I/O. A hand-written plan is for what the
+generic one can't know (a segment count to compare by eye, per-bar choreography, a device's quirks); it wins
+for its SKU. It is one module, `field_test/plans/<sku>.py`, imported automatically (`plans/__init__.py` loads
+every module in the directory), so a new device never edits the runner or another plan:
 
 ```python
 from ..plan import PlanContext, SkuPlan, Step, register_plan
@@ -40,14 +44,193 @@ register_plan(SkuPlan(sku="H6xxx", title="H6xxx whatever", build_steps=build_ste
 
 `Step(name, action, expect, question, free_text=False, note="")`: `action` is a zero-argument
 coroutine function, `expect` checks the read-back snapshot dict (or is `None`), `question` is asked
-after the step. `field_test/plan.py` has step factories for the common sequences: `power_steps`,
-`brightness_steps`, `rgb_steps`, `tint_pick_step`, `scene_steps`, and `state_is(key, value)` for an
-`expect`. A step built in a loop binds its loop values with `functools.partial` (or `state_is`), not
-`lambda x=x:`. Optional `SkuPlan` fields: `snapshot_keys` (state attributes to record; the serial
-number, device id, Wi-Fi MAC and BLE MAC are always redacted), `restore(dev, initial_snapshot)`
-(default: brightness, then scene / colour temperature / RGB, then power), `extra_name_hints`
-(advertised-name substrings that select the plan; the SKU is already matched from the name and the
-SKU's own digits). Add a test next to `tests/test_field_test.py`; run it offline with a fake device.
+after the step. The keyword fields serve the release-gate verdicts and default to a hand plan's old
+behaviour: `kind` (`"write"`, the default, is gated by the daytime window and `--read-only`; `"read"`
+runs at any hour, so a step that sends nothing, such as the H6047's `segment_readback_count`, is `"read"`),
+`fields` (the state fields judged against what the library intended, only where the
+row reads them back and the step's poll set them: `readback.carried`; a field intended as it already was
+proves nothing by matching), `refusal` (the exception the action must raise with nothing
+sent), `touched` (a segment step's indices), `skip` and `check`. A hand-written step's verdict comes from
+its `expect` (`True` pass, `False` fail, `None` unverifiable) and the tester's answer ("no" fails).
+`field_test/plan.py` has step factories for the common sequences: `power_steps`, `brightness_steps`,
+`rgb_steps`, `tint_pick_step`, `scene_steps`, and `state_is(key, value)` for an `expect`. A step built in
+a loop binds its loop values with `functools.partial` (or `state_is`), not `lambda x=x:`. Optional
+`SkuPlan` fields: `snapshot_keys` (state attributes to record; the serial number, device id, Wi-Fi MAC
+and BLE MAC are always redacted), `restore(dev, initial_snapshot)` (default: brightness, then scene /
+colour temperature / RGB, then power; the snapshot it gets carries the start's `active_scene`, and it
+returns what it can't put back, a list of unrestorable entries, or None; a scene start goes back with
+`plan.restore_scene`: its segment colours, then the scene by its catalog name, never by a bare code; it
+runs only once a write step was sent; under `--all` one poll
+checks it and, where that check isn't exact, the generic restore from the captured start puts back only the
+fields it found off; the generic restore check polls after them), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
+already matched from the name and the SKU's own digits). Test it offline next to
+`tests/test_field_test.py` with a fake device, within the suite's test budget. Under pytest
+(`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real Bluetooth scan
+and connect (bleak's own `BleakScanner`, and every library connect while `establish_connection` is
+still bleak-retry-connector's), so a test reaches only a fake, whatever its tree's conftest sets. Outside
+pytest, a run with `GOVEE_FIELD_TEST_NO_SCAN` exported is refused before it starts (exit 3: unset it for a
+real run).
+
+## Release-gate pass (all devices)
+
+Before every release, the user's gate is a full live pass over every Govee device in range of any of
+their systems, on the built wheel, by day, every device restored to its start state, started by the user.
+This tool is the Mac route; the bazzite bench and Home Assistant's proxies are covered by the Home
+Assistant route (through the integration on the lab instance: bazzite's bt-proxy is one of its scanners;
+host-side bleak on bazzite is off-limits, the adapter wedges). Run the two routes one after the other,
+never at the same time.
+
+1. Build and install the release candidate in a clean venv: `python -m build`, then
+   `python3.13 -m venv /tmp/gate && /tmp/gate/bin/pip install dist/govee_ble_local-X.Y.Z-py3-none-any.whl`.
+2. From the Desktop app's Terminal panel (CLI bleak is killed with SIGABRT on this Mac outside it), after
+   07:00: `/tmp/gate/bin/python tools/field_test --list --library installed`. Note the plugs' refs and
+   what each powers.
+3. `/tmp/gate/bin/python tools/field_test --all --library installed --expect-version X.Y.Z
+   --toggle-plugs <ref>[,<ref>] --out gate-X.Y.Z` (add `--allow-modelled` to include the opt-in rows).
+   The tool lists every device, shows each allow-listed plug by its ref, its advertised name as the Govee
+   app and the plug's label show it (on the console only, never in a file; its MAC digits only when stdout
+   is a terminal, masked into a pipe or a `| tee` log, and never beside the address's vendor prefix) and its
+   signal, asks what it powers (the answer is never stored) and has you type that plug's ref to let it
+   toggle (anything else keeps it read-only), asks for its secret unless the secrets file (below) has it
+   (every other device whose row needs a secret, every plug among them,
+   takes it from that file only, and without one it can't pass, unless its connect sends the app's empty
+   `33 b2` check and that check is acked: H6071 / H6075, H6058 on 1.9.0), then asks once before the first
+   visible change. That answer (or
+   `--yes`) is the whole run's: a run started before the window opens without `--yes` stays read-only to
+   its end, even once the window opens. Each device then runs over its own connection, one at a time, and is restored before the next
+   starts. With `--ask unverifiable` (the `--all` default) the tester answers only where nothing was read
+   back.
+   The secrets file is `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file PATH` or
+   `$GOVEE_FIELD_TEST_SECRETS` point elsewhere; never put it in a checkout: `field-test-secrets*.json` is
+   git-ignored for that case): JSON `{"<ref or address>": "<16 hex digits>"}`, on each host that runs the
+   tool, owner-only. Make it with
+   `install -d -m 700 ~/.config/govee-ble-local && install -m 600 /dev/null ~/.config/govee-ble-local/field-test-secrets.json`,
+   then edit it. What is checked: on the open file itself (never through a symlink, and a FIFO is never
+   waited on), that it is a regular file and its mode gives group and others no permission at all
+   (`mode & 077` is 0: 0600 or 0400; 0640, 0604 or 0610 are refused: `chmod 600` it); and on macOS, by its
+   path once it is open (`/bin/ls -le`: no mode bit shows an ACL, so someone who can write to its folder
+   could swap the file in between), that it has no ACL entry (an ACL, such as an `everyone allow read` its
+   folder passes on, is in no mode bit: `chmod -N` removes it). On Linux a POSIX ACL entry shows in the
+   group bits, so the mode check covers it. Its owner and its folder's permissions are not checked. Anything else (a symlink, a folder, a FIFO, a
+   file that isn't JSON) is refused (exit 3; the message gives the path, and the mode or the ACL, never a
+   value), and no value is ever printed or written to a report. No file is no failure: a device that needs
+   a secret and is given none stays read-only and the gate is `incomplete`. The device refs are keyed by
+   `~/.cache/govee-ble-local/field-test-ref.key` (`$GOVEE_FIELD_TEST_REF_KEY` elsewhere), made 0600 in a
+   0700 folder on first use; the same checks refuse it before any scan (exit 3, the path and why): delete a
+   refused one to make a new one, since a key others could read gives refs that are no longer private
+   (every ref changes, so run `--list` again). A new one its folder passes an ACL entry on is deleted at
+   once, never left readable: remove that folder's inheritable entry (`chmod -N`) and run again.
+4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
+   capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
+   was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close
+   restore of such a write, a device not reached, a device skipped because its connect
+   writes visibly, a write skipped by the window, a write step nothing verified: no read-back and no
+   answer, as with `--no-prompt` or an `s`; a restore nothing verified, such as a card row's nobody
+   answered for; a device whose row needs a secret tested without one: every
+   plug, allow-listed or not, since its `33 b2` unlock is then never sent; an interrupted run). Only
+   `pass` clears the gate; the exit code says which ([Exit codes](#exit-codes)).
+
+Notes:
+
+- Ctrl-C once restores the current device, marks the rest "not run (interrupted)" and saves the summary
+  (exit 130), wherever it lands: in a step (even between a command's frame and its ack), during the
+  restore (which carries on) or at its question (left unanswered). A second Ctrl-C abandons that restore
+  (`restore: abandoned`), and the device is printed `NOT RESTORED` with what the run changed. SIGHUP (the
+  Terminal panel or tab closed, the app quit, an SSH session dropped) and SIGTERM do what the first Ctrl-C
+  does; after either, nothing more is asked, and after SIGHUP nothing more is printed. Once a first
+  interrupt is under way (a Ctrl-C, or one of them), either signal cancels nothing: the restore carries on,
+  and only a second Ctrl-C abandons it. A console that stops taking output (a closed tty, a broken pipe
+  through `| tee`) is silenced, never in the way of a restore, and the end of the input on a terminal (the
+  tab closed under a prompt, Ctrl-D) is no answer: at the start question or at "go on with the next
+  device?" it stops the run, the rest `not run (interrupted)` (exit 130).
+- A device's frame capture is written under a hidden name (`.<sku>-NN-frames-<time>.jsonl.raw`) and only
+  its redaction writes `<sku>-NN-frames-<time>.jsonl`, so a run killed outright (SIGKILL, a crash) leaves no
+  raw capture under the name you attach; the next start (any mode, same `--out`) redacts what it left.
+  Until then it is git-ignored (`*.jsonl.raw`), as is the pass's `--out gate-X.Y.Z` folder (`gate-*/`),
+  so a `git add -A` in the checkout stages neither.
+- A run with no terminal on stdin (cron, a detached session, stdin redirected), one device or `--all`,
+  sends no visible write unless `--unattended` is given; the summary and every report record it
+  (`options.unattended`, `options.writes_off`).
+- A 2- or 3-outlet plug (H5082, H5089, H5160, H5161) switches every outlet with one frame, so it toggles
+  only when the first read finds its outlets all on or all off (all off where the row doesn't say which
+  relay bits are outlets: `--list` shows `2+ outlets`); from a mixed start its toggle is skipped. Its
+  restore is checked outlet by outlet.
+- Expect "not reached: connect failed" on devices Home Assistant (or the Govee app) is holding: a Govee
+  light takes one central. The Home Assistant route covers those.
+- Read steps still make the library's connect writes that change nothing visible (the handshake, a plug's
+  unlock and time sync). A row whose every connect also makes a visible write, read from its profile's
+  connect writes (the `33 25` effect stop of the goodsType 342 bulbs H14A1, R14A1, H14C2 and R14C2, which
+  stops a running effect), is not connected to outside the window, in a run started there without `--yes`,
+  or with `--read-only`. `--list` and the summary mark it `skipped: its connect sends 33 25 (effect stop), a
+  visible change, outside the window` (or `on a read-only run`), and the gate is `incomplete`. Inside the
+  window it runs as any other device. That is checked at its turn and again right before every connect
+  attempt, since the re-scans and back-offs before one can carry the run past the window's end; once the
+  window closes on it while connected, the tool polls it no more (a link it dropped would be re-opened,
+  connect writes and all), so its remaining read steps are skipped, but its restore still runs. Nothing
+  else is sent outside the window.
+- A card row (one session per command, no read-back: H70B2, from 1.8) gets power off and on only: its
+  brightness is not exercised, since nothing reads its start level, so a run could never put it back. Its
+  power steps are read back from its next advertisement where that carries the on/off, and the tester is
+  asked at every step and at the restore, with `--ask unverifiable` too: a "no" fails it, and a "yes" on
+  the restore clears it (`close`, nothing left changed). With nobody to answer (`--no-prompt`) its restore
+  is `unverified`, which keeps the gate `incomplete`.
+- A step passes on a read-back only where the step's poll set the field in the library's state: a reply
+  the library dropped (a bad checksum) or rejected (a status stream the app's read fails on) proves
+  nothing, whatever frames arrived. A write step's field intended as it already was proves nothing by
+  matching, and an RGB read after a colour-temperature write proves nothing on a report that can't show
+  one (`rgb_kelvin_0d_nocct`, `rgb`): such a step is `unverifiable`, and the tester is asked. Segments are
+  judged (and a restore checked) only where the poll set them: a status burst's colour groups are merged
+  over the segments held, so one whose group no reply carried still holds a write's intent. A walk row (one
+  `aa a5` read per group of segments: H6047, H6097, H61A8) whose group reply is lost leaves that group's
+  segments out of the read-back: a touched segment missing is not read (the step `unverifiable`, which
+  `--ask unverifiable` asks about), never a failure, and a whole-device colour read through the segments
+  counts every segment held before the step or set by any poll of the run (a group lost in two polls
+  running too), not only the ones returned. A hand-written
+  plan's check reads the same state: a check that reads a field the poll didn't read back (the segments
+  where some are missing too, against the same expected segments) leaves the step `unverifiable` (the
+  report's `readback_unread`). A segment brightness step expects the whole groups the
+  row's strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped
+  when the first poll read no start for it.
+- A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
+  scene the catalog doesn't list is not re-activated, since the app sends no bare `33 05 04` for one, so
+  its colour is left as the run made it and not compared, while its segment levels, which are brightness,
+  are put back and checked; or the start colour, brightness or gradual flag
+  was never read back; or some segments: those the start's poll didn't read, a group reply lost or a
+  whole read that failed, whose levels and colours, but a Kelvin start's colour, nothing can put back:
+  `segments: [8, 9] were not read at the start ...`, a scene start's colour-mode memory included),
+  `partial` (fields differ, or a start field the run changed didn't read back after the restore: a lost or
+  rejected reply, a start segment no reply set, listed `not read back` in the `NOT RESTORED` line and as
+  the report's `restore_check.unread`), `failed`, `unverified` (nothing to compare), or `not_needed`. A scene start is
+  put back as the library activates one: its segment colours first, then the segment levels the run
+  changed, then the scene by its catalog name, with its upload where it needs one. The segment colours are
+  the colour-mode memory, which a scene leaves and `aa a5` reads (firmware-sourced: the H6047 image's 0xa5
+  handler returns the stored RGB whatever the mode), so the run's colour writes change them under a scene
+  too, and the check compares them; a row that can't write segment colours notes them unrestorable
+  (`segments: ...`). A hand-written plan's restore does the same (`plan.restore_scene`). When the run wrote something it can never put back (a start colour,
+  brightness or power never read: the summary's `restore.unrestorable_written`), a `close` restore leaves
+  the gate `incomplete` and an `unverified` one fails it.
+- Under `--all` a `partial` or `failed` restore is tried twice more (2 s, then 5 s, each after a fresh scan
+  and connect), each time for only the fields its check found off or didn't read back (the generic restore
+  from the captured start, a hand-written plan's too), so a retry repeats no write that landed; the whole
+  restore again only where that check's poll failed. A device still not back is printed as `NOT RESTORED: <ref> <sku> (<kind>): <what>`, plugs
+  first, again at the end, and the run asks whether to go on (with `--no-prompt` it stops: the rest are
+  `not run (stopped: <ref> was not restored)`). Under `--all` a hand-written plan's restore is checked
+  with one poll and, where that check isn't exact, followed by the generic one from the captured start for
+  the fields it found off or didn't read back (the H6062's segment levels, the H6061's mixed colours); after
+  an exact one nothing more is sent. Every restore write puts a start field back, which is why a restore
+  runs at any hour: none is a power-on only to light a light for its colour or brightness, and a light
+  that started off and reads off is never lit (its colour and brightness are left as the check reads them).
+
+### Exit codes
+
+| Code | One device | `--all` |
+|---|---|---|
+| 0 | The plan completed (its verdicts are in the report and the summary). | `gate` `pass`. |
+| 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, a partial or failed restore, or an unverified restore after a write it can never put back. |
+| 2 | No device found, or no plan for it. | Nothing to test. |
+| 3 | Refused: the wrong library or version, a bad `--secrets-file` or ref key (not a regular file, any group or others bit in its mode, an ACL entry on macOS; a secrets file that isn't JSON), `GOVEE_FIELD_TEST_NO_SCAN` set outside the test suite. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
+| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a restore nothing verified (a card row's nobody answered for), a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
+| 130 | Interrupted (Ctrl-C, SIGHUP, SIGTERM). | Interrupted (Ctrl-C, SIGHUP, SIGTERM), whatever the gate. |
 
 ## Capturing a BLE session (for ground-truth traffic)
 

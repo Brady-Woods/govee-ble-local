@@ -1,0 +1,499 @@
+"""Snapshot the device's start state, put it back at the end, and check how close the result is.
+
+The start state is held in memory only: ``Device.snapshot()`` after the first poll, which fields that poll
+really read back (:func:`.readback.carried`), a plug's relay bits, the advertised on/off and, where nothing
+else tells it, the tester's answer. :func:`restore_start` polls once (a write cut short by a Ctrl-C or an
+error applies nothing to the library's state, though its frame may have landed), then puts back power,
+brightness, colour (a scene, per-bar Kelvin, whole-device Kelvin, per-segment colours and levels, or a
+whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest, all of them or
+only the fields given (``only``: what a hand-written plan's restore left off). Every write it sends puts a
+start field back: it never powers a light on only to set its colour or brightness, and never lights one
+that started off and reads off now. A scene start is put back the way the library activates one: its
+segment colours first, then the segment levels the run changed, then the scene by its catalog name
+(``set_scene_by_name``, with its upload where it needs one). The segment colours are the colour-mode
+memory, which a scene leaves as it is and ``aa a5`` reads (firmware-sourced: the H6047 image's 0xa5 handler
+``0x01004c20`` returns the RGB stored at ``cfg+0x1c+3k``, whatever the mode), so the run's colour writes
+change them under a scene too. Segments the start's poll didn't read (a group reply lost, a whole read
+failed) can't be put back that way, and are recorded unrestorable (:func:`segment_gaps`). A scene the
+catalog doesn't list is not re-activated (the app sends no bare ``33 05 04`` for a scene it doesn't list,
+CLAUDE.md rule 1): it is recorded unrestorable, and nothing of its colour is sent or compared; its segment
+levels, which are brightness and need no scene, are put back and checked. :func:`check_restore` polls
+once more and compares what that poll reads back with the start (a plug: its outlets' relay bits too; in a
+scene, the segments' colours too). Each unrestorable entry starts with what it is about (``colour:``,
+``scene:``, ``segments:``, ``brightness:``, ``power:``, ``relay:``, ``gradual:``):
+:func:`unrestorable_written` tells which the run's writes changed. Segments are compared only where the
+poll set them (:attr:`.readback.Poll.segments`): a status burst that lost a colour
+group keeps the segments it held, a write's intent among them. A start field that poll didn't read back (a
+lost or rejected reply, a segment no reply set) and that the run's writes changed is ``unread``, which
+makes the check ``partial``: an acked write the device didn't apply would otherwise pass unseen.
+"""
+from __future__ import annotations
+
+import copy
+import dataclasses
+from collections.abc import Awaitable, Callable, Collection
+from typing import Any
+
+from .readback import FIELDS, FrameWatch, carried, not_set, outlet_mask, poll, relay_bits
+
+SEGMENT_COLOURS_NOTE = ("segments: the start's segment colours (the colour-mode memory a scene leaves) can't "
+                        "be written on this row, so they are left as the run made them")
+RGB = tuple[int, int, int]
+
+
+def segments_unread(indices: Collection[int] | None, what: str) -> str:
+    """The unrestorable entry for segments the start's poll didn't read (``indices``: the ones a later poll
+    of the run set; None: the start read none, nor did any poll after it): their ``what`` (``colours``,
+    ``levels``, ``colours and levels``) can't be put back."""
+    which = (f"{sorted(indices)} were not read at the start (no reply carried their group)" if indices
+             else "not read at the start")
+    return f"segments: {which}, so their {what} can't be put back: left as the run made them"
+
+
+def scene_unlisted(code: Any) -> str:
+    """The unrestorable entry for a scene start the bundled catalog doesn't list at the scene set in force."""
+    return (f"scene: {code} is not in the bundled catalog at this scene set, so it is not re-activated "
+            "(the app sends no bare 33 05 04 for a scene it doesn't list): its colour, its segment colours "
+            "and its effect are left as the run made them")
+
+
+def segment_runs(segments: Any) -> list[tuple[RGB, list[int]]]:
+    """``segments`` with a colour, grouped by it (first seen first): one ``set_segment_rgb`` per colour."""
+    runs: dict[RGB, list[int]] = {}
+    for seg in segments or []:
+        if seg.rgb is not None:
+            r, g, b = seg.rgb
+            runs.setdefault((int(r), int(g), int(b)), []).append(int(seg.index))
+    return list(runs.items())
+
+
+# What each unrestorable entry is about (its prefix), as the state a write step changes (runner: a step's
+# ``changes``, from its fields).
+CHANGES: dict[str, str] = {
+    "rgb_color": "colour", "color_temp_kelvin": "colour", "segments": "colour", "scene_code": "colour",
+    "zone_color_temp_kelvin": "colour", "brightness": "brightness", "segment_brightness": "brightness",
+    "is_on": "power", "zone_power": "power", "gradual": "gradual"}
+# The state fields a restore's colour actions put back (one group: a scene start's segment colours, levels
+# and scene go out together).
+COLOUR_FIELDS = ("rgb_color", "color_temp_kelvin", "scene_code", "segments", "zone_color_temp_kelvin")
+# What a run's writes change in each state field the restore check compares (``segments``: their colours and
+# their levels).
+_CHANGED_BY: dict[str, frozenset[str]] = {
+    **{field: frozenset({about}) for field, about in CHANGES.items()},
+    "segments": frozenset({"colour", "brightness"})}
+_ABOUT = {"colour": "colour", "scene": "colour", "segments": "colour", "brightness": "brightness",
+          "power": "power", "relay": "power", "gradual": "gradual"}
+Ask = Callable[[str], Awaitable[str | None]]
+Describe = Callable[[BaseException], str]
+
+
+@dataclasses.dataclass
+class StartState:
+    """The device as the run found it."""
+
+    state: Any                              # a DeviceState copy (Device.snapshot())
+    read: frozenset[str]                    # the fields the first poll really read back
+    kind: str = "light"
+    advertised_on: bool | None = None       # the advertisement's on/off (None: it carries none)
+    answered_on: bool | None = None         # the tester's answer, where nothing else tells it
+    active_scene: str | None = None
+    segment_count: int = 0
+    relay_bits: int | None = None           # a plug's aa 01 relay byte (one bit per outlet), if read
+    segments_set: frozenset[int] | None = None   # the segments the first poll set (None: can't tell)
+
+    @property
+    def is_on(self) -> bool | None:
+        if "is_on" in self.read:
+            return bool(self.state.is_on) if self.state.is_on is not None else None
+        return self.advertised_on if self.advertised_on is not None else self.answered_on
+
+    def summary(self) -> dict[str, Any]:
+        """What the report records of the start (no identifying field is among these)."""
+        st = self.state
+        return {"is_on": self.is_on, "read": sorted(self.read),
+                "power_source": ("read-back" if "is_on" in self.read else "advertisement"
+                                 if self.advertised_on is not None else "tester"
+                                 if self.answered_on is not None else None),
+                "brightness": st.brightness if "brightness" in self.read else None,
+                "rgb_color": st.rgb_color if "rgb_color" in self.read else None,
+                "color_temp_kelvin": st.color_temp_kelvin if "color_temp_kelvin" in self.read else None,
+                "scene_code": st.scene_code if "scene_code" in self.read else None,
+                "active_scene": self.active_scene, "segment_count": self.segment_count,
+                "zone_power": dict(st.zone_power) if "zone_power" in self.read else None,
+                "gradual": st.gradual if "gradual" in self.read else None,
+                "relay_bits": f"{self.relay_bits:08b}" if self.relay_bits is not None else None}
+
+
+async def capture_start(dev: Any, adv: Any, frames: list[Any], *, kind: str, ask: Ask | None = None,
+                        polled: Any = None, assigned: frozenset[str] | None = None,
+                        segments: frozenset[int] | None = None) -> StartState:
+    """The start state after the first poll (``frames``: that poll's window of the FrameWatch; ``polled``:
+    the state it returned, kept where the device has no ``snapshot()``; ``assigned`` and ``segments``: the
+    fields and the segments that poll set, :func:`.readback.poll`)."""
+    read = frozenset(f for f, reason in carried(dev, frames, assigned=assigned, segments=segments).items()
+                     if reason is None)
+    advertised: bool | None = None
+    if "is_on" not in read and adv is not None:
+        try:
+            advertised = dev.advertised_on(adv)
+        except Exception:
+            advertised = None
+    answered: bool | None = None
+    if "is_on" not in read and advertised is None and ask is not None:
+        reply = await ask("Nothing reads its power back: is the device ON right now?")
+        answered = {"yes": True, "no": False}.get(reply or "")
+    try:
+        scene = dev.active_scene
+    except Exception:
+        scene = None
+    take = getattr(dev, "snapshot", None)
+    state = take() if callable(take) else copy.copy(polled)
+    count = int(getattr(dev, "segment_count", 0) or 0)
+    relay = relay_bits(frames) if kind == "plug" else None
+    return StartState(state, read, kind, advertised, answered, scene, count, relay,
+                      None if segments is None else frozenset(segments))
+
+
+@dataclasses.dataclass
+class Outcome:
+    actions: list[str] = dataclasses.field(default_factory=list)
+    errors: list[str] = dataclasses.field(default_factory=list)
+    unrestorable: list[str] = dataclasses.field(default_factory=list)
+
+
+def _caps(dev: Any) -> set[str]:
+    return {str(c) for c in getattr(dev, "capabilities", ())}
+
+
+async def restore_start(dev: Any, start: StartState, describe: Describe, *,
+                        only: Collection[str] | None = None, seen: Collection[int] = ()) -> Outcome:
+    """Put the start state back as far as the API allows; never raises an error (each action on its own).
+
+    It polls first: a write that was cut short (a Ctrl-C, a timeout) applied nothing to ``dev.state``
+    though its frame may have reached the device, so the comparisons below (power, relay, gradual, zones,
+    segment levels) are made against what the device reads back. Where that poll fails, or doesn't set the
+    field (:func:`.readback.poll`), those are sent anyway. ``only``: the start fields to put back (the ones a
+    hand-written plan's restore left off, :func:`check_restore`'s ``diffs`` and ``unread``); None, all of
+    them. The unrestorable entries are recorded either way, the segments the start didn't read among them
+    (:func:`segment_gaps`; ``seen``: every segment a poll of the run set).
+
+    Every write puts back a start field, which is why a restore is never gated by the daytime window
+    (``guard.py``): no power-on is sent only to light the device for its colour or brightness. A light that
+    started on and doesn't read on is powered on first (its power put back); one that started off (or whose
+    start power is unknown) and reads off now is never lit: its colour and brightness writes are left out,
+    and what they would have put back stays as the check reads it."""
+    out = Outcome()
+    caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
+
+    def wanted(*fields: str) -> bool:
+        return only is None or any(f in only for f in fields)
+
+    fresh = getattr(p, "readback", "none") != "none" and start.kind != "card" and (only is None or bool(only))
+    polled: frozenset[str] = frozenset()
+    segments: frozenset[int] | None = None
+    if fresh:
+        try:
+            _, assigned, segments = await poll(dev)
+            polled = assigned or frozenset()
+        except Exception:
+            fresh = False
+
+    def known(field: str) -> bool:
+        """The restore's poll set ``field``: ``dev.state`` holds what the device reports, not an intent."""
+        return fresh and field in polled
+
+    async def do(label: str, fn: Callable[..., Awaitable[None]], *args: Any) -> None:
+        try:
+            await fn(*args)
+            out.actions.append(label)
+        except Exception as err:
+            out.errors.append(f"{label}: {describe(err)}")
+
+    started_on = start.is_on
+    if start.kind == "plug":
+        if started_on is None:
+            out.unrestorable.append("relay: start state unknown")
+        elif wanted("is_on", "relay_bits") and (not known("is_on") or dev.state.is_on is not started_on):
+            await do(f"relay {'on' if started_on else 'off'}", dev.set_power, started_on)
+        return out
+    colour = _colour_actions(dev, start, out, segments if known("segments") else None, seen)
+    if not wanted(*COLOUR_FIELDS):
+        colour = []
+    has_brightness = "brightness" in caps and "brightness" in read and bool(st.brightness)
+    if "brightness" in caps and not has_brightness:
+        out.unrestorable.append("brightness: unknown at the start (not read back)")
+    restore_brightness = has_brightness and wanted("brightness")
+    gradual = getattr(p, "gradual", False)
+    if gradual and ("gradual" not in read or st.gradual is None):
+        out.unrestorable.append("gradual: unknown at the start (not read back)")
+    elif gradual and wanted("gradual") and (not known("gradual") or dev.state.gradual != st.gradual):
+        await do("gradual", dev.set_gradual, bool(st.gradual))
+    if started_on is None:
+        out.unrestorable.append("power: unknown at the start")
+    lit = known("is_on") and dev.state.is_on is True
+    dark = known("is_on") and dev.state.is_on is False
+    if not started_on and dark and (colour or restore_brightness):
+        out.actions.append("not sent: its colour and brightness (it reads off, and putting them back would "
+                           "light it)")
+        colour, restore_brightness = [], False
+    lighting = bool(colour) or restore_brightness
+    if started_on and not lit and (wanted("is_on") or lighting):
+        await do("power on", dev.set_power, True)
+    if restore_brightness:
+        await do(f"brightness {st.brightness}", dev.set_brightness, int(st.brightness))
+    for label, fn, args in colour:
+        await do(label, fn, *args)
+    if started_on and dev.zones and "zone_power" in read and wanted("zone_power"):
+        for zone in dev.zones:
+            want = st.zone_power.get(zone.power_index)
+            held = dev.state.zone_power.get(zone.power_index)
+            if want is not None and (not known("zone_power") or held != want):
+                await do(f"zone {zone.name} {'on' if want else 'off'}", dev.set_zone_power, zone.name, want)
+    if started_on is False and not dark and (wanted("is_on") or lighting):
+        await do("power off", dev.set_power, False)
+    return out
+
+
+Action = tuple[str, Callable[..., Awaitable[None]], tuple[Any, ...]]
+
+
+def segment_gaps(dev: Any, start: StartState, seen: Collection[int] = ()) -> list[str]:
+    """What the start's segment read left unknown on a light that writes segments, as an unrestorable entry
+    (:func:`segments_unread`): the segments a poll of the run set (``seen``) that the start's poll didn't (a
+    group reply lost at the start), or every one where the start read none and no poll after it did (a
+    live IC read that failed, a row that can't read them). Their colours can't be put back but by a
+    whole-device colour temperature (a Kelvin start, not a scene's: a scene leaves the segment colours, the
+    colour-mode memory, as the run made them), their levels not at all (where the row writes them). A row
+    that writes no segment gets none: its whole-device writes are all the run changed."""
+    caps = _caps(dev)
+    if start.kind != "light" or "segments" not in caps:
+        return []
+    st, read = start.state, start.read
+    got: set[int] = set()
+    if "segments" in read:
+        got = (set(start.segments_set) if start.segments_set is not None
+               else {int(s.index) for s in getattr(st, "segments", None) or []})
+    missing = sorted(set(seen) - got)
+    if not missing and "segments" in read:
+        return []
+    scene = "scene_code" in read and getattr(st, "scene_code", None) is not None and "scenes" in caps
+    kelvin = not scene and bool(
+        ("zone_color_temp_kelvin" in read and getattr(st, "zone_color_temp_kelvin", None))
+        or ("color_temp_kelvin" in read and getattr(st, "color_temp_kelvin", None)))
+    levels = bool(getattr(dev, "supports_segment_brightness", True))
+    if kelvin and not levels:
+        return []
+    what = "levels" if kelvin else "colours and levels" if levels else "colours"
+    return [segments_unread(missing or None, what)]
+
+
+def _colour_actions(dev: Any, start: StartState, out: Outcome,
+                    fresh: Collection[int] | None, seen: Collection[int] = ()) -> list[Action]:
+    """The colour to put back, by precedence: scene, per-bar Kelvin, whole Kelvin, mixed segments, RGB.
+    ``fresh``: the segments the restore's poll set (None: it set none, or failed); ``seen``: every segment a
+    poll of the run set (the ones the start didn't read are noted, :func:`segment_gaps`)."""
+    caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
+    out.unrestorable += [g for g in segment_gaps(dev, start, seen) if g not in out.unrestorable]
+    if not caps & {"rgb", "color_temp", "scenes"}:
+        return []
+    if "scene_code" in read and st.scene_code is not None and "scenes" in caps:
+        # As the library activates a scene: by name (with its upload) where the catalog lists the start's
+        # scene, after the segment colours and levels the run changed (each a colour-mode write, which leaves
+        # the scene); one it doesn't list is not re-activated, and nothing of its colour is sent: only the
+        # segment levels the run changed, which are brightness and need no scene.
+        name = start.active_scene
+        if not (name and name in _listed_scenes(dev)):
+            out.unrestorable.append(scene_unlisted(st.scene_code))
+            return _segment_levels(dev, start, fresh) if "segments" in read else []
+        colours = _segment_colours(dev, start, out, fresh) if "segments" in read else []
+        levels = _segment_levels(dev, start, fresh) if "segments" in read else []
+        return [*colours, *levels, (f"scene {name!r} by name (uploaded where it needs it)",
+                                    dev.set_scene_by_name, (name,))]
+    actions: list[Action] = []
+    runs = segment_runs(st.segments)
+    if getattr(p, "bar_switch", False) and "zone_color_temp_kelvin" in read and st.zone_color_temp_kelvin:
+        actions = [(f"zone {z.name} {st.zone_color_temp_kelvin[z.power_index]} K", dev.set_zone_color_temp,
+                    (z.name, int(st.zone_color_temp_kelvin[z.power_index])))
+                   for z in dev.zones if z.power_index in st.zone_color_temp_kelvin]
+    elif "color_temp_kelvin" in read and st.color_temp_kelvin:
+        actions = [(f"{st.color_temp_kelvin} K", dev.set_color_temp, (int(st.color_temp_kelvin),))]
+    elif "segments" in read and runs and "segments" in caps:
+        if len(runs) == 1 and "rgb" in caps:
+            rgb = runs[0][0]
+            actions = [(f"rgb {rgb}", dev.set_rgb, (rgb,))]
+        else:
+            actions = [(f"segments {idx[0]}..{idx[-1]} rgb {rgb}", dev.set_segment_rgb, (idx, rgb))
+                       for rgb, idx in runs]
+    elif "rgb_color" in read and st.rgb_color:
+        actions = [(f"rgb {tuple(st.rgb_color)}", dev.set_rgb, (tuple(st.rgb_color),))]
+    else:
+        out.unrestorable.append("colour: not read back at the start (or a mode the library doesn't know: "
+                                "music, DIY), so it is left as the plan's last colour")
+        return []
+    if "segments" in read:
+        actions += _segment_levels(dev, start, fresh)
+    return actions
+
+
+def _segment_colours(dev: Any, start: StartState, out: Outcome,
+                     fresh: Collection[int] | None) -> list[Action]:
+    """A scene start's segment colours, one ``set_segment_rgb`` per colour (the library's segment frames, as
+    the app sends them), where the run changed them: every colour whose segments the restore's first poll
+    didn't all set (``fresh``; None: it set none, or failed) as they started is sent. A row that can't write
+    segment colours gets none, and the start's are noted unrestorable."""
+    runs = segment_runs(start.state.segments)
+    if not runs:
+        return []
+    if "segments" not in _caps(dev):
+        out.unrestorable.append(SEGMENT_COLOURS_NOTE)
+        return []
+    now = {s.index: tuple(s.rgb) for s in (dev.state.segments or [])
+           if s.index in (fresh or ()) and s.rgb is not None}
+    return [(f"segments {idx[0]}..{idx[-1]} rgb {rgb}", dev.set_segment_rgb, (idx, rgb))
+            for rgb, idx in runs if any(now.get(i) != rgb for i in idx)]
+
+
+def _listed_scenes(dev: Any) -> list[str]:
+    """The scene names the device lists now (``Device.scene_names``), or none where it can't say."""
+    try:
+        return list(dev.scene_names)
+    except Exception:
+        return []
+
+
+def _segment_levels(dev: Any, start: StartState, fresh: Collection[int] | None) -> list[Action]:
+    """Per-segment brightness back where it was read and the run changed it: every level the restore's
+    first poll didn't set (``fresh``; None: it set none, or failed) is sent, since the one held for it may be
+    a write's intent."""
+    if "segments" not in _caps(dev) or not getattr(dev, "supports_segment_brightness", True):
+        return []
+    now = {s.index: s.brightness for s in (dev.state.segments or []) if s.index in (fresh or ())}
+    levels: dict[int, list[int]] = {}
+    for seg in start.state.segments or []:
+        if seg.brightness is not None and now.get(seg.index) != seg.brightness:
+            levels.setdefault(int(seg.brightness), []).append(seg.index)
+    return [(f"segments {idx[0]}..{idx[-1]} at {lvl}%", dev.set_segment_brightness, (idx, lvl))
+            for lvl, idx in sorted(levels.items()) if lvl > 0]
+
+
+@dataclasses.dataclass
+class RestoreCheck:
+    result: str                 # exact / close / partial / failed / unverified / not_needed
+    unrestorable: list[str] = dataclasses.field(default_factory=list)
+    diffs: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+    errors: list[str] = dataclasses.field(default_factory=list)
+    actions: list[str] = dataclasses.field(default_factory=list)
+    basis: str | None = None    # "readback" / "observed"
+    # start fields the run changed and the check's poll didn't read back: {field: {"start", "why"}}
+    unread: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+def _differs(field: str, want: Any, got: Any, raw: bool, *, colours: bool = True) -> bool:
+    """``colours``: compare the segments' colours too (not where the restore noted it can't write them)."""
+    if field == "brightness" and raw and isinstance(want, int) and isinstance(got, int):
+        return abs(want - got) > 1
+    if field == "segments":
+        have = {s.index: s for s in got or []}
+        for seg in want or []:
+            now = have.get(seg.index)
+            if now is None:
+                continue
+            if colours and seg.rgb is not None and (now.rgb is None or tuple(now.rgb) != tuple(seg.rgb)):
+                return True
+            if seg.brightness is not None and now.brightness is not None and now.brightness != seg.brightness:
+                return True
+        return False
+    if isinstance(want, (tuple, list)) and isinstance(got, (tuple, list)):
+        return tuple(want) != tuple(got)
+    return bool(want != got)
+
+
+def _show(field: str, value: Any) -> Any:
+    if field == "segments":
+        return [[s.index, list(s.rgb) if s.rgb else None, s.brightness] for s in value or []]
+    return value
+
+
+async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, watch: FrameWatch | None,
+                        *, ask: Ask | None = None, changed: Collection[str] = ()) -> RestoreCheck:
+    """Poll once more and compare what it reads back with the start. ``changed``: what the run's writes
+    changed (:data:`CHANGES` values); a start field among those that this poll didn't read back (its reply
+    lost or rejected, a start segment it didn't set) is ``unread``, and makes the check ``partial``."""
+    if outcome is None:
+        return RestoreCheck("not_needed")
+    check = RestoreCheck("exact", list(outcome.unrestorable), {}, list(outcome.errors), list(outcome.actions))
+    profile = getattr(dev, "profile", None)
+    if profile is None or start.kind == "card" or getattr(profile, "readback", "none") == "none":
+        check.result = "failed" if check.errors else "unverified"
+        if not check.errors and ask is not None:
+            reply = await ask("Restore done: is the device back as it was at the start?")
+            if reply in ("yes", "no"):
+                check.result, check.basis = ("close" if reply == "yes" else "partial"), "observed"
+        return check
+    mark = watch.mark() if watch is not None else 0
+    try:
+        post, assigned, segments = await poll(dev)
+    except Exception as err:
+        check.errors.append(f"final read-back: {type(err).__name__}")
+        check.result = "failed"
+        return check
+    now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned, segments=segments)
+    raw = bool(getattr(profile, "brightness_range", None) or getattr(profile, "brightness_by_pact", ()))
+    # What the restore recorded it can't put back is not compared: a scene the catalog doesn't list leaves
+    # its whole colour as the run made it (its segment levels compared); segment colours the row can't write
+    # leave those (levels compared).
+    unlisted = any(u.startswith("scene:") for u in check.unrestorable)
+    left = frozenset(COLOUR_FIELDS) - {"segments"} if unlisted else frozenset()
+    colours = not unlisted and SEGMENT_COLOURS_NOTE not in check.unrestorable
+    compared = 0
+    for field in FIELDS:
+        if field not in start.read or field in left:
+            continue
+        want, got = getattr(start.state, field, None), getattr(post, field, None)
+        why = now.get(field)
+        if why is not None:   # not read back: what the run changed there may not be put back
+            if _CHANGED_BY[field] & set(changed):
+                check.unread[field] = {"start": _show(field, want), "why": why}
+            continue
+        compared += 1
+        if field == "segments" and segments is not None:   # only the segments this poll set
+            got = [s for s in got or [] if s.index in segments]
+        if field == "segments" and _CHANGED_BY[field] & set(changed):
+            lost = sorted({s.index for s in want or []} - {s.index for s in got or []})
+            if lost:
+                check.unread[field] = {"start": _show(field, want), "why": not_set(lost)}
+        if _differs(field, want, got, raw, colours=colours):
+            check.diffs[field] = {"start": _show(field, want), "end": _show(field, got)}
+    end_bits = relay_bits(watch.window(mark)) if watch is not None else None
+    if start.kind == "plug" and start.relay_bits is not None and end_bits is not None:
+        # is_on is "any outlet on": a 2- or 3-outlet plug's outlets are compared bit by bit
+        compared += 1
+        mask = outlet_mask(profile) or 0xFF
+        if (start.relay_bits ^ end_bits) & mask:
+            check.diffs["relay_bits"] = {"start": f"{start.relay_bits & mask:08b}",
+                                         "end": f"{end_bits & mask:08b}"}
+    check.basis = "readback" if compared else None
+    if check.errors:
+        check.result = "failed"
+    elif check.diffs or check.unread:
+        check.result = "partial"
+    elif not compared:
+        check.result = "unverified"
+        if ask is not None:
+            reply = await ask("Restore done (nothing it read at the start was read back): is the device "
+                              "back as it was?")
+            if reply in ("yes", "no"):
+                check.result, check.basis = ("close" if reply == "yes" else "partial"), "observed"
+    elif check.unrestorable:
+        check.result = "close"
+    return check
+
+
+def unrestorable_written(unrestorable: list[str], written: set[str]) -> list[str]:
+    """The entries of ``unrestorable`` about state the run's writes changed (``written``: :data:`CHANGES`
+    values): what the run left changed for good, which keeps a restore that is only ``close`` (or
+    ``unverified``) from clearing the gate."""
+    return [u for u in unrestorable if _ABOUT.get(u.split(":", 1)[0]) in written]

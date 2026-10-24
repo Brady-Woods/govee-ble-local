@@ -106,7 +106,7 @@ def _run_plan(sku: str, d: Device, tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(runner, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: d)
-    args = runner.parse_args(["--no-prompt", "--settle", "0"])
+    args = runner.parse_args(["--no-prompt", "--settle", "0", "--unattended"])
     assert asyncio.run(runner.run(args, tmp_path, "T")) == 0
     rep: dict[str, Any] = json.loads((tmp_path / f"{sku.lower()}-report-T.json").read_text())
     return rep

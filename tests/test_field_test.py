@@ -1,12 +1,18 @@
-"""tools/field_test: the generic runner (masking, SKU detection, plan registry) with a fake device.
+"""tools/field_test: the generic runner (masking, SKU detection, plan registry) with a fake device, the
+generic plan over every profile, and the release-gate modes (--list, --all) on the fake BLE.
 
 The H6188 plan's end-to-end run lives in test_h6188.py; the per-SKU plans of later devices test
 their own steps. No BLE hardware."""
 from __future__ import annotations
 
 import asyncio
+import datetime
+import errno
 import importlib
+import io
 import json
+import os
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -61,6 +67,12 @@ def test_masks_address_serial_and_wifi_mac(masking: ModuleType, tmp_path: Path) 
     assert masking.mask_address("02-00-5e-00-53-57") == "02-00-5E-xx-xx-xx"
     assert masking.mask_address("A1B2C3D4-1111-2222-3333-444455556666") == "A1B2C3D4-…"
     assert masking.mask_address(None) is None
+    # a plug's secret given to the run is scrubbed as hex, in either case, from every report text
+    secret = bytes.fromhex("0011aabbccddeeff")
+    text = masking.mask_text("key 0011AABBCCDDEEFF / 0011aabbccddeeff", secrets=[secret])
+    assert text == "key <redacted> / <redacted>"
+    assert "aabbcc" not in masking.mask_text_all(f"{secret.hex()} 02:00:5E:00:53:57",
+                                                 [("02:00:5E:00:53:57", ())], [secret]).lower()
 
 
 def test_snapshot_redacts_identifiers_even_if_a_plan_asks_for_them(masking: ModuleType) -> None:
@@ -185,14 +197,26 @@ def test_runner_runs_a_registered_plan_with_its_own_snapshot_keys_and_restore(
     ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     log: list[Any] = []
-    rc, dev = _run_fake_plan(ft, runner, monkeypatch, tmp_path, [], log)
+    rc, dev = _run_fake_plan(ft, runner, monkeypatch, tmp_path, ["--unattended"], log)
     assert rc == 0 and dev.calls == [("power", False), ("power", True)]
     rep = json.loads((tmp_path / "h9996-report-T.json").read_text())
     assert rep["plan"]["sku"] == "H9996" and rep["restore"] == "ok" and len(log) == 1
     assert rep["initial_state"] == {"is_on": True, "tint": 5, "serial_number": "<redacted>",
                                     "wifi_mac": "<redacted>"}
     assert [r["readback_matches"] for r in rep["steps"]] == [True, False]
+    # the first check reads is_on, which no reply of this profile-less fake carried: it holds, and proves
+    # nothing; the second fails on a key that is no state field the library could have intended
+    assert [(r["verdict"], r["readback_unread"]) for r in rep["steps"]] == [
+        ("unverifiable", ["is_on"]), ("fail", None)]
     assert "AA:BB:CC:DD:EE:11" not in (tmp_path / "h9996-report-T.json").read_text()
+    # with no terminal on stdin, one device as --all: no visible write unless --unattended, recorded
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    rc, dev = _run_fake_plan(ft, runner, monkeypatch, alone, [], log)
+    summary = json.loads((alone / "fieldtest-summary-T.json").read_text())
+    assert rc == 0 and dev.calls == [] and summary["options"]["unattended"] is False
+    assert summary["options"]["writes_off"] == runner.NO_TERMINAL
+    assert {s["verdict"] for s in summary["devices"][0]["steps"]} == {"skipped"}
 
 
 def test_sku_flag_is_passed_to_discovery_case_insensitively(
@@ -203,7 +227,7 @@ def test_sku_flag_is_passed_to_discovery_case_insensitively(
 
 
 def test_runner_reports_not_found_and_unplanned_sku(
-    ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     async def nothing(_a: Any, _s: Any) -> tuple[Any, Any, list[Any], None]:
         return None, None, [{"name": "x"}], None
@@ -221,6 +245,105 @@ def test_runner_reports_not_found_and_unplanned_sku(
     assert asyncio.run(runner.run(runner.parse_args(["--address", "x"]), tmp_path, "U")) == 2
     assert "no test plan" in json.loads((tmp_path / "fieldtest-report-U.json").read_text())["result"]
 
+    # the secrets file: none there (the session's) is no failure; one group or others can read is refused,
+    # saying why and printing no value; the ref key is made 0600 and refused once wider. A folder, a FIFO
+    # (opened O_NONBLOCK: no wait for a writer) or JSON nested past the parser's depth is refused too, by the
+    # path alone (exit 3), its descriptor closed; on macOS so is an ACL entry, which no mode bit shows
+    from fake_ble import ble_device
+
+    from govee_ble_local import GoveeBleError, create_device
+    from govee_ble_local.transport import connection as conn_mod
+    survey = importlib.import_module("field_test.survey")
+    assert runner._read_secrets(None) == {}
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps({"AA:BB:CC:DD:EE:11": "0011aabbccddeeff"}))
+    secrets.chmod(0o644)
+    with pytest.raises(runner.Refused, match=r"group or others can read it \(mode 0644\); chmod 600"):
+        runner._read_secrets(str(secrets))
+    secrets.chmod(0o600)
+    assert runner._read_secrets(str(secrets)) == {"AA:BB:CC:DD:EE:11": bytes.fromhex("0011aabbccddeeff")}
+    assert "aabbcc" not in capsys.readouterr().out.lower()
+    folder, fifo, deep = tmp_path / "folder", tmp_path / "fifo", tmp_path / "deep.json"
+    folder.mkdir(mode=0o700)
+    os.mkfifo(fifo, 0o600)
+    deep.write_text("[" * 100_000)
+    deep.chmod(0o600)
+    fds = len(os.listdir("/dev/fd"))
+    for path, why in ((folder, "not a regular file"), (deep, "not JSON")):
+        with pytest.raises(runner.Refused) as refused:
+            runner._read_secrets(str(path))
+        assert str(refused.value) == f"--secrets-file {path}: {why}"
+    with pytest.raises(OSError, match=r" is not a regular file$"):
+        survey._ref_key(folder)
+    assert len(os.listdir("/dev/fd")) == fds
+    assert runner.main(["--all", "--secrets-file", str(folder), "--out", str(tmp_path / "odd")]) == (
+        runner.EXIT_REFUSED)
+    assert f"Refused: --secrets-file {folder}: not a regular file" in capsys.readouterr().out
+    for argv, env, shown in (   # in a child, so a FIFO that blocks times out instead of hanging the suite
+            (["--list"], {survey.REF_KEY_ENV: str(fifo)}, f"Refused: {fifo} is not a regular file"),
+            (["--all", "--secrets-file", str(fifo)], {},
+             f"Refused: --secrets-file {fifo}: not a regular file")):
+        r = subprocess.run(  # noqa: S603 - fixed argv, sys.executable; the radio is off in the child too
+            [sys.executable, str(TOOLS / "field_test"), *argv, "--out", str(tmp_path / "odd")],
+            capture_output=True, text=True, timeout=60, env={**os.environ, **env})
+        assert r.returncode == runner.EXIT_REFUSED and shown in r.stdout, r.stdout + r.stderr
+    if sys.platform == "darwin":   # an ACL entry: the file's own, or one a new ref key's folder passes on
+        acl = "it has an ACL entry (ls -le lists it), which can let others read it whatever its mode"
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read", str(secrets)], check=True)  # noqa: S603
+        with pytest.raises(runner.Refused) as refused:
+            runner._read_secrets(str(secrets))
+        assert str(refused.value).startswith(f"--secrets-file {secrets}: {acl}")
+        subprocess.run(["/bin/chmod", "-N", str(secrets)], check=True)  # noqa: S603
+        assert runner._read_secrets(str(secrets))
+        shared = tmp_path / "shared"
+        shared.mkdir(mode=0o700)
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read,file_inherit", str(shared)],  # noqa: S603
+                       check=True)
+        for _made_each_time in range(2):   # a new key that took its folder's ACL is deleted, never kept
+            with pytest.raises(OSError) as refused_key:
+                survey._ref_key(shared / "ref.key")
+            assert str(refused_key.value) == (
+                f"{shared / 'ref.key'}: a new ref key is not private; {acl}, so it was deleted: remove the "
+                f"inheritable ACL entry on {shared} (chmod -N), then run again")
+            assert not (shared / "ref.key").exists()
+    key = tmp_path / "keys" / "ref.key"
+    assert len(survey._ref_key(key)) == 32 and key.stat().st_mode & 0o777 == 0o600
+    if sys.platform == "darwin":   # one with an ACL entry of its own: its refs may be known, so delete it
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read", str(key)], check=True)  # noqa: S603
+        with pytest.raises(OSError, match=r"the ref key is not private; it has an ACL .*; delete it to make"):
+            survey._ref_key(key)
+        subprocess.run(["/bin/chmod", "-N", str(key)], check=True)  # noqa: S603
+    key.chmod(0o640)
+    with pytest.raises(OSError, match=r"readable by group or others \(mode 0640\)"):
+        survey._ref_key(key)
+    with monkeypatch.context() as m:   # the tool refuses it (exit 3) before any scan, not with a traceback
+        m.setenv(survey.REF_KEY_ENV, str(key))
+        assert runner.main(["--list", "--out", str(tmp_path / "wide")]) == runner.EXIT_REFUSED
+        shown = capsys.readouterr().out
+        assert f"Refused: {key}: the ref key is readable by group or others (mode 0640)" in shown
+        assert key not in survey._KEYS
+    with monkeypatch.context() as m:   # exported outside the suite: a refusal (exit 3), no traceback
+        m.delenv("PYTEST_CURRENT_TEST")
+        assert runner.main(["--list", "--out", str(tmp_path / "wide")]) == runner.EXIT_REFUSED
+        assert ("Refused: GOVEE_FIELD_TEST_NO_SCAN is set, which turns the radio off (the test suite sets "
+                "it): unset it for a real run") in capsys.readouterr().out
+    # under pytest no real scan or connect, even in a tree whose conftest sets no GOVEE_FIELD_TEST_NO_SCAN;
+    # the connect no_radio stops is a tripwire, bleak's in name only: a broken guard fails here, off the radio
+    monkeypatch.delenv("GOVEE_FIELD_TEST_NO_SCAN", raising=False)
+    with pytest.raises(RuntimeError, match=r"scanning is disabled \(PYTEST_CURRENT_TEST"):
+        survey._scanner()
+
+    async def tripwire(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("no_radio let a connect through")
+
+    tripwire.__module__ = "bleak_retry_connector"
+    assert survey._real(conn_mod.establish_connection)
+    monkeypatch.setattr(conn_mod, "establish_connection", tripwire)
+    dev = create_device(ble_device("AA:BB:CC:DD:EE:47", "ihoment_H6047_1A2B"), "H6047")
+    with survey.no_radio(), pytest.raises(GoveeBleError, match=r"connecting is disabled \(PYTEST_CUR"):
+        asyncio.run(dev.connect())
+    assert conn_mod.establish_connection is tripwire   # put back
+
 
 def test_help_runs_as_a_directory_and_lists_plans() -> None:
     r = subprocess.run(  # noqa: S603 - fixed argv, sys.executable
@@ -228,3 +351,749 @@ def test_help_runs_as_a_directory_and_lists_plans() -> None:
     )
     assert r.returncode == 0, r.stderr
     assert "H6188" in r.stdout and "--sku" in r.stdout
+    for flag in ("--list", "--all", "--toggle-plugs", "--allow-modelled", "--force-hours", "--library",
+                 "--secrets-file", "--read-only", "--generic", "--ask"):
+        assert flag in r.stdout, flag
+
+
+# --- the release-gate pass: the generic plan and the --list / --all modes ----------------------
+
+
+async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
+    """Every profile the library routes (each row of each SKU, the modelled ones too) gets a generic plan
+    whose step names are unique, whose plugs get no write step without the allow-list (and with it, toggle
+    from a mixed start of their outlets only where the power write sets outlet 0 alone), whose card rows read
+    nothing back, whose refusal steps raise GoveeBleNotSupported before any I/O, and whose other steps the
+    library accepts (a fake connection: writes acked, reads answered with nothing). A segment-brightness step
+    judges no segment the library dimmed as unchanged (the strip's groups widen the write), and the gradual
+    toggle waits for a start the first poll read. A scene start is restored by name, after the segment levels.
+    A poll that brings every reply but sets nothing (the library
+    dropped or rejected them) reads nothing back, and a poll answered by nobody sets nothing. The visible
+    write the tool reads from each profile's connect writes is what the library's every connect sends but a
+    plug's time sync. One property over the table, not a test per SKU; then what a read-back proves: an RGB
+    read after a Kelvin write on a report with no Kelvin nothing, a field intended as it already was nothing
+    by matching, a segment only where the poll set it; what a restore puts back and checks; the H6047 plan's
+    gradual toggle from a read start only; when a Ctrl-C abandons a restore."""
+    from unittest.mock import AsyncMock
+
+    from fake_ble import ble_device
+
+    from govee_ble_local import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported, profile_for
+    from govee_ble_local.devices import profile as table
+    from govee_ble_local.devices.device import Device
+    from govee_ble_local.models import Segment
+
+    generic = importlib.import_module("field_test.generic")
+    guard = importlib.import_module("field_test.guard")
+    readback = importlib.import_module("field_test.readback")
+    restore = importlib.import_module("field_test.restore")
+    every_reply = [readback.Frame(0.0, "rx", op, 0x15, frozenset(range(256)))
+                   for op in ("aa01", "aa04", "aa05", "aa34", "aa36", "aaa3", "aaa5", "ac")]
+    routes = {(sku, id(r.profile)): (sku, r.profile, r.pacts)
+              for rows in (table._ADMITTED[1], table._MODELLED[1]) for sku, rs in rows.items() for r in rs}
+    bad: list[str] = []
+    for sku, profile, pacts in routes.values():
+        dev = Device(profile, ble_device("AA:BB:CC:DD:EE:01", f"ihoment_{sku}_1A2B"), None, sku=sku)
+        if pacts:
+            dev._learn_pact(min(pacts))
+        sent: list[bytes] = []
+
+        async def one(frame: bytes, *_a: object, sent: list[bytes] = sent, **_k: object) -> None:
+            sent.append(frame)
+
+        async def many(frames: Any, *_a: object, sent: list[bytes] = sent, **_k: object) -> None:
+            sent.extend(frames(20) if callable(frames) else frames)
+
+        async def nothing(*_a: object, **_k: object) -> list[bytes]:
+            return []
+
+        for name, fake in (("send", one), ("send_once", one), ("send_many", many), ("send_unacked", many),
+                           ("query", nothing), ("connect", nothing)):
+            if hasattr(dev._conn, name):
+                setattr(dev._conn, name, AsyncMock(side_effect=fake))
+        kind = generic.device_kind(profile)
+        visible = {f[:2].hex(" ") for f in dev._session_frames() if f[:2] != b"\x33\xb5"}   # but a time sync
+        label = guard.visible_connect(profile) or ""
+        if bool(visible) != bool(label) or not all(op in label for op in visible):
+            bad.append(f"{sku}: its connect sends {sorted(visible)}, the tool reads {label!r}")
+        start = restore.StartState(dev.snapshot(), frozenset(), kind)
+        steps = generic.generic_steps(ft.PlanContext(dev, sku, {}, kind=kind, start=start))
+        names = [s.name for s in steps]
+        if len(set(names)) != len(names):
+            bad.append(f"{sku}: repeated step names {names}")
+        if kind == "plug" and any(s.kind == "write" for s in steps):
+            bad.append(f"{sku}: a plug write step without the allow-list")
+        for bits in (0b000, 0b001) if kind == "plug" else ():   # all off; outlet 0 alone on
+            state = dev.snapshot()
+            state.is_on = bool(bits)
+            lit = restore.StartState(state, frozenset({"is_on"}), kind, relay_bits=bits)
+            ctx = ft.PlanContext(dev, sku, {}, kind=kind, start=lit, toggle_ok=True, has_secret=True)
+            skip = {s.name: s.skip for s in generic.generic_steps(ctx)}["relay_toggle"]
+            if bool(skip) != (bits == 0b001 and readback.outlet_mask(profile) != 0x01):
+                bad.append(f"{sku}: relay bits {bits:03b} at the start, toggle skip {skip!r}")
+        if (kind == "card" or profile.readback == "none") and any(
+                r is None for r in readback.carried(dev, every_reply).values()):
+            bad.append(f"{sku}: a card row judged on a read-back")
+        if any(r is None for set_ in (None, frozenset())
+               for r in readback.carried(dev, every_reply, assigned=set_).values()):
+            bad.append(f"{sku}: a field read back from a poll that set nothing")
+        gradual = [s for s in steps if s.name.startswith("gradual_")]
+        if getattr(profile, "gradual", False) and not all(s.skip for s in gradual):
+            bad.append(f"{sku}: a gradual toggle from a start nobody read")
+        try:
+            listed = list(dev.scene_names)
+        except GoveeBleError:
+            listed = []
+        if listed:   # a scene start is put back by name (its upload with it), after its segment colours
+            # (the colour-mode memory) and levels; one the catalog doesn't list is noted, and nothing is sent
+            state = dev.snapshot()
+            state.scene_code, state.segments = 1, [Segment(0, (1, 2, 3), 100)]
+            caps = {str(c) for c in dev.capabilities}
+            levels = "segments" in caps and getattr(dev, "supports_segment_brightness", True)
+            order = [*([dev.set_segment_rgb] if "segments" in caps else []),
+                     *([dev.set_segment_brightness] if levels else []), dev.set_scene_by_name]
+            # a scene start whose segments the start didn't read notes them (the colour-mode memory)
+            unread = [restore.segments_unread(None, "colours and levels" if levels else "colours")]
+            for name, want, notes, read in (
+                    (listed[0], order, [] if "segments" in caps else [restore.SEGMENT_COLOURS_NOTE],
+                     {"scene_code", "segments"}),
+                    (None, [dev.set_segment_brightness] if levels else [], [restore.scene_unlisted(1)],
+                     {"scene_code", "segments"}),
+                    (listed[0], [dev.set_scene_by_name], unread if "segments" in caps else [],
+                     {"scene_code"})):
+                noted = restore.Outcome()
+                scened = restore.StartState(state, frozenset(read), kind, active_scene=name)
+                acts = restore._colour_actions(dev, scened, noted, None)
+                if [a[1] for a in acts] != want or noted.unrestorable != notes or (
+                        name and acts[-1][2] != (listed[0],)):
+                    bad.append(f"{sku}: a scene start put back by {[a[0] for a in acts]}, {noted}")
+        if kind != "card" and profile.readback != "none":
+            try:
+                seen = (await readback.poll(dev)).assigned
+            except GoveeBleError:
+                seen = frozenset()
+            if seen is None or seen & set(readback.FIELDS):
+                bad.append(f"{sku}: an unanswered poll set {seen}")
+        for step in steps:
+            before, raised = len(sent), None
+            try:
+                await step.action()
+            except (GoveeBleNotSupported, GoveeBleInvalidValue) as err:
+                raised = err
+            except GoveeBleError:
+                pass   # a read the row needs went unanswered here: the library refuses to guess
+            if step.refusal is not None and (not isinstance(raised, step.refusal) or len(sent) != before):
+                bad.append(f"{sku} {step.name}: {raised!r} after {len(sent) - before} frame(s)")
+            elif step.refusal is None and raised is not None:
+                bad.append(f"{sku} {step.name}: {raised!r}")
+            if step.name.startswith("segment_brightness_") and step.refusal is None and raised is None:
+                dimmed = {s.index for s in dev.state.segments if s.brightness == generic.SEGMENT_LEVEL}
+                if not dimmed <= set(step.touched):
+                    bad.append(f"{sku} {step.name}: dims {sorted(dimmed)}, judges {step.touched} alone")
+    assert len(routes) > 100 and not bad, bad[:20]
+    # a card row (one session per command: 1.8's DeviceProfile.session) exercises no brightness, whose start
+    # nothing reads, and its tester's y/n judges every step, under --ask unverifiable too
+    card = SimpleNamespace(capabilities=("power", "brightness"), set_power=generic._nothing,
+                           set_brightness=generic._nothing, profile=SimpleNamespace(session="per_command"))
+    seen_on = restore.StartState(SimpleNamespace(), frozenset(), "card", advertised_on=True)
+    assert [s.name for s in generic.generic_steps(ft.PlanContext(card, "H70B2", {}, kind="card",
+                                                                 start=seen_on))] == [
+        "advert_state", "power_off", "power_on"]
+    runner = importlib.import_module("field_test.runner")
+    unverifiable = runner.Policy(guard.Window(), ask="unverifiable")
+    assert [runner._asks(unverifiable, "pass", k) for k in ("light", "card")] == [False, True]
+    kelvin = ft.Step("color_temp_5500", generic._nothing, None, "", fields=("color_temp_kelvin", "rgb_color"))
+    was, want = (SimpleNamespace(rgb_color=None, color_temp_kelvin=k) for k in (2000, 5500))
+    blind = {"rgb_color": None, "color_temp_kelvin": "the mode reply carries no Kelvin"}   # a _nocct decode
+    tint = SimpleNamespace(rgb_color=(255, 238, 222), color_temp_kelvin=None)
+    assert readback.judge_fields(kelvin, None, was, want, tint, blind) == (
+        {"color_temp_kelvin": "not read: the mode reply carries no Kelvin",
+         "rgb_color": f"not read: {readback.CCT_BLIND}"}, [])
+    both = dict.fromkeys(("rgb_color", "color_temp_kelvin"))   # the library read the Kelvin (a newer fold)
+    assert readback.judge_fields(kelvin, None, was, want, want, both) == (
+        {"color_temp_kelvin": "pass", "rgb_color": f"not read: {readback.UNCHANGED}"}, [])
+    # a colour the decode table says a 0x15 mode report can't carry counts where the poll set it to a value
+    # (a newer library's fold), and so does the "no RGB" a Kelvin above 0 brings; not a None it set
+    polled = SimpleNamespace(readback="polled", mode_color_parse="rgb_kelvin", bar_switch=False,
+                             gradual=False, color_readback="mechanism_a_direct", brightness_by_pact=(),
+                             detail_power_read=False)
+    mode_15 = [readback.Frame(0.0, "rx", "aa05", 0x15), readback.Frame(0.0, "rx", "aaa5")]
+    for rgb, kelvin_read, counted in (((1, 2, 3), None, True), (None, 5500, True), (None, None, False)):
+        fake = SimpleNamespace(profile=polled, pact=None,
+                               state=SimpleNamespace(rgb_color=rgb, color_temp_kelvin=kelvin_read))
+        got = readback.carried(fake, mode_15, assigned={"rgb_color", "color_temp_kelvin"})
+        assert (got["rgb_color"] is None) is counted, (rgb, kelvin_read)
+    # and segments assigned by a poll that set none of them (a burst merged over what was held) read nothing
+    assert readback.carried(fake, mode_15, assigned={"segments"}, segments=frozenset())["segments"] == (
+        readback.NOT_SET)
+    # segments: a touched one already as intended proves nothing, nor does a whole-device colour every segment
+    # already showed; only the segments the poll set are judged (a burst that lost a colour group keeps the
+    # others as they were, a write's intent among them)
+    red, blue = (255, 0, 0), (0, 0, 255)
+    segs = SimpleNamespace(segments=[Segment(0, red, 100), Segment(1, blue, 100)], rgb_color=blue)
+    seg_step = ft.Step("segment_rgb_0", generic._nothing, None, "", fields=("segments",), touched=(0,))
+    rgb_step = ft.Step("rgb_blue", generic._nothing, None, "", fields=("rgb_color",))
+    carries = {"segments": None, "rgb_color": "the mode reply carries no RGB"}
+
+    def unset(i: int) -> str:
+        return f"not read: segments [{i}] not set by this poll's replies (no reply carried their group)"
+
+    for step, field, read, verdict in ((seg_step, "segments", None, f"not read: {readback.UNCHANGED}"),
+                                       (seg_step, "segments", {1}, unset(0)),
+                                       (rgb_step, "rgb_color", None, "fail"),
+                                       (rgb_step, "rgb_color", {1}, unset(0))):
+        assert readback.judge_fields(step, None, segs, segs, segs, carries, read)[0] == {field: verdict}
+    all_blue = SimpleNamespace(segments=[Segment(0, blue, 100), Segment(1, blue, 100)], rgb_color=blue)
+    assert readback.judge_fields(rgb_step, None, all_blue, all_blue, all_blue, carries)[0] == {
+        "rgb_color": f"not read: {readback.UNCHANGED}"}
+    # a walk row whose aa a5 group reply was lost leaves that group's segments out of the read-back: a touched
+    # one missing is not read (never a fail), a whole-device colour counts every segment held before the step,
+    # not only the ones returned, and so does a hand-written plan's check of the segments
+    walked = SimpleNamespace(segments=[Segment(1, blue, 100)], rgb_color=blue)
+    for step, field in ((seg_step, "segments"), (rgb_step, "rgb_color")):
+        assert readback.judge_fields(step, None, segs, segs, walked, carries) == ({field: unset(0)}, [])
+    # and where the poll before lost that group too, every segment a poll of the run set is still expected
+    assert readback.judge_fields(rgb_step, None, walked, walked, walked, carries, seen={0, 1}) == (
+        {"rgb_color": unset(0)}, [])
+    assert [readback.unread({"segments"}, carries, walked, None, was) for was in ((), {0, 1})] == [
+        [], ["segments"]]
+    # in a scene its segments' colours are the colour-mode memory (aa a5 reads it, the scene leaves it): a
+    # restore check compares them too, unless the restore noted it can't write them, and of a scene the
+    # catalog doesn't list only the segment levels (put back, as brightness); only the segments its poll
+    # set; a plug's relay is put back unless the restore's own poll read it as it started, a segment level
+    # unless that poll set it as it started; a gradual flag nobody read is noted
+    from govee_ble_local.models import DeviceState
+
+    watch = readback.FrameWatch("AA:BB:CC:DD:EE:01")
+    relay: list[bool] = []
+
+    async def answered_by_nobody() -> None:   # a poll answered by nobody: it sets nothing
+        return None
+
+    async def power(*args: Any) -> None:
+        relay.append(args[-1])
+    painted = SimpleNamespace(profile=polled, pact=None, state=DeviceState(scene_code=5))
+
+    async def scene_poll() -> Any:   # sets segment 0 alone, the others kept as they were held
+        watch.frames.extend((readback.Frame(0.0, "rx", "aa05", readback.SCENE_SUB), mode_15[1]))
+        held = [g for g in painted.state.segments if g.index != 0]
+        painted.state.scene_code, painted.state.segments = 5, [Segment(0, (9, 9, 9), 100), *held]
+        return painted.state
+
+    painted.update = scene_poll
+    in_scene = restore.StartState(DeviceState(scene_code=5, segments=[Segment(0, red, 100)]),
+                                  frozenset({"scene_code", "segments"}))
+    painted_over = await restore.check_restore(painted, in_scene, restore.Outcome(), watch)
+    assert painted_over.result == "partial" and set(painted_over.diffs) == {"segments"}
+    for note, result in ((restore.SEGMENT_COLOURS_NOTE, "close"), (restore.scene_unlisted(5), "close")):
+        assert (await restore.check_restore(painted, in_scene, restore.Outcome(unrestorable=[note]),
+                                            watch)).result == result
+    painted.state = DeviceState(segments=[Segment(1, (0, 255, 0), 100)])   # segment 1: a write's intent
+    two = restore.StartState(DeviceState(segments=[Segment(0, (9, 9, 9), 100), Segment(1, blue, 100)]),
+                             frozenset({"segments"}))
+    assert (await restore.check_restore(painted, two, restore.Outcome(), watch)).result == "exact"
+    # a start field the run changed that this poll didn't read back (its reply lost) is unread, as is a start
+    # segment it didn't set: the check is partial (the retry and NOT RESTORED path), never exact
+    lit = restore.StartState(DeviceState(brightness=50, segments=two.state.segments),
+                             frozenset({"brightness", "segments"}))
+    lost = await restore.check_restore(painted, lit, restore.Outcome(), watch, changed={"brightness"})
+    assert lost.result == "partial" and set(lost.unread) == {"brightness", "segments"} and not lost.diffs
+    assert runner.not_restored(lost)[0] == (
+        "brightness: start 50, not read back (no aa 04 brightness reply in this poll)")
+    assert (await restore.check_restore(painted, lit, restore.Outcome(), watch)).result == "exact"
+    painted.capabilities, painted.supports_segment_brightness = ("segments",), True
+    painted.set_segment_brightness = power
+    # segments a poll of the run set that the start's didn't (a group lost at the start) are noted: their
+    # colours and levels, or a Kelvin start's levels alone (its Kelvin puts every segment's colour back)
+    part, warm = (restore.StartState(DeviceState(color_temp_kelvin=k, segments=[Segment(0, red, 100)]),
+                                     frozenset({"segments", "color_temp_kelvin"}),
+                                     segments_set=frozenset({0})) for k in (None, 4000))
+    assert [restore.segment_gaps(painted, st, {0, 1, 2}) for st in (part, warm)] == [
+        [restore.segments_unread([1, 2], "colours and levels")], [restore.segments_unread([1, 2], "levels")]]
+    assert restore.segment_gaps(painted, part, {0}) == []
+    levels = restore.StartState(DeviceState(segments=[Segment(1, blue, 60)]), frozenset({"segments"}))
+    painted.state = DeviceState(segments=[Segment(1, blue, 60)])
+    assert [a[2] for a in restore._segment_levels(painted, levels, frozenset())] == [([1], 60)]
+    assert restore._segment_levels(painted, levels, frozenset({1})) == []
+    flag = SimpleNamespace(profile=SimpleNamespace(readback="polled", gradual=True), capabilities=(),
+                           zones=(), state=DeviceState(), update=answered_by_nobody)
+    unread = restore.StartState(DeviceState(), frozenset())
+    noted = (await restore.restore_start(flag, unread, str)).unrestorable
+    gradual = "gradual: unknown at the start (not read back)"
+    assert gradual in noted and restore.unrestorable_written(noted, {"gradual"}) == [gradual]
+    lamp = SimpleNamespace(profile=SimpleNamespace(readback="plug"), capabilities=(), set_power=power,
+                           state=DeviceState(is_on=True), update=answered_by_nobody)
+    was_on = restore.StartState(DeviceState(is_on=True), frozenset({"is_on"}), "plug")
+    assert (await restore.restore_start(lamp, was_on, str)).actions == ["relay on"] and relay == [True]
+    # nothing to put back (a plan's restore checked exact): no poll, no write, the same notes; a light that
+    # started off is never lit to put its brightness back: reading off, it gets nothing, reading on, its
+    # brightness and its power off; no restore sends a power-on only to light it
+    assert await restore.restore_start(flag, unread, str, only=frozenset()) == restore.Outcome([], [], noted)
+    sent: list[Any] = []
+
+    async def record(*args: Any) -> None:
+        sent.append(args)
+
+    dimmed = SimpleNamespace(profile=polled, pact=None, capabilities=("power", "brightness"), zones=(),
+                             state=DeviceState(), set_power=record, set_brightness=record)
+    was_off = restore.StartState(DeviceState(is_on=False, brightness=50), frozenset({"is_on", "brightness"}))
+    for now_on, wrote in ((False, []), (True, [(50,), (False,)])):
+        async def reads(on: bool = now_on) -> Any:
+            dimmed.state.is_on = on
+            return dimmed.state
+
+        dimmed.update, sent[:] = reads, []
+        done = (await restore.restore_start(dimmed, was_off, str)).actions
+        assert sent == wrote and "power on" not in done and (not wrote) is done[0].startswith("not sent")
+    # a row with the app's empty unlock check needs no secret once that check was sent and acked; a step with
+    # no field (a hand-written plan's) may change any colour, brightness or power
+    acked = readback.FrameWatch("AA:BB:CC:DD:EE:01")
+    acked.frames += [readback.Frame(0.0, "tx", "33b2"), readback.Frame(0.0, "rx", "33b2", 0)]
+    empty, needs = (SimpleNamespace(requires_secret=True, empty_secret_check=e) for e in (True, False))
+    assert [runner._no_secret(p, s, w) for p, s, w in (
+        (empty, None, acked), (empty, None, watch), (needs, None, acked), (needs, b"\x01" * 8, watch))] == [
+        False, True, True, False]
+    assert runner._changes(ft.Step("hand", generic._nothing, None, "")) == ["brightness", "colour", "power"]
+    # only the second counted Ctrl-C abandons a restore; after a SIGHUP or SIGTERM no uncounted cancellation
+    # does either (a write's ack timeout firing with it); with neither, any cancellation after the first does
+    first = SimpleNamespace(interrupted=True)
+    try:
+        for console, abandons in ((runner._Console(stopped_by="SIGTERM"), False),
+                                  (runner._Console(sigints=1), False), (runner._Console(sigints=2), True),
+                                  (runner._Console(), True)):
+            runner._CONSOLE = console
+            assert runner._second_ctrl_c(first, None) is abandons, console
+    finally:
+        runner._CONSOLE = runner._Console()
+    # a poll whose burst merged one colour group over the segments held set only that group's segments
+    kept = Segment(0, red, 100)
+    merged = SimpleNamespace(state=DeviceState(segments=[kept]))
+
+    async def merge() -> Any:
+        merged.state.segments = [kept, Segment(1, blue, 100)]
+        return merged.state
+
+    merged.update = merge
+    assert (await readback.poll(merged)).segments == {1}
+    # the H6047's own plan toggles the gradual flag only from a start the first poll read
+    h6047 = Device(profile_for("H6047"), ble_device("AA:BB:CC:DD:EE:47", "ihoment_H6047_1A2B"), None,
+                   sku="H6047")
+    for flag, skipped in ((None, True), (False, False)):
+        st = h6047.snapshot()
+        st.gradual = flag
+        ctx = ft.PlanContext(h6047, "H6047", {}, start=restore.StartState(st, frozenset()))
+        built = ft.PLANS["H6047"].build_steps(ctx)
+        skips = {s.name: bool(s.skip) for s in built}
+        assert (skips["gradual_on"], skips["gradual_off"]) == (skipped, skipped)
+        # its gradual steps change the flag, so a flag the restore's check didn't read back is unread there
+        assert [runner._changes(s) for s in built if s.name.startswith("gradual_")] == [["gradual"]] * 2
+    # a hand-written plan's restore (the default one and the H6047's) puts a scene start back by its catalog
+    # name, its segment colours first; one the catalog doesn't list comes back unrestorable, and no bare
+    # 33 05 04 (a scene by code) is ever sent
+    class Recorder(SimpleNamespace):
+        def __getattr__(self, name: str) -> Any:   # every setter, recorded
+            async def call(*args: Any) -> None:
+                self.calls.append((name, *args))
+            return call
+
+    painted_two = [Segment(0, red, 100), Segment(1, red, 100)]
+    for plan_restore in (runner._restore, ft.PLANS["H6047"].restore):
+        for name, back in (("Fire", [("set_segment_rgb", [0, 1], red), ("set_scene_by_name", "Fire")]),
+                           ("Gone", [])):
+            scene_dev = Recorder(calls=[], capabilities=("segments", "scenes"), scene_names=["Fire"])
+            started = {"scene_code": 7, "active_scene": name, "segments": painted_two}
+            notes = await plan_restore(scene_dev, started)
+            assert [c for c in scene_dev.calls if c[0].startswith(("set_scene", "set_segment"))] == back
+            assert notes == ([] if back else [restore.scene_unlisted(7)]), plan_restore
+
+
+def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt(
+    ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--list connects nothing and lists the plug by its ref; --all started at 05:00 runs read steps only
+    (the H6047 plan's segment read-back too), even once the window opens during the run, writes no relay of a
+    plug that is not allow-listed, and connects to no H14A1, whose every connect sends 33 25 (an effect stop):
+    --list and the summary mark it skipped, as does a read-only run by day, and the run exits 4 (incomplete).
+    Inside the window it connects as normal; when the window closes during its turn, it gets no connect after
+    (in its re-scan) or no poll after (once connected). A plug tested without its secret (its unlock never
+    sent) keeps the gate incomplete (exit 4) on its own; an allow-listed one toggles only once its ref is
+    typed. --force-hours lifts the window. A Ctrl-C (the main
+    task cancelled, as asyncio.run does) as the H6047's restore begins, with the terminal gone (every write to
+    it fails), lets that restore finish and marks the devices after it not run; a SIGHUP after the first
+    write went out, before its ack, still restores the H6047 and leaves no raw capture. With no terminal on
+    stdin, --all writes nothing visible unless --unattended. Modelled and unsupported devices are listed only.
+    A write step nothing verified keeps the gate incomplete (exit 4). A capture a killed run left raw is
+    redacted at the next start; GOVEE_FIELD_TEST_NOW pins the clock under pytest only. A Ctrl-C and then a
+    SIGHUP as the restore is checked abandon nothing; a tab closed at the start question, or at "go on with
+    the next device?" after a NOT RESTORED, stops the run with the rest not run (interrupted). Every file the
+    runs write is masked."""
+    from fake_ble import FakeGovee, FirmwareGovee, ble_device, frame, virtual_time
+    from test_h6047_field_test import _Sim
+
+    from govee_ble_local import profile_for, supported_skus
+    from govee_ble_local.transport import connection as conn_mod
+
+    survey = importlib.import_module("field_test.survey")
+    guard = importlib.import_module("field_test.guard")
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    real_now = guard.now
+    sim = _Sim()
+    sim.bars, sim.gradual = [True, False], True                 # start: left bar on, right bar off
+    sim.rgb.update({i: (9, 8, 7) for i in range(5, 10)})
+    start = (sim.on, list(sim.bars), sim.pct, sim.gradual, dict(sim.rgb), dict(sim.kelvin))
+    light, plug, bulb = FakeGovee(encrypted=False), FirmwareGovee(), FakeGovee(encrypted=False)
+
+    def answer(client: Any, plain: bytes) -> None:   # the H6047 simulator behind a real connection
+        if plain[0] == 0x33:
+            sim.write(plain)
+            client.push(frame(0x33, plain[1], 0), 0.005)
+        elif plain[0] == 0xAA:
+            for reply in sim.read(plain) or [frame(0xAA, plain[1], 0x01)]:
+                client.push(reply, 0.005)
+
+    light.on_write = answer
+    peers: dict[str, Any] = {"AA:BB:CC:DD:EE:47": light, "AA:BB:CC:DD:EE:83": plug, "AA:BB:CC:DD:EE:14": bulb}
+
+    async def establish(cls: Any, device: Any, name: str, **kw: Any) -> Any:
+        return await peers[device.address].establish(cls, device, name, **kw)
+
+    monkeypatch.setattr(conn_mod, "establish_connection", establish)
+    monkeypatch.setattr(conn_mod, "WRITE_ACK_TIMEOUT", 0.1)   # the unpaired plug never acks its time sync
+    modelled = next(s for s in supported_skus(allow_modelled=True)
+                    if profile_for(s) is None and profile_for(s, allow_modelled=True) is not None)
+
+    def heard(address: str, adv: Any) -> Any:
+        entry = survey.Heard(address, ble_device(address, adv.local_name), adv, adv.local_name, adv.rssi,
+                             seen_at=float("inf"))   # just heard: never scanned for again
+        return survey.describe(entry)
+
+    entries = [
+        heard("AA:BB:CC:DD:EE:47", SimpleNamespace(local_name="ihoment_H6047_1A2B", rssi=-50,
+                                                   manufacturer_data={0x8802: bytes([0xEC, 0, 1, 1, 1])})),
+        heard("AA:BB:CC:DD:EE:83", plug.advertisement()),
+        heard("AA:BB:CC:DD:EE:01", SimpleNamespace(local_name=f"ihoment_{modelled}_1A2B",
+                                                   manufacturer_data={}, rssi=-70)),
+        heard("AA:BB:CC:DD:EE:02", SimpleNamespace(local_name="ihoment_H9999_1A2B", manufacturer_data={},
+                                                   rssi=-80)),
+        heard("AA:BB:CC:DD:EE:14", SimpleNamespace(local_name="ihoment_H14A1_1A2B", manufacturer_data={},
+                                                   rssi=-60)),
+    ]
+    assert [e.tier for e in entries] == ["default", "default", "modelled", "unsupported", "default"]
+    assert [e.connect_visible for e in entries] == [None, None, None, None, "33 25 (effect stop)"]
+    no_effect_stop = "skipped: its connect sends 33 25 (effect stop), a visible change, outside the window"
+
+    async def fake_survey(_seconds: float, **_k: Any) -> list[Any]:
+        return list(entries)
+
+    monkeypatch.setattr(survey, "survey", fake_survey)
+
+    main: dict[str, Any] = {}
+
+    async def on_virtual_time(args: Any, out: Path) -> int:
+        main["task"] = asyncio.current_task()   # what asyncio.run cancels on a Ctrl-C
+        if args.list:
+            return int(await runner.list_devices(args, out, "T"))
+        with virtual_time():
+            return int(await runner.run_all(args, out, "T", runner._window(args), {"version": "test"}))
+
+    def run_all(*argv: str, signals: bool = False) -> tuple[int, dict[str, Any], Path]:
+        out = tmp_path / str(len(list(tmp_path.iterdir())))
+        out.mkdir()
+        args = runner.parse_args([*argv, "--settle", "0", "--out", str(out)])
+        run = on_virtual_time(args, out)
+        rc = runner._main_with_signals(run) if signals else asyncio.run(run)
+        summary = out / "fieldtest-summary-T.json"
+        return rc, json.loads(summary.read_text()) if summary.exists() else {}, out
+
+    # --list at 05:00: every device, its tier, and the plug by its ref and outlets; no connection, any hour;
+    # the H14A1 marked as --all would leave it now
+    clock = {"now": datetime.datetime(2026, 10, 23, 5, 0)}
+    monkeypatch.setattr(guard, "now", lambda: clock["now"])
+    with monkeypatch.context() as m:   # outside the suite an exported pin is ignored
+        m.delenv("PYTEST_CURRENT_TEST")
+        assert guard.pinned_clock_ignored() and real_now() != datetime.datetime(2026, 10, 23, 12, 0)
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    left = listed / ".h6047-01-frames-X.jsonl.raw"   # what a killed run leaves: redacted at the next start
+    ignored = (TOOLS.parent / ".gitignore").read_text().splitlines()   # and until then, never staged
+    assert "*.jsonl.raw" in ignored and "gate-*/" in ignored
+    left.write_text(json.dumps({"ts": 1, "addr": "AA:BB:CC:DD:EE:47", "dir": "tx", "plain": "3301",
+                                "wire": "e701ab", "enc": "none"}) + "\n")
+    rc = runner.main(["--list", "--out", str(listed)])
+    shown = capsys.readouterr().out
+    assert rc == 0 and light.establish_calls == plug.establish_calls == bulb.establish_calls == 0
+    assert f"{entries[1].ref} H5083 ihoment_H5083_xxxx AA:BB:CC:xx:xx:xx 1 outlet" in shown
+    assert f"ihoment_H14A1_xxxx AA:BB:CC:xx:xx:xx  ({no_effect_stop})" in shown
+    rows = json.loads(next(listed.glob("fieldtest-list-*.json")).read_text())["heard"]
+    assert [(h["tier"], h["skip"]) for h in rows] == [
+        ("default", None), ("default", None), ("modelled", None), ("unsupported", None),
+        ("default", no_effect_stop)]
+    assert not left.exists() and json.loads((listed / "h6047-01-frames-X.jsonl").read_text())["addr"] == (
+        "AA:BB:CC:xx:xx:xx")
+
+    # 05:00: read steps only, though the window opens before the first device's turn (no --yes); nothing
+    # visible is written, the plug's relay least of all, and the H14A1 is not connected to
+    real_device = runner.run_device
+
+    async def device_at_0730(*a: Any, **k: Any) -> Any:
+        clock["now"] = datetime.datetime(2026, 10, 23, 7, 30)
+        return await real_device(*a, **k)
+
+    monkeypatch.setattr(runner, "run_device", device_at_0730)
+    rc, night, _ = run_all("--all", "--no-prompt")
+    monkeypatch.setattr(runner, "run_device", real_device)
+    assert rc == 4 and night["gate"] == "incomplete"
+    assert [d["sku"] for d in night["devices"]] == ["H6047", "H14A1", "H5083"]   # the others: listed only
+    steps = [s for d in night["devices"] for s in d["steps"]]
+    assert all(s["kind"] == "read" or s["verdict"] == "skipped" for s in steps)
+    assert [steps[0][k] for k in ("step", "kind", "verdict")] == ["segment_readback_count", "read", "pass"]
+    assert night["devices"][1]["result"] == no_effect_stop and not night["devices"][1]["steps"]
+    assert bulb.establish_calls == 0 and night["totals"]["skipped"] == 1
+    assert {s["step"]: s["verdict"] for s in night["devices"][2]["steps"]} == {
+        "session_setup": "unverifiable", "relay_read": "pass"}            # no secret: no unlock sent
+    assert night["devices"][2]["no_secret"] and night["totals"]["no_secret"] == 1
+    assert (sim.on, sim.bars, sim.pct, sim.gradual) == start[:4]
+    assert "write_tx power" not in plug.sim.requests()
+    assert night["devices"][0]["restore"]["result"] == "not_needed"
+
+    # 07:30: a read-only run still leaves the H14A1 alone; one that may write connects to it as normal
+    rc, ro, _ = run_all("--all", "--read-only", "--no-prompt", "--only", entries[4].ref)
+    assert rc == 4 and ro["devices"][0]["result"] == no_effect_stop.replace("outside the window",
+                                                                            "on a read-only run")
+    assert bulb.establish_calls == 0
+    with monkeypatch.context() as m:   # no terminal on stdin: nothing visible without --unattended
+        m.setattr(runner, "_on_a_terminal", lambda: False)
+        rc, alone, _ = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
+        assert rc == 4 and alone["devices"][0]["result"] == no_effect_stop.replace("outside the window",
+                                                                                   "with no terminal")
+        assert bulb.establish_calls == 0 and alone["options"]["unattended"] is False
+        rc, lit, lit_out = run_all("--all", "--no-prompt", "--yes", "--unattended", "--only", entries[4].ref)
+    assert lit["devices"][0]["result"] == "completed" and bulb.establish_calls >= 1
+    assert lit["options"]["unattended"] is True
+    assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
+    capsys.readouterr()
+    rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref,   # the plug alone, no secret
+                          "--toggle-plugs", entries[1].ref)
+    assert rc == 4 and lone["gate"] == "incomplete" and lone["devices"][0]["result"] == "completed"
+    # into a pipe or a file (stdout no terminal: a `| tee` log) its name's MAC digits are masked
+    assert (f"  {entries[1].ref} H5083 ihoment_H5083_xxxx (rssi {entries[1].rssi} dBm): allow-listed, but"
+            in capsys.readouterr().out)
+
+    # an allow-listed plug is shown on a terminal by its name as its label shows it, and its signal (on the
+    # console only, never with its vendor prefix), and toggles only once its own ref is typed: another answer
+    # keeps it read-only
+    async def tester(prompt: str, _reader: Any = None) -> str:
+        return "a desk lamp" if "plugged" in prompt else "nope" if "Type its ref" in prompt else "s"
+
+    with monkeypatch.context() as m:
+        m.setattr(runner, "_readline", tester)
+        m.setattr(runner, "_shown_on_a_terminal", lambda: True)
+        rc, typed, _ = run_all("--all", "--only", entries[1].ref, "--toggle-plugs", entries[1].ref)
+    shown = capsys.readouterr().out
+    assert (f"  {entries[1].ref} H5083 {entries[1].name} (rssi {entries[1].rssi} dBm): allow-listed for a "
+            "relay toggle") in shown
+    assert f"{entries[1].ref}: read-only" in shown and typed["options"]["toggle_plugs"] == 0
+    assert "write_tx power" not in plug.sim.requests()
+
+    # the tab closes at the start question: on a terminal its prompt sees EOF, so nobody can answer; nothing
+    # is started, and the summary lists every device as not run (interrupted), exit 130
+    def hung_up(_prompt: str = "") -> str:
+        raise EOFError
+
+    calls = light.establish_calls
+    with monkeypatch.context() as m:
+        m.setattr(runner, "_on_a_terminal", lambda: True)
+        m.setattr("builtins.input", hung_up)
+        rc, closed, _ = run_all("--all", "--only", entries[0].ref)
+    assert rc == 130 and runner._CONSOLE.deaf and light.establish_calls == calls
+    assert [d["result"] for d in closed["devices"]] == ["not run (interrupted)"]
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+
+    # the window closes during the H14A1's turn: in its re-scan (21:59:50 to 22:00:30), so its connect is
+    # not made; or once it is connected, so nothing polls it after (a dropped link would reconnect)
+    def at_2200(real: Any) -> Any:
+        async def late(*a: Any, **k: Any) -> Any:
+            clock["now"] = datetime.datetime(2026, 10, 23, 22, 0, 30)
+            return await real(*a, **k)
+        return late
+
+    def effect_stops() -> int:
+        return sum(f[:3] == b"\x33\x25\x01" for f in bulb.received)
+
+    for module, name, connects, result in ((survey, "acquire", 0, no_effect_stop),
+                                           (runner, "capture_start", 1, "completed")):
+        clock["now"] = datetime.datetime(2026, 10, 23, 21, 59, 50)
+        calls, stops, real = bulb.establish_calls, effect_stops(), getattr(module, name)
+        monkeypatch.setattr(module, name, at_2200(real))
+        rc, edge, edge_out = run_all("--all", "--no-prompt", "--yes", "--unattended", "--only",
+                                     entries[4].ref)
+        monkeypatch.setattr(module, name, real)
+        report = json.loads((edge_out / edge["devices"][0]["report"]).read_text())
+        assert rc == 4 and edge["devices"][0]["result"] == result and "final_state" not in report
+        assert (bulb.establish_calls - calls, effect_stops() - stops) == (connects, connects)
+    assert edge["devices"][0]["steps"][0] == {
+        "step": "readback_baseline", "kind": "read", "verdict": "skipped", "basis": None,
+        "reason": no_effect_stop.removeprefix("skipped: ")}
+
+    # --force-hours lifts the window; a Ctrl-C as the H6047's restore begins, the terminal gone with it (every
+    # write to it fails, the "restoring" line first): it is restored all the same, and the run stops after it
+    real_restore = runner.restore_start
+    gone = {"tty": False}
+
+    class Tty(io.StringIO):
+        def write(self, s: str) -> int:
+            if gone["tty"]:
+                raise OSError(errno.EIO, "Input/output error")
+            return len(s)
+
+    def ctrl_c_then_restore(*a: Any, **k: Any) -> Any:
+        main["task"].cancel()
+        gone["tty"] = True
+        return real_restore(*a, **k)
+
+    monkeypatch.setattr(runner, "restore_start", ctrl_c_then_restore)
+    with monkeypatch.context() as m:
+        m.setattr(sys, "stdout", Tty())
+        rc, day, out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes", "--unattended")
+    monkeypatch.setattr(runner, "restore_start", real_restore)
+    assert runner._CONSOLE.dead
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    assert rc == 130 and day["gate"] == "fail" and day["window"]["forced"] is True
+    bars, *rest = day["devices"]
+    assert bars["result"] == "completed" and bars["interrupted"]
+    assert [r["result"] for r in rest] == ["not run (interrupted)"] * 2
+    verdicts = {s["step"]: s["verdict"] for s in bars["steps"]}
+    assert verdicts.pop("segment_brightness_0_9") == "fail"   # the simulator ignores 33 05 15 02
+    assert [verdicts.pop(k) for k in verdicts.copy() if k.startswith("scene_")] == ["fail"]   # and scenes
+    assert verdicts.pop("segment_color_temp_refused") == "pass" and set(verdicts.values()) == {"pass"}
+    assert {"power_off", "color_temp_4400", "segment_rgb_0_9", "zone_right_off",
+            "zone_left_color_temp_2200", "gradual_back"} <= set(verdicts)
+    assert bars["restore"]["result"] == "exact"
+    assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+    assert set(day) >= {"tool_version", "route", "library", "window", "options", "heard", "devices", "totals"}
+
+    # the terminal closes (SIGHUP) once the first write (power off) reached the light, before its ack: the
+    # H6047 is restored as on a Ctrl-C, and its capture is redacted into its own name (no raw file left); a
+    # Ctrl-C there instead, and the tab closed as its restore is checked: the hang-up cuts nothing short
+    def hang_up_before_the_ack(client: Any, plain: bytes) -> None:
+        if plain[:3] != b"\x33\x01\x00" or main.get("cut"):
+            return answer(client, plain)
+        main["cut"] = True
+        sim.write(plain)
+        if not main["ctrl_c"]:
+            return os.kill(os.getpid(), signal.SIGHUP)
+        ctrl_c = signal.getsignal(signal.SIGINT)   # what the terminal's Ctrl-C runs: asyncio.run's, counted
+        assert callable(ctrl_c)
+        ctrl_c(signal.SIGINT, None)
+
+    real_check = runner.check_restore
+
+    def hang_up_in_the_check(*a: Any, **k: Any) -> Any:
+        if main["ctrl_c"]:
+            os.kill(os.getpid(), signal.SIGHUP)
+        return real_check(*a, **k)
+
+    light.on_write = hang_up_before_the_ack
+    monkeypatch.setattr(runner, "check_restore", hang_up_in_the_check)
+    hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)   # never the suite's death, if no handler took it
+    for ctrl_c in (False, True):
+        main.update(cut=False, ctrl_c=ctrl_c)
+        try:
+            rc, cut, cut_out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes",
+                                       "--unattended", "--only", entries[0].ref, signals=True)
+        finally:
+            signal.signal(signal.SIGHUP, hup if ctrl_c else signal.SIG_IGN)
+        assert rc == 130 and main["cut"] and cut["devices"][0]["result"] == "interrupted"
+        assert (runner._CONSOLE.stopped_by, runner._CONSOLE.sigints) == ("SIGHUP", int(ctrl_c))
+        assert cut["devices"][0]["restore"]["result"] == "exact" and not cut["devices"][0]["not_restored"]
+        assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+        assert sorted(p.name for p in cut_out.iterdir() if "frames" in p.name) == ["h6047-01-frames-T.jsonl"]
+        monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    monkeypatch.setattr(runner, "check_restore", real_check)
+
+    # a restore the light ignores at first (a dropout) is tried again and ends exact; one it ignores for good
+    # is NOT RESTORED after its retries, and the run (no prompts) stops there; under the H6047's own plan one
+    # poll checks the plan's restore, and the generic restore sends only what that left off (its gradual
+    # flag, with no power-on for a light that reads on), nothing after an exact one
+    def ignore_a_restore_write(client: Any, plain: bytes) -> None:
+        if main["restoring"] and plain[:2] == main["op"] and main["ignore"]:
+            main["ignore"] -= 1
+            return client.push(frame(0x33, plain[1], 0), 0.005)   # acked, not applied
+        return answer(client, plain)
+
+    def restoring(real: Any) -> Any:
+        def begin(*a: Any, **k: Any) -> Any:
+            main["restoring"] = True
+            return real(*a, **k)
+        return begin
+
+    light.on_write = ignore_a_restore_write
+    monkeypatch.setattr(runner, "restore_start", restoring(real_restore))
+    monkeypatch.setattr(runner, "_restore_with", restoring(runner._restore_with))
+    capsys.readouterr()
+    acted: list[list[str]] = []
+    for plan, ignore, retries, left in (("--generic", 1, 1, []),
+                                        ("--generic", 3, 2, ["brightness: start 50, now 100"]),
+                                        ("--force-hours", 0, 0, []), ("--force-hours", -1, 0, [])):
+        main.update(restoring=False, ignore=abs(ignore), op=b"\x33\x04" if ignore >= 0 else b"\x33\xa3")
+        rc, again, again_out = run_all("--all", plan, "--force-hours", "--no-prompt", "--yes", "--unattended",
+                                       "--only", f"{entries[0].ref},{entries[4].ref}")
+        bars = again["devices"][0]
+        assert (bars["restore"]["retries"], bars["not_restored"]) == (retries, left), (plan, ignore)
+        stopped = f"not run (stopped: {entries[0].ref} was not restored)"
+        assert (again["devices"][1]["result"] == stopped) is bool(left)
+        acted.append(json.loads((again_out / bars["report"]).read_text())["restore_check"]["actions"])
+        sim.pct = start[2]
+    shown = capsys.readouterr().out
+    assert f"NOT RESTORED: {entries[0].ref} H6047 (light): brightness: start 50, now 100" in shown
+    assert acted[1] == ["brightness 50"]   # a retry sends only what its check found off, nothing that landed
+    checked = "the plan's restore checked: "
+    assert acted[2:] == [["the plan's restore", f"{checked}exact"],
+                         ["the plan's restore", f"{checked}partial, the generic restore puts back gradual",
+                          "gradual"]]
+    assert bars["plan"] == "hand" and bars["counts"]["fail"] == 0 and bars["restore"]["result"] == "exact"
+    assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+    # with prompts, the tab closed at "go on with the next device?" after one: its prompt sees EOF on the
+    # terminal, so the rest are not run (interrupted), exit 130
+    main.update(restoring=False, ignore=3, op=b"\x33\x04")
+    with monkeypatch.context() as m:
+        m.setattr(runner, "_on_a_terminal", lambda: True)
+        m.setattr("builtins.input", hung_up)
+        rc, lost, _ = run_all("--all", "--generic", "--force-hours", "--yes", "--only",
+                              f"{entries[0].ref},{entries[4].ref}")
+    assert rc == 130 and lost["devices"][0]["not_restored"]
+    assert lost["devices"][1]["result"] == "not run (interrupted)"
+    sim.pct = start[2]
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    monkeypatch.setattr(runner, "restore_start", real_restore)
+
+    # the gate: a write step nothing verified (no read-back carried it, no answer) leaves it incomplete, as
+    # does a close restore of something the run wrote and could never put back; an unverified one fails
+    summary = importlib.import_module("field_test.summary")
+    restore = importlib.import_module("field_test.restore")
+    ok = {"result": "completed", "counts": {"pass": 1}, "steps": [{"kind": "write", "verdict": "pass"}]}
+    unverified = {**ok, "steps": [{"kind": "write", "verdict": "unverifiable"}]}
+    failed = {**ok, "counts": {"pass": 0, "fail": 1}}
+    lost = restore.unrestorable_written(["colour: not read", "brightness: unknown", "relay: unknown"],
+                                        {"colour", "power"})
+    assert lost == ["colour: not read", "relay: unknown"]
+    close, blind = ({**ok, "restore": {"result": r, "unrestorable_written": lost}}
+                    for r in ("close", "unverified"))
+    # a close restore that left nothing changed for good passes (a card row's, on the tester's yes); one
+    # nothing verified (a card row's nobody answered for) keeps the gate incomplete
+    kept, unseen = ({**ok, "restore": {"result": r, "unrestorable_written": []}}
+                    for r in ("close", "unverified"))
+    cases = (ok, unverified, failed, close, blind, kept, unseen)
+    assert [summary.gate_verdict({"devices": [d]}) for d in cases] == [
+        "pass", "incomplete", "fail", "incomplete", "fail", "pass", "incomplete"]
+    assert [runner._exit_code({"devices": [d]}, False) for d in (ok, unverified, failed)] == [0, 4, 1]
+    # a restore a second Ctrl-C abandoned after the run wrote is NOT RESTORED, with what the writes changed
+    abandoned = restore.RestoreCheck("abandoned")
+    assert runner.not_restored(abandoned, {"power", "brightness"}, True) == [
+        "restore abandoned (a second Ctrl-C): what the run changed (brightness, power) is left as the run "
+        "made it"]
+    assert runner.not_restored(abandoned, (), False) == []
+    for path in (*out.iterdir(), *listed.iterdir(), *lit_out.iterdir(), *cut_out.iterdir()):
+        text = path.read_text()
+        assert "DD:EE" not in text and "1A2B" not in text, path.name
+        assert '"wire": "' not in text, path.name

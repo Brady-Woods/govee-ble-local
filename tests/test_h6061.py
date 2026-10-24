@@ -421,7 +421,7 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
 
     monkeypatch.setattr(ft, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: d)
-    args = ft.parse_args(["--no-prompt", "--settle", "0"])
+    args = ft.parse_args(["--no-prompt", "--settle", "0", "--unattended"])
     assert asyncio.run(ft.run(args, tmp_path, "T")) == 0
     report_path = tmp_path / "h6061-report-T.json"
     rep = json.loads(report_path.read_text())
