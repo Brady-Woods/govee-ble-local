@@ -315,6 +315,11 @@ def test_runner_reports_not_found_and_unplanned_sku(
         shown = capsys.readouterr().out
         assert f"Refused: {key}: the ref key is readable by group or others (mode 0640)" in shown
         assert key not in survey._KEYS
+    with monkeypatch.context() as m:   # exported outside the suite: a refusal (exit 3), no traceback
+        m.delenv("PYTEST_CURRENT_TEST")
+        assert runner.main(["--list", "--out", str(tmp_path / "wide")]) == runner.EXIT_REFUSED
+        assert ("Refused: GOVEE_FIELD_TEST_NO_SCAN is set, which turns the radio off (the test suite sets "
+                "it): unset it for a real run") in capsys.readouterr().out
     # under pytest no real scan or connect, even in a tree whose conftest sets no GOVEE_FIELD_TEST_NO_SCAN;
     # the connect no_radio stops is a tripwire, bleak's in name only: a broken guard fails here, off the radio
     monkeypatch.delenv("GOVEE_FIELD_TEST_NO_SCAN", raising=False)

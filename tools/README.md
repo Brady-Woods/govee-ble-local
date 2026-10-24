@@ -63,7 +63,9 @@ already matched from the name and the SKU's own digits). Test it offline next to
 `tests/test_field_test.py` with a fake device, within the suite's test budget. Under pytest
 (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real Bluetooth scan
 and connect (bleak's own `BleakScanner`, and every library connect while `establish_connection` is
-still bleak-retry-connector's), so a test reaches only a fake, whatever its tree's conftest sets.
+still bleak-retry-connector's), so a test reaches only a fake, whatever its tree's conftest sets. Outside
+pytest, a run with `GOVEE_FIELD_TEST_NO_SCAN` exported is refused before it starts (exit 3: unset it for a
+real run).
 
 ## Release-gate pass (all devices)
 
@@ -195,7 +197,7 @@ Notes:
 | 0 | The plan completed (its verdicts are in the report and the summary). | `gate` `pass`. |
 | 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, a partial or failed restore, or an unverified restore after a write it can never put back. |
 | 2 | No device found, or no plan for it. | Nothing to test. |
-| 3 | Refused: the wrong library or version, a bad `--secrets-file` or ref key (not a regular file, any group or others bit in its mode, an ACL entry on macOS; a secrets file that isn't JSON). | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
+| 3 | Refused: the wrong library or version, a bad `--secrets-file` or ref key (not a regular file, any group or others bit in its mode, an ACL entry on macOS; a secrets file that isn't JSON), `GOVEE_FIELD_TEST_NO_SCAN` set outside the test suite. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
 | 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
 | 130 | Interrupted (Ctrl-C, SIGHUP, SIGTERM). | Interrupted (Ctrl-C, SIGHUP, SIGTERM), whatever the gate. |
 

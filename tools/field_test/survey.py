@@ -85,6 +85,16 @@ def _radio_off() -> str | None:
     return None
 
 
+def radio_off_outside_tests() -> str | None:
+    """Why a real run is refused before it starts (``runner.main``, exit 3): :data:`NO_SCAN_ENV` exported
+    outside the test suite, where every scan and connect would raise instead (a traceback, exit 1: read as a
+    failed gate). None under pytest, where the radio is off by design (:func:`_radio_off`)."""
+    if os.environ.get(NO_SCAN_ENV) and not os.environ.get("PYTEST_CURRENT_TEST"):
+        return (f"{NO_SCAN_ENV} is set, which turns the radio off (the test suite sets it): unset it for a "
+                "real run")
+    return None
+
+
 def _real(obj: Any) -> bool:
     return str(getattr(obj, "__module__", "")).startswith("bleak")
 

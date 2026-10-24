@@ -1641,6 +1641,9 @@ def main(argv: list[str] | None = None) -> int:
     if pinned_clock_ignored():
         _say(f"{PINNED_NOW_ENV} is set but ignored: only the test suite pins the clock")
     try:
+        radio_off = _survey.radio_off_outside_tests()
+        if radio_off:
+            raise Refused(radio_off)
         _select_library(args.library)
         lib = library_info(args.library)
         if args.expect_version and lib.get("version") != args.expect_version:

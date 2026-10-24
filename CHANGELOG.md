@@ -118,7 +118,9 @@ model, from which the shipped readers are generated).
     before any scan, a new one too when its folder passes an ACL entry on.
   - Under pytest (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real
     scan and connect (bleak's `BleakScanner`; a library connect while `establish_connection` is bleak's), so a
-    test reaches only a fake whatever its tree's conftest sets. The suite sets `GOVEE_FIELD_TEST_NO_SCAN`, a
+    test reaches only a fake whatever its tree's conftest sets; outside pytest, `GOVEE_FIELD_TEST_NO_SCAN`
+    left exported refuses the run before it starts (exit 3, "unset it for a real run"), not a traceback (exit
+    1, read as a failed gate). The suite sets `GOVEE_FIELD_TEST_NO_SCAN`, a
     session ref key, an absent session secrets file and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every
     test (`tests/conftest.py`), and under pytest the default secrets file is never read; the clock pin is
     honoured only while pytest runs a test, and a real run that finds it exported says it is ignored.
