@@ -941,13 +941,13 @@ def _status(ic: int | None, groups: int, *extra: bytes) -> list[bytes]:
 _A1 = 0xA1   # the H707A status read's segment-info TLV (form_a1 segment_info): [count][IC per segment]
 
 
-def _confirmed(d: Device) -> bool:
-    """Whether a device read set the Device's segment count (the public flag, read in one place)."""
-    return d.segment_count_confirmed
+def _read_at(d: Device) -> float | None:
+    """The stamp of the device read that set the Device's segment count (the public name, in one place)."""
+    return d.segment_count_read_at
 
 
 @pytest.mark.parametrize(("sku", "replies", "count", "asked", "poll"), [
-    # aa 41 (H6062's sectionNum) at its profile's 33: only the flag tells the read from the default
+    # aa 41 (H6062's sectionNum) at its profile's 33: only the stamp tells the read from the default
     ("H6062", {0x41: [_frame(0xAA, 0x41, 0x00, 0x38, 33)]}, 33, [0x41], False),
     # ac a1 (goodsType 180's special-info read, behind allow_modelled): six segments
     ("H706A", {0xA1: [bytes.fromhex("ac00010007a10b060a0a0a0a0a0a000000000006")]}, 6, [0xA1], False),
@@ -985,41 +985,46 @@ def test_a_device_counted_write_takes_its_count_or_sends_nothing(
     # reads the device's count (its IC, whose pieces size the strip, ColorPieceConfig.c; the aa 0f string
     # count; or the 0xAC status read's TLV 0xA1), and without a usable count nothing is sent, as on H6062's
     # aa 41.
-    # segment_count_confirmed: True only once a usable count came back, even one equal to profile.segments.
+    # The read stamp: set only once a usable count came back, even one equal to profile.segments.
     d = _dev(sku, replies, allow_modelled=sku == "H706A")
-    assert not _confirmed(d) and d.segment_count == d.profile.segments
+    assert _read_at(d) is None and d.segment_count == d.profile.segments
     if poll:
         run(d.update())
     if count is None:
         with pytest.raises(GoveeBleError, match="not sending a colour frame"):
             run(d.set_rgb((1, 2, 3)))
         assert _sent(d) == [] and [q[1] for q in _queried(d)] == asked
-        assert not _confirmed(d) and d.segment_count == d.profile.segments
+        assert _read_at(d) is None and d.segment_count == d.profile.segments
     else:
         run(d.set_rgb((1, 2, 3)))
-        assert d.segment_count == count and [q[1] for q in _queried(d)] == asked and _confirmed(d)
+        assert d.segment_count == count and [q[1] for q in _queried(d)] == asked
+        assert _read_at(d) is not None
         # One send_many: the transport sends an 0xA3 run and the write after it as one unit.
         d._conn.send_many.assert_awaited_once_with(  # type: ignore[attr-defined]
             build.color_rgb_frames(1, 2, 3, d.profile.color_scheme, count))
 
 
-def test_the_confirmed_flag_follows_the_count_a_read_set() -> None:
-    # H7041's aa 0f (2 strings x 25 bulbs): a good read confirms, a failed one keeps the count and the flag,
-    # a negative count drops both, and a caller's count (set_segment_count, either form) is never confirmed.
+def test_the_read_stamp_follows_the_count_a_read_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    # H7041's aa 0f (2 strings x 25 bulbs): each good read stamps its time, a re-read of the same count too; a
+    # failed one keeps the count and the stamp; a negative count drops both; a caller's count
+    # (set_segment_count, either form) has none.
+    now = [0.0]
+    monkeypatch.setattr(device_mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
     reply: list[bytes] = []
     d = _dev("H7041", {0x0F: lambda _f: reply})
-    assert not _confirmed(d) and d.segment_count == 50
-    for strings, count, confirmed in [(1, 25, True), (None, 25, True), (0x80, 50, False), (2, 50, True)]:
+    assert (d.segment_count, _read_at(d)) == (50, None)
+    for now[0], strings, count, stamp in [(10.0, 1, 25, 10.0), (20.0, None, 25, 10.0), (30.0, 1, 25, 30.0),
+                                          (40.0, 0x80, 50, None), (50.0, 2, 50, 50.0)]:
         reply[:] = [] if strings is None else [_frame(0xAA, 0x0F, strings)]
         run(d._read_light_num())
-        assert (d.segment_count, _confirmed(d)) == (count, confirmed)
+        assert (d.segment_count, _read_at(d)) == (count, stamp)
     d.set_segment_count(5)
-    assert (d.segment_count, _confirmed(d)) == (5, False)
-    reply[:] = [_frame(0xAA, 0x0F, 1)]
+    assert (d.segment_count, _read_at(d)) == (5, None)
+    now[0], reply[:] = 60.0, [_frame(0xAA, 0x0F, 1)]
     run(d._read_light_num())
-    assert (d.segment_count, _confirmed(d)) == (25, True)
+    assert (d.segment_count, _read_at(d)) == (25, 60.0)
     d.set_segment_count(None)
-    assert (d.segment_count, _confirmed(d)) == (50, False)
+    assert (d.segment_count, _read_at(d)) == (50, None)
 
 
 @pytest.mark.parametrize(("sku", "bursts", "aa40", "reads", "count", "pieces"), [

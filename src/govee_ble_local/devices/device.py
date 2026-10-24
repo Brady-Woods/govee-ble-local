@@ -211,9 +211,9 @@ class Device:
         self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
-        # Whether _segment_count is a count a device read set (_adopt_segment_count), not a caller's
-        # (set_segment_count) or none.
-        self._segment_count_read = False
+        # time.monotonic() of the device read that set _segment_count (_adopt_segment_count); None for a
+        # caller's count (set_segment_count) or none (segment_count_read_at).
+        self._segment_count_read_at: float | None = None
         # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
         # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
         self._polled_color_mode: bool | None = None
@@ -513,27 +513,31 @@ class Device:
         if count is not None:
             _check_segment_count(count, build.piece_cap(self.profile.color_scheme))
         self._segment_count = count
-        self._segment_count_read = False   # the caller's count, not the device's
+        self._segment_count_read_at = None   # the caller's count, not the device's
         self._light_num_pieces = None   # the walk takes this count too, until the next aa 0f read
 
     @property
-    def segment_count_confirmed(self) -> bool:
-        """Whether :attr:`segment_count` is a count a read from the device set on this Device: the aa 41
-        section count, the ac a1 special-info read, the aa 40 live IC, a status read's TLV 0x40 (or the aa 40
-        reads around it), the aa 0f string count, or a status read's TLV 0xA1 / 0x40 (each profile's read in
-        :attr:`segment_count`), at a poll or the lazy read before a masked write. False otherwise: for the
+    def segment_count_read_at(self) -> float | None:
+        """When a read from the device last gave a usable segment count and set :attr:`segment_count`:
+        ``time.monotonic()`` seconds; None while :attr:`segment_count` is not a device read's.
+
+        Stamped by each such read on this Device: the aa 41 section count, the ac a1 special-info read, the
+        aa 40 live IC, a status read's TLV 0x40 (or the aa 40 reads around it), the aa 0f string count, or a
+        status read's TLV 0xA1 / 0x40 (each profile's read in :attr:`segment_count`), at a poll or in the
+        lazy read before a masked write, including a re-read that reports the same count. None for the
         profile's static count (a new Device until its first such read, and always on a profile whose count
         is static), after an aa 0f read whose count is negative drops the count, and after
         :meth:`set_segment_count` (either form) until the next such read. A read that gives no usable count
-        leaves the count and this as they were. No I/O; nothing persists past this Device. A caller that
-        offers one entity per segment sizes them from :attr:`segment_count` while this is True and keeps
-        them while it is False."""
-        return self._segment_count_read
+        leaves the count and the stamp as they were. No I/O; nothing persists past this Device. A caller
+        that offers one entity per segment sizes them from :attr:`segment_count` while this is set and keeps
+        them while it is None. On the Device, not in :class:`DeviceState`, as :attr:`power_read_at` is."""
+        return self._segment_count_read_at
 
     def _adopt_segment_count(self, count: int) -> None:
-        """A device read's segment count: it becomes :attr:`segment_count`, confirmed."""
+        """A device read's segment count: it becomes :attr:`segment_count`, stamped now
+        (:attr:`segment_count_read_at`)."""
         self._segment_count = count
-        self._segment_count_read = True
+        self._segment_count_read_at = time.monotonic()
 
     @property
     def min_kelvin(self) -> int | None:
@@ -2868,8 +2872,7 @@ class Device:
             _LOGGER.debug("%s (%s): aa 0f string-count read gave no usable count (%s)",
                           self.address, self._sku, count)
             if count is not None:
-                self._segment_count = self._light_num_pieces = None
-                self._segment_count_read = False
+                self._segment_count = self._light_num_pieces = self._segment_count_read_at = None
             return False
         self._light_num_pieces = count * self.profile.light_num_per_unit
         self._adopt_segment_count(min(self._light_num_pieces, build.MAX_MASK_SEGMENTS))

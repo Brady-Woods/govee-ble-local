@@ -68,22 +68,25 @@ model, from which the shipped readers are generated).
   - **Why on the Device:** it is not a `DeviceState` field, so `dataclasses.asdict(state)` and `snapshot()`
     don't carry it. A consumer that compares `asdict(state)` between polls (the Home Assistant integration
     does) sees no change from a re-read.
-- **`Device.segment_count_confirmed -> bool`: whether a read from the device set `segment_count`.** True only
-  while `segment_count` holds a count a device read set on this Device: the `aa 41` section count, the `ac a1`
-  special-info read, the `aa 40` live IC, a status read's TLV 0x40 (or the `aa 40` reads around it), the `aa 0f`
-  string count, or a status read's TLV 0xA1 / 0x40, at a poll or in the lazy read before a masked write.
-  - **What makes it False:** the profile's static count (a new Device until its first such read, and always on
+- **`Device.segment_count_read_at -> float | None`: when a read from the device last set `segment_count`.** The
+  value is in `time.monotonic()` seconds; None while `segment_count` is not a count a device read set.
+  - **What stamps it:** each read on this Device that gives a usable count and sets `segment_count`: the
+    `aa 41` section count, the `ac a1` special-info read, the `aa 40` live IC, a status read's TLV 0x40 (or the
+    `aa 40` reads around it), the `aa 0f` string count, or a status read's TLV 0xA1 / 0x40, at a poll or in the
+    lazy read before a masked write. A re-read that reports the same count stamps it again.
+  - **What makes it None:** the profile's static count (a new Device until its first such read, and always on
     a profile whose count is static); an `aa 0f` read whose count is negative, which drops the count back to
-    the profile's (the flag follows the count); and `set_segment_count(n)` or `set_segment_count(None)`, until
-    the next such read.
-  - **What leaves it as it is:** a read that gives no usable count keeps both the count and the flag.
+    the profile's (the stamp goes with it); and `set_segment_count(n)` or `set_segment_count(None)`, until the
+    next such read.
+  - **What leaves it as it is:** a read that gives no usable count keeps both the count and the stamp.
     Advertisements, `snapshot()` and state callbacks never change it, nor does a write past its lazy count read.
   - **Why it's needed:** `segment_count` falls back to `profile.segments`, so a count the device reported and
     the profile default look the same (an H6641 whose `aa 40` goes unanswered and one that reports 14 pieces
-    both show 14). Size segment entities from `segment_count` while the flag is True, and keep them while it is
-    False.
-  - **Scope:** synchronous, no I/O, and nothing persists: it lives with the Device, so a new Device for the same
-    address starts False.
+    both show 14). Size segment entities from `segment_count` while the stamp is set, and keep them while it is
+    None.
+  - **Why on the Device:** as with `power_read_at`, it is not a `DeviceState` field, so
+    `dataclasses.asdict(state)` and `snapshot()` don't carry it. It does no I/O and nothing persists: a new
+    Device for the same address starts at None.
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but three row facts,
   below: segment colour temperature, the segment-brightness groups and a status row's device-info reads; the
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the segment split
@@ -744,8 +747,8 @@ model, from which the shipped readers are generated).
   H706A / H806A, 9 on H706B, 12 on H706C / H806C) is `Device.segment_count` once a poll has read it, and a
   segment index at or past it raises. An integration that makes one entity per `profile.segments`
   (hass-govee-ble-local's segment lights, disabled by default) offers 12, those past the unit's count
-  unusable, until it sizes them from `Device.segment_count` while `Device.segment_count_confirmed` is True
-  (Added, above) and keeps them while it is False.
+  unusable, until it sizes them from `Device.segment_count` while a device read has stamped that count (Added,
+  above) and keeps them while none has.
 - **H703A / H703B (h61d3 263): RGB read-back from the status read's TLV 0xA5.** The screen reads that TLV as
   one `[brightness, R, G, B]` record at bytes 1-4, from a value of 5 bytes or more, never reads byte 0, and never
   fails the read on it (`VM4Light$afterConnectedSingleReadDeviceInfo$1.n`); `SubMode4Color.l` takes the record
@@ -870,8 +873,8 @@ model, from which the shipped readers are generated).
   nothing). Admitted by default, whole-device control (power, brightness, RGB, colour temperature; segments left
   out, as on H7025, the Part tab being account-sized): h7020 **H702A / H702B / H702C** (316), **H7026 / H8026**
   (318), **H7027** (337) and **H30D0**, **H30D1**† (391). For integrators: H3401 and H3510 / H3511 size their
-  segments from `device.segment_count` while `device.segment_count_confirmed` is True, and keep them while it
-  is False, as the other IC-sized rows do. Source-traced,
+  segments from `device.segment_count` while a device read has stamped that count (Added), and keep them while
+  none has, as the other IC-sized rows do. Source-traced,
   not live-verified: none of these SKUs is on the bench. Like every status row, the new rows also get the
   library's aa 06 / aa 07 device-info reads, which no firmware or bench evidence backs on them yet
   (status-row-versions-from-tlv07).
@@ -1608,15 +1611,15 @@ model, from which the shipped readers are generated).
   R707A-C (`status_segment_count`, Added), on the h7020 bulb strings (`light_num_per_unit`, Added) and, behind
   `allow_modelled`, on H706A / H706B / H706C / H806A / H806C (the `ac a1` special-info read, Added).
   hass-govee-ble-local builds one segment entity per `profile.segments`; it needs to size them from
-  `device.segment_count` while `device.segment_count_confirmed` is True (Added), keep them while it is False,
-  and reload when the count changes: until then a strip shorter than the profile's count shows entities
+  `device.segment_count` while a device read has stamped that count (Added), keep them while none has, and
+  reload when the count changes: until then a strip shorter than the profile's count shows entities
   whose writes raise GoveeBleInvalidValue, and H6641's `segment_14` / `segment_15` entities (its count is now
   at most 14) need removing. Release order, as for the card rows (DECISIONS.md 16, "Integration support first"):
-  - first, an integration release that sizes the segment entities from `device.segment_count` while
-    `device.segment_count_confirmed` is True, keeps them while it is False, reloads when the count changes and
-    removes the entities past it. It ships dormant for these profiles on its current library floor, where their
+  - first, an integration release that sizes the segment entities from `device.segment_count` while a device
+    read has stamped that count, keeps them while none has, reloads when the count changes and removes the
+    entities past it. It ships dormant for these profiles on its current library floor, where their
     `segment_count` is the static count (`profile.segments` as the fallback on a library without
-    `segment_count`) and a library without the flag counts as False, so it builds the same entities there;
+    `segment_count`) and a library without the stamp counts as no read, so it builds the same entities there;
   - then the library release that makes these profiles' `segment_count` follow the device (this one);
   - then an integration release that raises its floor to that library release.
 
