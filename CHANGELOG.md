@@ -128,7 +128,9 @@ model, from which the shipped readers are generated).
   - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
     rows too; the visible connect write the tool reads is what the library's connect sends) and
     `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE: an H6047
-    simulator, the H5083 firmware image, an H14A1, a modelled and an unsupported row).
+    simulator, the H5083 firmware image, an H14A1, a modelled and an unsupported row). The masking tests and
+    `masking.py`'s examples use made-up advertised-name tails, no bench device's: a name a test hears from
+    its address ends in that address's last digits (`00:00:5E:00:53:D1`: `…_53D1`).
 
 ## [1.7.0] — 2026-10-23
 

@@ -53,8 +53,8 @@ _MAC_TOKEN_RE = re.compile(
     r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}([:_-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4,}(?![0-9A-Fa-f])")
 _HEX4_TAIL_RE = re.compile(r"[0-9A-Fa-f]{4}$")
 # A Govee advertised name inside free text, in the shapes ``identify.sku_from_local_name`` parses: a
-# brand or ``GBK_`` name (``ihoment_H6188_A2D1``), a ``GVH``/``GVR`` name with an ``_``
-# (``GVH6188_1A2B``) or a bare ``GV`` name (``GVH60A67457``, ``GV61881A2B``). Group 1 is the name up
+# brand or ``GBK_`` name (``ihoment_H6188_5383``), a ``GVH``/``GVR`` name with an ``_``
+# (``GVH6188_1A2B``) or a bare ``GV`` name (``GVH60A65357``, ``GV61881A2B``). Group 1 is the name up
 # to the 4 MAC digits it ends in. Only these shapes, so ``color_temp_2700`` is never taken for one.
 _NAME_TOKEN_RE = re.compile(
     r"((?:ihoment|Govee|Minger|GBK)_[0-9A-Za-z]+_|(?<![0-9A-Za-z])GV[HR][0-9A-Za-z]*_"
@@ -74,8 +74,8 @@ def mask_address(address: str | None) -> str | None:
 
 def _mac_tail_start(name: str) -> int | None:
     """Where the MAC digits a Govee name ends in start, or None: the last 4 hex digits after an
-    ``_`` (``ihoment_H5083_A2D1``, ``GVH6188_1A2B``) or, in a bare ``GV`` name, after the SKU
-    (``GV61881A2B``, ``GVH60A67457``; see ``identify.sku_from_local_name``)."""
+    ``_`` (``ihoment_H5083_5383``, ``GVH6188_1A2B``) or, in a bare ``GV`` name, after the SKU
+    (``GV61881A2B``, ``GVH60A65357``; see ``identify.sku_from_local_name``)."""
     m = _HEX4_TAIL_RE.search(name)
     if m is None:
         return None

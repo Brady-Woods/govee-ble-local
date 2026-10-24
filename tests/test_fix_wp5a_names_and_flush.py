@@ -42,7 +42,7 @@ def masking(ft: ModuleType) -> ModuleType:
 
 def _identifying(text: str) -> list[str]:
     """Every spelling of ADDR / WIFI past the vendor prefix, and the name's MAC digits, in ``text``."""
-    forms = ["a2d1"]
+    forms = ["53d1"]
     for mac in (ADDR.lower(), WIFI.lower()):
         tail = mac.split(":")[3:]
         forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", ""), "".join(tail[1:])]
@@ -65,13 +65,13 @@ def _connect_error(name: str, address: str = ADDR) -> GoveeBleConnectionError:
 
 
 @pytest.mark.parametrize(("name", "masked"), [
-    ("ihoment_H6188_A2D1", "ihoment_H6188_xxxx"),
-    ("Govee_H6008_A2D1", "Govee_H6008_xxxx"),
-    ("Minger_H6001_A2D1", "Minger_H6001_xxxx"),
-    ("GBK_H6188_A2D1", "GBK_H6188_xxxx"),
-    ("GVH6188_A2D1", "GVH6188_xxxx"),
-    ("GVH60A6A2D1", "GVH60A6xxxx"),
-    ("GV6188A2D1", "GV6188xxxx"),
+    ("ihoment_H6188_53D1", "ihoment_H6188_xxxx"),
+    ("Govee_H6008_53D1", "Govee_H6008_xxxx"),
+    ("Minger_H6001_53D1", "Minger_H6001_xxxx"),
+    ("GBK_H6188_53D1", "GBK_H6188_xxxx"),
+    ("GVH6188_53D1", "GVH6188_xxxx"),
+    ("GVH60A653D1", "GVH60A6xxxx"),
+    ("GV618853D1", "GV6188xxxx"),
 ])
 def test_mask_text_masks_the_mac_digits_of_any_govee_name(
     masking: ModuleType, name: str, masked: str
@@ -88,12 +88,12 @@ def test_mask_text_masks_the_mac_digits_of_any_govee_name(
 
 
 def test_mask_text_masks_the_given_names_whatever_their_shape(masking: ModuleType) -> None:
-    text = f"{ADDR} - Light_A2D1: Failed to connect"
-    assert "A2D1" in masking.mask_text(text, ADDR)   # not a Govee name shape: only known by name
-    assert masking.mask_text(text, ADDR, ("Light_A2D1", None)) == (
+    text = f"{ADDR} - Light_53D1: Failed to connect"
+    assert "53D1" in masking.mask_text(text, ADDR)   # not a Govee name shape: only known by name
+    assert masking.mask_text(text, ADDR, ("Light_53D1", None)) == (
         "00:00:5E:xx:xx:xx - Light_xxxx: Failed to connect")
     err = GoveeBleConnectionError(text)
-    assert masking.describe_error(err, ADDR, ["Light_A2D1"]) == (
+    assert masking.describe_error(err, ADDR, ["Light_53D1"]) == (
         "GoveeBleConnectionError: 00:00:5E:xx:xx:xx - Light_xxxx: Failed to connect")
 
 
@@ -150,9 +150,9 @@ def _run(ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, 
 
 
 @pytest.mark.parametrize(("name", "masked"), [
-    ("ihoment_H9995_A2D1", "ihoment_H9995_xxxx"),
-    ("GV9995A2D1", "GV9995xxxx"),
-    ("Light_A2D1", "Light_xxxx"),   # caught only because the runner hands the scrubber the name
+    ("ihoment_H9995_53D1", "ihoment_H9995_xxxx"),
+    ("GV999553D1", "GV9995xxxx"),
+    ("Light_53D1", "Light_xxxx"),   # caught only because the runner hands the scrubber the name
 ])
 def test_a_failed_connect_with_the_name_in_its_text_is_scrubbed(
     ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, masked: str
@@ -168,7 +168,7 @@ def test_a_failed_connect_with_the_name_in_its_text_is_scrubbed(
     assert rep["device"]["name"] == masked
 
 
-@pytest.mark.parametrize("name", ["ihoment_H9995_A2D1", "Light_A2D1"])
+@pytest.mark.parametrize("name", ["ihoment_H9995_53D1", "Light_53D1"])
 def test_a_failed_reconnect_mid_run_is_scrubbed(
     ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
 ) -> None:
@@ -212,7 +212,7 @@ def test_the_capture_is_redacted_even_if_flushing_the_frame_log_fails(
     async def on(_on: bool) -> None: ...
 
     monkeypatch.setattr(dev, "set_power", on)
-    rc, text = _run(ft, runner, monkeypatch, tmp_path, dev, "ihoment_H9990_A2D1", "H9990")
+    rc, text = _run(ft, runner, monkeypatch, tmp_path, dev, "ihoment_H9990_53D1", "H9990")
     rep = json.loads(text)
     assert rc == 0 and rep["result"] == "completed" and rep["frames_redacted"] == 2
     raw = frames.read_text().lower()

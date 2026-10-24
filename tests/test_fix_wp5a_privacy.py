@@ -110,7 +110,7 @@ class _FailingDevice:
 
 
 def _run(ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, plan: Any,
-         dev: Any, name: str = "ihoment_H9995_A2D1") -> tuple[int, str]:
+         dev: Any, name: str = "ihoment_H9995_53D1") -> tuple[int, str]:
     ft.register_plan(plan)
     ble = SimpleNamespace(address=ADDR, name=name)
     adv = SimpleNamespace(local_name=name, manufacturer_data={}, rssi=-50)
@@ -147,7 +147,7 @@ def test_send_readback_and_restore_errors_are_scrubbed(
     assert rep["steps"][0]["readback"].startswith("error: GoveeBleConnectionError:")
     assert "dev_00_00_5E_xx_xx_xx" in rep["steps"][0]["readback"]
     assert rep["restore"].startswith("error: GoveeBleTimeout: 00:00:5E:xx:xx:xx: restore failed")
-    assert _identifying(text) == [] and "A2D1" not in text.upper()
+    assert _identifying(text) == [] and "53D1" not in text.upper()
     assert rep["device"] == {"address": "00:00:5E:xx:xx:xx", "name": "ihoment_H9995_xxxx",
                              "encryption": "aes_rc4_psk"}
 
@@ -169,10 +169,10 @@ def test_an_aborted_run_is_scrubbed(
 
 
 @pytest.mark.parametrize(("name", "masked"), [
-    ("ihoment_H6188_A2D1", "ihoment_H6188_xxxx"),
+    ("ihoment_H6188_5383", "ihoment_H6188_xxxx"),
     ("Govee_H6008_6047", "Govee_H6008_xxxx"),
     ("GVH6188_1A2B", "GVH6188_xxxx"),
-    ("GVH60A67457", "GVH60A6xxxx"),
+    ("GVH60A65357", "GVH60A6xxxx"),
     ("GV61881A2B", "GV6188xxxx"),
     ("Govee Glide wall", "Govee Glide wall"),
     ("Weird 6188 name", "Weird 6188 name"),
@@ -193,7 +193,7 @@ def test_discovery_masks_names_and_skips_a_device_identified_as_another_sku(
 
     seen = [  # an H6006 whose name happens to end in 6188 is the strongest signal around
         (SimpleNamespace(address="00:00:5E:00:53:88", name=None), adv("ihoment_H6006_6188", -40)),
-        (SimpleNamespace(address=ADDR, name=None), adv("ihoment_H6188_A2D1", -70)),
+        (SimpleNamespace(address=ADDR, name=None), adv("ihoment_H6188_53D1", -70)),
     ]
 
     class _Scanner:
