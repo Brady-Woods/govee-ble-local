@@ -1102,7 +1102,11 @@ model, from which the shipped readers are generated).
     (39); h6159 **H6159 / H6110 / H6109 / H614B / H614E** (40); h6160 **H6160** (40); h6182 **H6182** (40);
     stringlightv2 **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196 / H613G†** (2), **H615A /
     H615B / H615C / H615D** (40), **H616B** (68), **H6178** (78), **H615E** (108), **H6192** (143). 86 SKUs, 31
-    of them released in 1.6.1.
+    of them released in 1.6.1. A black report with no segments also changes on the 18 `rgb_kelvin_0d_nocct`
+    SKUs of the entry above, none of them released in 1.6.1: h6800 **H6800** (272); h70b1 **H70B1** (134); h70bx
+    **H70BC** (216); h6840 **H6840 / H8840†** (278), **H6841 / H8841†** (325), **H6842 / R6842†** (381),
+    **H6843** (382); h70b6 **H70B6** (329), **H70B8** (341); h70b3 **H70B3** (229), **H70B4** (230), **H70B5**
+    (231), **H6810** (255), **H6811 / H8811†** (256). That makes 104 SKUs for the black report.
   - Behind `allow_modelled`: h60ax **H1270** (346), **H1232** (356), **H1252** (373); homelightv1 **H6148** (16).
   - Not yet the H703A / H703B (h61d3 263, behind `allow_modelled`). Their screen shows the stock page too
     (`H703ADetailActivity`'s `VM4Light` is an `IColorModeFuc`, `VM4Light.java:119`; `ConfigDetail.a:63-106`
