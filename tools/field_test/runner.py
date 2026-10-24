@@ -67,7 +67,7 @@ from .masking import (
     snapshot,
     write_text_atomic,
 )
-from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step
+from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step, restore_scene
 from .readback import FrameWatch, Judgement, Reads, carried, judge, judge_fields, outlet_mask, poll, unread
 from .restore import (
     CHANGES,
@@ -572,13 +572,16 @@ def _err(err: BaseException, address: str | None, names: Names = (), secrets: Co
     return f"error: {mask_text(describe_error(err, address, names), None, (), secrets)}"
 
 
-async def _restore(dev: Device, st: Snapshot) -> None:
-    """A hand-written plan's default restore (best effort): brightness, then scene / colour temperature /
-    RGB, then off if it was off. The generic plan restores with ``restore.restore_start``."""
+async def _restore(dev: Device, st: Snapshot) -> list[str]:
+    """A hand-written plan's default restore (best effort): brightness, then scene (by its catalog name, its
+    segment colours first: :func:`.plan.restore_scene`) / colour temperature / RGB, then off if it was off;
+    returns what it can't put back (a scene the catalog doesn't list). The generic plan restores with
+    ``restore.restore_start``."""
+    notes: list[str] = []
     if st.get("brightness"):
         await dev.set_brightness(st["brightness"])
     if st.get("scene_code") is not None:
-        await dev.set_scene(st["scene_code"])
+        notes += await restore_scene(dev, st)
     elif st.get("color_temp_kelvin"):
         await dev.set_color_temp(st["color_temp_kelvin"])
     elif st.get("rgb_color"):
@@ -586,16 +589,17 @@ async def _restore(dev: Device, st: Snapshot) -> None:
         await dev.set_rgb((r, g, b))
     if st.get("is_on") is False:
         await dev.set_power(False)
+    return notes
 
 
 async def _restore_with(plan: SkuPlan, dev: Device, st: Snapshot, address: str | None = None,
-                        names: Names = ()) -> str:
-    """Run the plan's restore (default :func:`_restore`): ``"ok"``, or the (scrubbed) error."""
+                        names: Names = ()) -> tuple[str, list[str]]:
+    """Run the plan's restore (default :func:`_restore`): ``"ok"`` or the (scrubbed) error, and the
+    unrestorable entries it returned."""
     try:
-        await (plan.restore or _restore)(dev, st)
-        return "ok"
+        return "ok", list(await (plan.restore or _restore)(dev, st) or ())
     except Exception as err:
-        return _err(err, address, names)
+        return _err(err, address, names), []
 
 
 def _flush_frame_log(timeout: float = FRAME_LOG_FLUSH_SECONDS) -> None:
@@ -875,15 +879,17 @@ async def _carry_on(aw: Coroutine[Any, Any, T], run: _Run) -> T:
                   "Ctrl-C abandons them) ...")
 
 
-async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None) -> Outcome:
-    """A hand-written plan's restore as an :class:`Outcome`, then (``start``: ``--all``, once the start was
-    captured) one poll checks it (:func:`.restore.check_restore`, no question asked) and, where that check
-    is not exact, the generic restore from that start puts back only the fields it found off or didn't read
-    back (the H6062's segment levels, the H6061's mixed colours). Where it is exact (or its poll failed) the
-    generic restore sends nothing and only records what can't be restored."""
-    result = await _restore_with(run.plan, run.dev, initial, run.address, run.names)
-    out = Outcome(["the plan's restore"], [] if result == "ok" else [result])
-    if start is not None and getattr(run.dev, "profile", None) is not None:
+async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None, *, follow: bool) -> Outcome:
+    """A hand-written plan's restore as an :class:`Outcome` (the start's scene name added to the snapshot it
+    gets, so a scene start goes back by name), then (``follow``: ``--all``, once the start was captured) one
+    poll checks it (:func:`.restore.check_restore`, no question asked) and, where that check is not exact,
+    the generic restore from that start puts back only the fields it found off or didn't read back (the
+    H6062's segment levels, the H6061's mixed colours). Where it is exact (or its poll failed) the generic
+    restore sends nothing and only records what can't be restored."""
+    st = {**initial, "active_scene": start.active_scene} if start is not None else initial
+    result, notes = await _restore_with(run.plan, run.dev, st, run.address, run.names)
+    out = Outcome(["the plan's restore"], [] if result == "ok" else [result], notes)
+    if follow and start is not None and getattr(run.dev, "profile", None) is not None:
         check = await check_restore(run.dev, start, out, run.watch, changed=run.changed)
         off = frozenset(check.diffs) | frozenset(check.unread)
         out.actions.append(f"the plan's restore checked: {check.result}"
@@ -971,7 +977,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
         if run.generic and start is not None:
             return restore_start(dev, start, run.describe)
         if not run.generic and initial is not None:
-            return _plan_restore(run, initial, start if run.policy.gate else None)
+            return _plan_restore(run, initial, start, follow=run.policy.gate)
         return None
 
     async def check_it(outcome: Outcome) -> RestoreCheck:

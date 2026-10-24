@@ -27,10 +27,12 @@ from ..plan import (
     Step,
     brightness_steps,
     register_plan,
+    restore_scene,
     rgb_steps,
     state_is,
     tint_pick_step,
 )
+from ..restore import segment_runs
 
 if TYPE_CHECKING:
     from govee_ble_local import Device
@@ -151,26 +153,24 @@ def _then(*calls: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]
     return run
 
 
-async def restore(dev: Device, st: Snapshot) -> None:
-    """Put the bars back from the initial snapshot: gradual, brightness, colour (whole-device or
-    per-bar kelvin, else the per-segment colours that were read back), then power."""
+async def restore(dev: Device, st: Snapshot) -> list[str]:
+    """Put the bars back from the initial snapshot: gradual, brightness, colour (a scene by its catalog name,
+    its segment colours first: :func:`.plan.restore_scene`; whole-device or per-bar kelvin; else the
+    per-segment colours that were read back), then power. Returns what it can't put back."""
+    notes: list[str] = []
     if st.get("gradual") is not None:
         await dev.set_gradual(bool(st["gradual"]))
     if st.get("brightness"):
         await dev.set_brightness(st["brightness"])
     kelvins = st.get("zone_color_temp_kelvin") or {}
     if st.get("scene_code") is not None:
-        await dev.set_scene(st["scene_code"])
+        notes += await restore_scene(dev, st)
     elif kelvins:
         for index, name in ((0, "left"), (1, "right")):
             if index in kelvins:
                 await dev.set_zone_color_temp(name, kelvins[index])
     elif st.get("segments"):
-        runs: dict[RGB, list[int]] = {}
-        for seg in st["segments"]:
-            if seg.rgb is not None:
-                runs.setdefault(seg.rgb, []).append(seg.index)
-        for rgb, indices in runs.items():
+        for rgb, indices in segment_runs(st["segments"]):
             await dev.set_segment_rgb(indices, rgb)
     bars = st.get("zone_power") or {}
     if st.get("is_on") is False:
@@ -180,6 +180,7 @@ async def restore(dev: Device, st: Snapshot) -> None:
         for index, name in ((0, "left"), (1, "right")):
             if bars.get(index) is False:
                 await dev.set_zone_power(name, False)
+    return notes
 
 
 PLAN = register_plan(SkuPlan(

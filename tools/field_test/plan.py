@@ -9,7 +9,7 @@ existing plan needs to change.
 The step factories below (:func:`power_steps`, :func:`brightness_steps`, :func:`rgb_steps`,
 :func:`tint_pick_step`, :func:`scene_steps`) build the steps most plans share; bind a step's
 arguments with :func:`functools.partial` and :func:`state_is` rather than a ``lambda x=x:`` default,
-which a type checker can't follow.
+which a type checker can't follow. A plan's restore puts a scene start back with :func:`restore_scene`.
 """
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ import dataclasses
 from collections.abc import Awaitable, Callable, Iterable
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+
+from .restore import SEGMENT_COLOURS_NOTE, scene_unlisted, segment_runs
 
 if TYPE_CHECKING:   # typing only: the runner chooses the library to test after parsing its arguments
     from govee_ble_local import Device
@@ -102,8 +104,11 @@ class SkuPlan:
     """The test plan for one SKU.
 
     ``build_steps`` is called once, after connecting, and returns the ordered steps.
-    ``restore`` (optional) puts the device back from the initial snapshot; the default restore
-    re-applies brightness, then scene / colour temperature / RGB, then power-off if it was off.
+    ``restore`` (optional) puts the device back from the initial snapshot (with the start's
+    ``active_scene`` added) and returns what it can't put back (the report's unrestorable entries, each
+    starting with what it is about, ``scene:`` ...; None: nothing); the default restore re-applies
+    brightness, then scene (:func:`restore_scene`) / colour temperature / RGB, then power-off if it was
+    off.
     ``extra_name_hints`` are substrings of the advertised name that also select this plan when the
     SKU can't be parsed from it (the SKU's own digits, e.g. ``6188``, are always tried).
     """
@@ -113,7 +118,7 @@ class SkuPlan:
     build_steps: Callable[[PlanContext], list[Step]]
     intro: str = ""                                   # shown to the tester before the steps run
     snapshot_keys: tuple[str, ...] = DEFAULT_SNAPSHOT_KEYS
-    restore: Callable[[Device, Snapshot], Awaitable[None]] | None = None
+    restore: Callable[[Device, Snapshot], Awaitable[list[str] | None]] | None = None
     extra_name_hints: tuple[str, ...] = ()
 
 
@@ -191,3 +196,32 @@ def scene_steps(dev: Device, names: Iterable[str], codes: dict[str, int]) -> lis
     return [Step(f"scene_{name}", partial(dev.set_scene_by_name, name),
                  state_is("scene_code", codes.get(name)),
                  f"Scene '{name}': is an effect/scene running (not a plain colour)?") for name in names]
+
+
+async def restore_scene(dev: Device, st: Snapshot) -> list[str]:
+    """Put a scene start (``st["scene_code"]``) back the way the library activates one: its segment colours
+    first (``st["segments"]``: the colour-mode memory, which the scene leaves and the run's colour writes
+    changed), one ``set_segment_rgb`` per colour, then the scene by its catalog name (``set_scene_by_name``,
+    with its upload where it needs one), where the catalog at the device's scene set lists the start's scene
+    (``st["active_scene"]``, which the runner adds). Where it doesn't, nothing is sent (the app sends no bare
+    ``33 05 04`` for a scene it doesn't list) and the scene is returned unrestorable; a row that can't write
+    segment colours returns those. Returns the unrestorable entries."""
+    code = st.get("scene_code")
+    if code is None:
+        return []
+    name = st.get("active_scene")
+    try:
+        listed = bool(name) and name in dev.scene_names
+    except Exception:
+        listed = False
+    if not listed:
+        return [scene_unlisted(code)]
+    notes: list[str] = []
+    runs = segment_runs(st.get("segments"))
+    if runs and "segments" not in {str(c) for c in dev.capabilities}:
+        notes.append(SEGMENT_COLOURS_NOTE)
+    elif runs:
+        for rgb, indices in runs:
+            await dev.set_segment_rgb(indices, rgb)
+    await dev.set_scene_by_name(str(name))
+    return notes

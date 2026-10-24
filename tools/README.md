@@ -57,7 +57,10 @@ its `expect` (`True` pass, `False` fail, `None` unverifiable) and the tester's a
 a loop binds its loop values with `functools.partial` (or `state_is`), not `lambda x=x:`. Optional
 `SkuPlan` fields: `snapshot_keys` (state attributes to record; the serial number, device id, Wi-Fi MAC
 and BLE MAC are always redacted), `restore(dev, initial_snapshot)` (default: brightness, then scene /
-colour temperature / RGB, then power; it runs only once a write step was sent; under `--all` one poll
+colour temperature / RGB, then power; the snapshot it gets carries the start's `active_scene`, and it
+returns what it can't put back, a list of unrestorable entries, or None; a scene start goes back with
+`plan.restore_scene`: its segment colours, then the scene by its catalog name, never by a bare code; it
+runs only once a write step was sent; under `--all` one poll
 checks it and, where that check isn't exact, the generic restore from the captured start puts back only the
 fields it found off; the generic restore check polls after them), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
 already matched from the name and the SKU's own digits). Test it offline next to
@@ -176,14 +179,18 @@ Notes:
   row's strip dims (`segment_brightness_groups`), and the gradual toggle (the H6047 plan's too) is skipped
   when the first poll read no start for it.
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
-  scene the catalog doesn't list is re-activated by code, or the start colour, brightness or gradual flag
+  scene the catalog doesn't list is not re-activated, since the app sends no bare `33 05 04` for one, so
+  its colour is left as the run made it and not compared; or the start colour, brightness or gradual flag
   was never read back),
   `partial` (fields differ, or a start field the run changed didn't read back after the restore: a lost or
   rejected reply, a start segment no reply set, listed `not read back` in the `NOT RESTORED` line and as
   the report's `restore_check.unread`), `failed`, `unverified` (nothing to compare), or `not_needed`. A scene start is
-  put back as the library activates one: by its catalog name, with its upload where it needs one, after
-  the segment levels the run changed; in a scene the check compares the segments' levels, not their
-  colours (the scene paints them). When the run wrote something it can never put back (a start colour,
+  put back as the library activates one: its segment colours first, then the segment levels the run
+  changed, then the scene by its catalog name, with its upload where it needs one. The segment colours are
+  the colour-mode memory, which a scene leaves and `aa a5` reads (firmware-sourced: the H6047 image's 0xa5
+  handler returns the stored RGB whatever the mode), so the run's colour writes change them under a scene
+  too, and the check compares them; a row that can't write segment colours notes them unrestorable
+  (`segments: ...`). A hand-written plan's restore does the same (`plan.restore_scene`). When the run wrote something it can never put back (a start colour,
   brightness or power never read: the summary's `restore.unrestorable_written`), a `close` restore leaves
   the gate `incomplete` and an `unverified` one fails it.
 - Under `--all` a `partial` or `failed` restore is tried twice more (2 s, then 5 s, each after a fresh scan

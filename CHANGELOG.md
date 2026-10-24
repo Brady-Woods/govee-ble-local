@@ -41,13 +41,19 @@ model, from which the shipped readers are generated).
   - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
     `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
-    re-activated by code), `partial` (a field differs, or a start field the run changed didn't read back
+    which is not re-activated, since the app sends no bare `33 05 04` for one, and whose colour is then not
+    compared), `partial` (a field differs, or a start field the run changed didn't read back
     after the restore: a lost or rejected reply, a start segment no reply set, recorded as `unread`, so an
     acked write the device didn't apply is retried and printed `NOT RESTORED`, never passed as `exact`; a
     hand-written plan's step, judged on no field, counts as changing colour, brightness and power),
     `failed`, `unverified` or `not_needed`. A scene start is put back as the
-    library activates one, by name with its upload where it needs one, after the segment levels the run
-    changed. A `close` restore of something the run wrote and could never put back (a start colour,
+    library activates one, by name with its upload where it needs one, after its segment colours and the
+    segment levels the run changed, and checked with its segment colours: they are the colour-mode memory,
+    which a scene leaves and `aa a5` reads (firmware-sourced: the H6047 image's 0xa5 handler `0x01004c20`
+    returns the RGB stored at `cfg+0x1c`), so the run's colour writes change them under a scene too; a row
+    that can't write segment colours notes them unrestorable. A hand-written plan's restore (the default
+    one, the H6047's) puts a scene start back the same way (`plan.restore_scene`, with the start's scene
+    name added to its snapshot), never by a bare code, and returns what it can't put back. A `close` restore of something the run wrote and could never put back (a start colour,
     brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`
     a partial or failed restore is tried twice more after a fresh scan and connect; a device still not back
     is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a

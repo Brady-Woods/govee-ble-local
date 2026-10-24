@@ -437,17 +437,23 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
             listed = list(dev.scene_names)
         except GoveeBleError:
             listed = []
-        if listed:   # a scene start is put back by name (its upload with it), after the segment levels
+        if listed:   # a scene start is put back by name (its upload with it), after its segment colours
+            # (the colour-mode memory) and levels; one the catalog doesn't list is noted, and nothing is sent
             state = dev.snapshot()
-            state.scene_code, state.segments = 1, [Segment(0, None, 100)]
-            scened = restore.StartState(state, frozenset({"scene_code", "segments"}), kind,
-                                        active_scene=listed[0])
-            acts = restore._colour_actions(dev, scened, restore.Outcome(), None)
-            levels = "segments" in {str(c) for c in dev.capabilities} and getattr(
-                dev, "supports_segment_brightness", True)
-            if acts[-1][1:] != (dev.set_scene_by_name, (listed[0],)) or (
-                    levels and acts[0][1] != dev.set_segment_brightness):
-                bad.append(f"{sku}: a scene start restored by {[a[0] for a in acts]}")
+            state.scene_code, state.segments = 1, [Segment(0, (1, 2, 3), 100)]
+            caps = {str(c) for c in dev.capabilities}
+            levels = "segments" in caps and getattr(dev, "supports_segment_brightness", True)
+            order = [*([dev.set_segment_rgb] if "segments" in caps else []),
+                     *([dev.set_segment_brightness] if levels else []), dev.set_scene_by_name]
+            for name, want, notes in ((listed[0], order, [] if "segments" in caps else [
+                    restore.SEGMENT_COLOURS_NOTE]), (None, [], [restore.scene_unlisted(1)])):
+                noted = restore.Outcome()
+                scened = restore.StartState(state, frozenset({"scene_code", "segments"}), kind,
+                                            active_scene=name)
+                acts = restore._colour_actions(dev, scened, noted, None)
+                if [a[1] for a in acts] != want or noted.unrestorable != notes or (
+                        acts and acts[-1][2] != (listed[0],)):
+                    bad.append(f"{sku}: a scene start put back by {[a[0] for a in acts]}, {noted}")
         if kind != "card" and profile.readback != "none":
             try:
                 seen = (await readback.poll(dev)).assigned
@@ -516,9 +522,11 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     all_blue = SimpleNamespace(segments=[Segment(0, blue, 100), Segment(1, blue, 100)], rgb_color=blue)
     assert readback.judge_fields(rgb_step, None, all_blue, all_blue, all_blue, carries)[0] == {
         "rgb_color": f"not read: {readback.UNCHANGED}"}
-    # in a scene its segments' colours are the scene's: a restore check compares their levels only, and only
-    # the segments its poll set; a plug's relay is put back unless the restore's own poll read it as it
-    # started, a segment level unless that poll set it as it started; a gradual flag nobody read is noted
+    # in a scene its segments' colours are the colour-mode memory (aa a5 reads it, the scene leaves it): a
+    # restore check compares them too, unless the restore noted it can't write them, and nothing of a scene
+    # the catalog doesn't list; only the segments its poll set; a plug's relay is put back unless the
+    # restore's own poll read it as it started, a segment level unless that poll set it as it started; a
+    # gradual flag nobody read is noted
     from govee_ble_local.models import DeviceState
 
     runner = importlib.import_module("field_test.runner")
@@ -541,7 +549,11 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     painted.update = scene_poll
     in_scene = restore.StartState(DeviceState(scene_code=5, segments=[Segment(0, red, 100)]),
                                   frozenset({"scene_code", "segments"}))
-    assert (await restore.check_restore(painted, in_scene, restore.Outcome(), watch)).result == "exact"
+    painted_over = await restore.check_restore(painted, in_scene, restore.Outcome(), watch)
+    assert painted_over.result == "partial" and set(painted_over.diffs) == {"segments"}
+    for note, result in ((restore.SEGMENT_COLOURS_NOTE, "close"), (restore.scene_unlisted(5), "unverified")):
+        assert (await restore.check_restore(painted, in_scene, restore.Outcome(unrestorable=[note]),
+                                            watch)).result == result
     painted.state = DeviceState(segments=[Segment(1, (0, 255, 0), 100)])   # segment 1: a write's intent
     two = restore.StartState(DeviceState(segments=[Segment(0, (9, 9, 9), 100), Segment(1, blue, 100)]),
                              frozenset({"segments"}))
@@ -630,6 +642,24 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
         ctx = ft.PlanContext(h6047, "H6047", {}, start=restore.StartState(st, frozenset()))
         skips = {s.name: bool(s.skip) for s in ft.PLANS["H6047"].build_steps(ctx)}
         assert (skips["gradual_on"], skips["gradual_off"]) == (skipped, skipped)
+    # a hand-written plan's restore (the default one and the H6047's) puts a scene start back by its catalog
+    # name, its segment colours first; one the catalog doesn't list comes back unrestorable, and no bare
+    # 33 05 04 (a scene by code) is ever sent
+    class Recorder(SimpleNamespace):
+        def __getattr__(self, name: str) -> Any:   # every setter, recorded
+            async def call(*args: Any) -> None:
+                self.calls.append((name, *args))
+            return call
+
+    painted_two = [Segment(0, red, 100), Segment(1, red, 100)]
+    for plan_restore in (runner._restore, ft.PLANS["H6047"].restore):
+        for name, back in (("Fire", [("set_segment_rgb", [0, 1], red), ("set_scene_by_name", "Fire")]),
+                           ("Gone", [])):
+            scene_dev = Recorder(calls=[], capabilities=("segments", "scenes"), scene_names=["Fire"])
+            started = {"scene_code": 7, "active_scene": name, "segments": painted_two}
+            notes = await plan_restore(scene_dev, started)
+            assert [c for c in scene_dev.calls if c[0].startswith(("set_scene", "set_segment"))] == back
+            assert notes == ([] if back else [restore.scene_unlisted(7)]), plan_restore
 
 
 def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt(

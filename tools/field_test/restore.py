@@ -8,13 +8,18 @@ brightness, colour (a scene, per-bar Kelvin, whole-device Kelvin, per-segment co
 whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest, all of them or
 only the fields given (``only``: what a hand-written plan's restore left off). Every write it sends puts a
 start field back: it never powers a light on only to set its colour or brightness, and never lights one
-that started off and reads off now. A scene is put
-back the way the library activates one: by its catalog name (``set_scene_by_name``, with its upload where it
-needs one), by code only where the catalog doesn't list it, after the segment levels the run changed.
-:func:`check_restore` polls once more and compares what that poll reads back with the start (a plug: its
-outlets' relay bits too; in a scene, the segments' levels but not their colours, which the scene paints).
-Each unrestorable entry starts with what it is about (``colour:``, ``scene:``, ``brightness:``, ``power:``,
-``relay:``, ``gradual:``): :func:`unrestorable_written` tells which the run's writes changed. Segments are
+that started off and reads off now. A scene start is put back the way the library activates one: its
+segment colours first, then the segment levels the run changed, then the scene by its catalog name
+(``set_scene_by_name``, with its upload where it needs one). The segment colours are the colour-mode
+memory, which a scene leaves as it is and ``aa a5`` reads (firmware-sourced: the H6047 image's 0xa5 handler
+``0x01004c20`` returns the RGB stored at ``cfg+0x1c+3k``, whatever the mode), so the run's colour writes
+change them under a scene too. A scene the catalog doesn't list is not re-activated (the app sends no bare
+``33 05 04`` for a scene it doesn't list, CLAUDE.md rule 1): it is recorded unrestorable, nothing of its
+colour is sent, and the check doesn't compare it. :func:`check_restore` polls once more and compares what
+that poll reads back with the start (a plug: its outlets' relay bits too; in a scene, the segments' colours
+too). Each unrestorable entry starts with what it is about (``colour:``, ``scene:``, ``segments:``,
+``brightness:``, ``power:``, ``relay:``, ``gradual:``): :func:`unrestorable_written` tells which the run's
+writes changed. Segments are
 compared only where the poll set them (:attr:`.readback.Poll.segments`): a status burst that lost a colour
 group keeps the segments it held, a write's intent among them. A start field that poll didn't read back (a
 lost or rejected reply, a segment no reply set) and that the run's writes changed is ``unread``, which
@@ -29,8 +34,28 @@ from typing import Any
 
 from .readback import FIELDS, FrameWatch, carried, not_set, outlet_mask, poll, relay_bits
 
-SCENE_NOTE = ("scene: re-activated by code (the bundled catalog doesn't list it at this scene set), so a DIY "
-              "or uploaded effect shows whatever the device now holds for that code")
+SEGMENT_COLOURS_NOTE = ("segments: the start's segment colours (the colour-mode memory a scene leaves) can't "
+                        "be written on this row, so they are left as the run made them")
+RGB = tuple[int, int, int]
+
+
+def scene_unlisted(code: Any) -> str:
+    """The unrestorable entry for a scene start the bundled catalog doesn't list at the scene set in force."""
+    return (f"scene: {code} is not in the bundled catalog at this scene set, so it is not re-activated "
+            "(the app sends no bare 33 05 04 for a scene it doesn't list): its colour, segments and effect "
+            "are left as the run made them")
+
+
+def segment_runs(segments: Any) -> list[tuple[RGB, list[int]]]:
+    """``segments`` with a colour, grouped by it (first seen first): one ``set_segment_rgb`` per colour."""
+    runs: dict[RGB, list[int]] = {}
+    for seg in segments or []:
+        if seg.rgb is not None:
+            r, g, b = seg.rgb
+            runs.setdefault((int(r), int(g), int(b)), []).append(int(seg.index))
+    return list(runs.items())
+
+
 # What each unrestorable entry is about (its prefix), as the state a write step changes (runner: a step's
 # ``changes``, from its fields).
 CHANGES: dict[str, str] = {
@@ -45,8 +70,8 @@ COLOUR_FIELDS = ("rgb_color", "color_temp_kelvin", "scene_code", "segments", "zo
 _CHANGED_BY: dict[str, frozenset[str]] = {
     **{field: frozenset({about}) for field, about in CHANGES.items()},
     "segments": frozenset({"colour", "brightness"})}
-_ABOUT = {"colour": "colour", "scene": "colour", "brightness": "brightness", "power": "power",
-          "relay": "power", "gradual": "gradual"}
+_ABOUT = {"colour": "colour", "scene": "colour", "segments": "colour", "brightness": "brightness",
+          "power": "power", "relay": "power", "gradual": "gradual"}
 Ask = Callable[[str], Awaitable[str | None]]
 Describe = Callable[[BaseException], str]
 
@@ -226,33 +251,32 @@ def _colour_actions(dev: Any, start: StartState, out: Outcome,
     if not caps & {"rgb", "color_temp", "scenes"}:
         return []
     if "scene_code" in read and st.scene_code is not None and "scenes" in caps:
-        # The segment levels the run changed first, then the scene, as the library activates it: by name
-        # (with its upload) where the catalog lists the start's scene, else by code.
-        levels = _segment_levels(dev, start, fresh) if "segments" in read else []
+        # As the library activates a scene: by name (with its upload) where the catalog lists the start's
+        # scene, after the segment colours and levels the run changed (each a colour-mode write, which leaves
+        # the scene); one it doesn't list is not re-activated, and nothing of its colour is sent.
         name = start.active_scene
-        if name and name in _listed_scenes(dev):
-            return [*levels, (f"scene {name!r} by name (uploaded where it needs it)", dev.set_scene_by_name,
-                              (name,))]
-        out.unrestorable.append(SCENE_NOTE)
-        return [*levels, (f"scene {st.scene_code} by code", dev.set_scene, (int(st.scene_code),))]
+        if not (name and name in _listed_scenes(dev)):
+            out.unrestorable.append(scene_unlisted(st.scene_code))
+            return []
+        colours = _segment_colours(dev, start, out, fresh) if "segments" in read else []
+        levels = _segment_levels(dev, start, fresh) if "segments" in read else []
+        return [*colours, *levels, (f"scene {name!r} by name (uploaded where it needs it)",
+                                    dev.set_scene_by_name, (name,))]
     actions: list[Action] = []
-    segs = [s for s in (st.segments or []) if s.rgb is not None]
+    runs = segment_runs(st.segments)
     if getattr(p, "bar_switch", False) and "zone_color_temp_kelvin" in read and st.zone_color_temp_kelvin:
         actions = [(f"zone {z.name} {st.zone_color_temp_kelvin[z.power_index]} K", dev.set_zone_color_temp,
                     (z.name, int(st.zone_color_temp_kelvin[z.power_index])))
                    for z in dev.zones if z.power_index in st.zone_color_temp_kelvin]
     elif "color_temp_kelvin" in read and st.color_temp_kelvin:
         actions = [(f"{st.color_temp_kelvin} K", dev.set_color_temp, (int(st.color_temp_kelvin),))]
-    elif "segments" in read and segs and "segments" in caps:
-        runs: dict[tuple[int, int, int], list[int]] = {}
-        for seg in segs:
-            runs.setdefault(tuple(seg.rgb), []).append(seg.index)
+    elif "segments" in read and runs and "segments" in caps:
         if len(runs) == 1 and "rgb" in caps:
-            rgb = next(iter(runs))
+            rgb = runs[0][0]
             actions = [(f"rgb {rgb}", dev.set_rgb, (rgb,))]
         else:
             actions = [(f"segments {idx[0]}..{idx[-1]} rgb {rgb}", dev.set_segment_rgb, (idx, rgb))
-                       for rgb, idx in runs.items()]
+                       for rgb, idx in runs]
     elif "rgb_color" in read and st.rgb_color:
         actions = [(f"rgb {tuple(st.rgb_color)}", dev.set_rgb, (tuple(st.rgb_color),))]
     else:
@@ -262,6 +286,24 @@ def _colour_actions(dev: Any, start: StartState, out: Outcome,
     if "segments" in read:
         actions += _segment_levels(dev, start, fresh)
     return actions
+
+
+def _segment_colours(dev: Any, start: StartState, out: Outcome,
+                     fresh: Collection[int] | None) -> list[Action]:
+    """A scene start's segment colours, one ``set_segment_rgb`` per colour (the library's segment frames, as
+    the app sends them), where the run changed them: every colour whose segments the restore's first poll
+    didn't all set (``fresh``; None: it set none, or failed) as they started is sent. A row that can't write
+    segment colours gets none, and the start's are noted unrestorable."""
+    runs = segment_runs(start.state.segments)
+    if not runs:
+        return []
+    if "segments" not in _caps(dev):
+        out.unrestorable.append(SEGMENT_COLOURS_NOTE)
+        return []
+    now = {s.index: tuple(s.rgb) for s in (dev.state.segments or [])
+           if s.index in (fresh or ()) and s.rgb is not None}
+    return [(f"segments {idx[0]}..{idx[-1]} rgb {rgb}", dev.set_segment_rgb, (idx, rgb))
+            for rgb, idx in runs if any(now.get(i) != rgb for i in idx)]
 
 
 def _listed_scenes(dev: Any) -> list[str]:
@@ -303,7 +345,7 @@ class RestoreCheck:
 
 
 def _differs(field: str, want: Any, got: Any, raw: bool, *, colours: bool = True) -> bool:
-    """``colours``: compare the segments' colours too (not in a scene, which paints them)."""
+    """``colours``: compare the segments' colours too (not where the restore noted it can't write them)."""
     if field == "brightness" and raw and isinstance(want, int) and isinstance(got, int):
         return abs(want - got) > 1
     if field == "segments":
@@ -353,10 +395,14 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
         return check
     now = carried(dev, watch.window(mark) if watch is not None else [], assigned=assigned, segments=segments)
     raw = bool(getattr(profile, "brightness_range", None) or getattr(profile, "brightness_by_pact", ()))
-    in_scene = "scene_code" in start.read and start.state.scene_code is not None
+    # What the restore recorded it can't put back is not compared: a scene the catalog doesn't list leaves
+    # its whole colour as the run made it; segment colours the row can't write leave those (levels compared).
+    unlisted = any(u.startswith("scene:") for u in check.unrestorable)
+    left = frozenset(COLOUR_FIELDS) if unlisted else frozenset()
+    colours = not any(u.startswith("segments:") for u in check.unrestorable)
     compared = 0
     for field in FIELDS:
-        if field not in start.read:
+        if field not in start.read or field in left:
             continue
         want, got = getattr(start.state, field, None), getattr(post, field, None)
         why = now.get(field)
@@ -371,7 +417,7 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
             lost = sorted({s.index for s in want or []} - {s.index for s in got or []})
             if lost:
                 check.unread[field] = {"start": _show(field, want), "why": not_set(lost)}
-        if _differs(field, want, got, raw, colours=not in_scene):
+        if _differs(field, want, got, raw, colours=colours):
             check.diffs[field] = {"start": _show(field, want), "end": _show(field, got)}
     end_bits = relay_bits(watch.window(mark)) if watch is not None else None
     if start.kind == "plug" and start.relay_bits is not None and end_bits is not None:
