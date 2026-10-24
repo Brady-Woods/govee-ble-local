@@ -2,7 +2,10 @@
 
 Every step that changes a device (``Step.kind == "write"``) is checked against the window when it is
 about to run, so a run that crosses the late hour skips the rest of its writes; a restore is never
-gated (it only puts the start state back). Listing, connecting and reading run at any hour, with one
+gated, because every write it sends puts back a start field the run changed (``restore.restore_start``):
+no power-on only to light a light for its colour or brightness, never a light lit that started off and
+reads off, and after a hand-written plan's restore only what one poll found that restore left off.
+Listing, connecting and reading run at any hour, with one
 exception: a row whose every connect itself makes a visible write (:func:`visible_connect`, read from its
 profile's connect writes) is not connected to outside the window or on a read-only run
 (:func:`connect_skip`, checked before every connect attempt), and once the window closes on it while it is

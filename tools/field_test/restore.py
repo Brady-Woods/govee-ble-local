@@ -5,7 +5,10 @@ really read back (:func:`.readback.carried`), a plug's relay bits, the advertise
 else tells it, the tester's answer. :func:`restore_start` polls once (a write cut short by a Ctrl-C or an
 error applies nothing to the library's state, though its frame may have landed), then puts back power,
 brightness, colour (a scene, per-bar Kelvin, whole-device Kelvin, per-segment colours and levels, or a
-whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest. A scene is put
+whole-device RGB) and zone power, each action on its own so one error doesn't skip the rest, all of them or
+only the fields given (``only``: what a hand-written plan's restore left off). Every write it sends puts a
+start field back: it never powers a light on only to set its colour or brightness, and never lights one
+that started off and reads off now. A scene is put
 back the way the library activates one: by its catalog name (``set_scene_by_name``, with its upload where it
 needs one), by code only where the catalog doesn't list it, after the segment levels the run changed.
 :func:`check_restore` polls once more and compares what that poll reads back with the start (a plug: its
@@ -36,6 +39,9 @@ CHANGES: dict[str, str] = {
     "is_on": "power", "zone_power": "power", "gradual": "gradual"}
 # What a run's writes change in each state field the restore check compares (``segments``: their colours and
 # their levels).
+# The state fields a restore's colour actions put back (one group: a scene start's segment colours, levels
+# and scene go out together).
+COLOUR_FIELDS = ("rgb_color", "color_temp_kelvin", "scene_code", "segments", "zone_color_temp_kelvin")
 _CHANGED_BY: dict[str, frozenset[str]] = {
     **{field: frozenset({about}) for field, about in CHANGES.items()},
     "segments": frozenset({"colour", "brightness"})}
@@ -121,16 +127,29 @@ def _caps(dev: Any) -> set[str]:
     return {str(c) for c in getattr(dev, "capabilities", ())}
 
 
-async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outcome:
+async def restore_start(dev: Any, start: StartState, describe: Describe, *,
+                        only: Collection[str] | None = None) -> Outcome:
     """Put the start state back as far as the API allows; never raises an error (each action on its own).
 
     It polls first: a write that was cut short (a Ctrl-C, a timeout) applied nothing to ``dev.state``
-    though its frame may have reached the device, so the comparisons below (relay, gradual, zones, segment
-    levels) are made against what the device reads back. Where that poll fails, or doesn't set the field
-    (:func:`.readback.poll`), those are sent anyway."""
+    though its frame may have reached the device, so the comparisons below (power, relay, gradual, zones,
+    segment levels) are made against what the device reads back. Where that poll fails, or doesn't set the
+    field (:func:`.readback.poll`), those are sent anyway. ``only``: the start fields to put back (the ones a
+    hand-written plan's restore left off, :func:`check_restore`'s ``diffs`` and ``unread``); None, all of
+    them. The unrestorable entries are recorded either way.
+
+    Every write puts back a start field, which is why a restore is never gated by the daytime window
+    (``guard.py``): no power-on is sent only to light the device for its colour or brightness. A light that
+    started on and doesn't read on is powered on first (its power put back); one that started off (or whose
+    start power is unknown) and reads off now is never lit: its colour and brightness writes are left out,
+    and what they would have put back stays as the check reads it."""
     out = Outcome()
     caps, p, st, read = _caps(dev), dev.profile, start.state, start.read
-    fresh = getattr(p, "readback", "none") != "none" and start.kind != "card"
+
+    def wanted(*fields: str) -> bool:
+        return only is None or any(f in only for f in fields)
+
+    fresh = getattr(p, "readback", "none") != "none" and start.kind != "card" and (only is None or bool(only))
     polled: frozenset[str] = frozenset()
     segments: frozenset[int] | None = None
     if fresh:
@@ -155,32 +174,43 @@ async def restore_start(dev: Any, start: StartState, describe: Describe) -> Outc
     if start.kind == "plug":
         if started_on is None:
             out.unrestorable.append("relay: start state unknown")
-        elif not known("is_on") or dev.state.is_on is not started_on:
+        elif wanted("is_on", "relay_bits") and (not known("is_on") or dev.state.is_on is not started_on):
             await do(f"relay {'on' if started_on else 'off'}", dev.set_power, started_on)
         return out
     colour = _colour_actions(dev, start, out, segments if known("segments") else None)
-    restore_brightness = "brightness" in caps and "brightness" in read and bool(st.brightness)
-    if "brightness" in caps and not restore_brightness:
+    if not wanted(*COLOUR_FIELDS):
+        colour = []
+    has_brightness = "brightness" in caps and "brightness" in read and bool(st.brightness)
+    if "brightness" in caps and not has_brightness:
         out.unrestorable.append("brightness: unknown at the start (not read back)")
-    if getattr(p, "gradual", False) and ("gradual" not in read or st.gradual is None):
+    restore_brightness = has_brightness and wanted("brightness")
+    gradual = getattr(p, "gradual", False)
+    if gradual and ("gradual" not in read or st.gradual is None):
         out.unrestorable.append("gradual: unknown at the start (not read back)")
-    elif getattr(p, "gradual", False) and (not known("gradual") or dev.state.gradual != st.gradual):
+    elif gradual and wanted("gradual") and (not known("gradual") or dev.state.gradual != st.gradual):
         await do("gradual", dev.set_gradual, bool(st.gradual))
     if started_on is None:
         out.unrestorable.append("power: unknown at the start")
-    if started_on or colour or restore_brightness:
+    lit = known("is_on") and dev.state.is_on is True
+    dark = known("is_on") and dev.state.is_on is False
+    if not started_on and dark and (colour or restore_brightness):
+        out.actions.append("not sent: its colour and brightness (it reads off, and putting them back would "
+                           "light it)")
+        colour, restore_brightness = [], False
+    lighting = bool(colour) or restore_brightness
+    if started_on and not lit and (wanted("is_on") or lighting):
         await do("power on", dev.set_power, True)
     if restore_brightness:
         await do(f"brightness {st.brightness}", dev.set_brightness, int(st.brightness))
     for label, fn, args in colour:
         await do(label, fn, *args)
-    if started_on and dev.zones and "zone_power" in read:
+    if started_on and dev.zones and "zone_power" in read and wanted("zone_power"):
         for zone in dev.zones:
             want = st.zone_power.get(zone.power_index)
             held = dev.state.zone_power.get(zone.power_index)
             if want is not None and (not known("zone_power") or held != want):
                 await do(f"zone {zone.name} {'on' if want else 'off'}", dev.set_zone_power, zone.name, want)
-    if started_on is False:
+    if started_on is False and not dark and (wanted("is_on") or lighting):
         await do("power off", dev.set_power, False)
     return out
 

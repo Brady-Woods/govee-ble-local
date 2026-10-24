@@ -57,8 +57,9 @@ its `expect` (`True` pass, `False` fail, `None` unverifiable) and the tester's a
 a loop binds its loop values with `functools.partial` (or `state_is`), not `lambda x=x:`. Optional
 `SkuPlan` fields: `snapshot_keys` (state attributes to record; the serial number, device id, Wi-Fi MAC
 and BLE MAC are always redacted), `restore(dev, initial_snapshot)` (default: brightness, then scene /
-colour temperature / RGB, then power; it runs only once a write step was sent, under `--all` the generic
-restore from the captured start follows it, and the generic restore check polls after them), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
+colour temperature / RGB, then power; it runs only once a write step was sent; under `--all` one poll
+checks it and, where that check isn't exact, the generic restore from the captured start puts back only the
+fields it found off; the generic restore check polls after them), `extra_name_hints` (advertised-name substrings that select the plan; the SKU is
 already matched from the name and the SKU's own digits). Test it offline next to
 `tests/test_field_test.py` with a fake device, within the suite's test budget. Under pytest
 (`PYTEST_CURRENT_TEST`) or with `GOVEE_FIELD_TEST_NO_SCAN` set, the tool refuses every real Bluetooth scan
@@ -188,9 +189,12 @@ Notes:
 - Under `--all` a `partial` or `failed` restore is tried twice more (2 s, then 5 s, each after a fresh scan
   and connect). A device still not back is printed as `NOT RESTORED: <ref> <sku> (<kind>): <what>`, plugs
   first, again at the end, and the run asks whether to go on (with `--no-prompt` it stops: the rest are
-  `not run (stopped: <ref> was not restored)`). Under `--all` a hand-written plan's restore is followed by
-  the generic one from the captured start, which puts back what the plan's own doesn't (the H6062's
-  segment levels, the H6061's mixed colours).
+  `not run (stopped: <ref> was not restored)`). Under `--all` a hand-written plan's restore is checked
+  with one poll and, where that check isn't exact, followed by the generic one from the captured start for
+  the fields it found off or didn't read back (the H6062's segment levels, the H6061's mixed colours); after
+  an exact one nothing more is sent. Every restore write puts a start field back, which is why a restore
+  runs at any hour: none is a power-on only to light a light for its colour or brightness, and a light
+  that started off and reads off is never lit (its colour and brightness are left as the check reads them).
 
 ### Exit codes
 

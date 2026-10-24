@@ -51,7 +51,11 @@ model, from which the shipped readers are generated).
     brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`
     a partial or failed restore is tried twice more after a fresh scan and connect; a device still not back
     is printed `NOT RESTORED`, plugs first, and the run asks whether to go on (stops without prompts), and a
-    hand-written plan's restore is followed by the generic one from the captured start. One Ctrl-C restores the device wherever it lands: in a step (also
+    hand-written plan's restore is checked with one poll and, where that isn't exact, followed by the generic
+    one from the captured start for only the fields it found off or didn't read back (nothing after an exact
+    one: an off-start light is no longer flashed on and off after its plan put it back). Every restore write
+    puts a start field back: none is a power-on only to light a light for its colour or brightness, and a
+    light that started off and reads off is never lit. One Ctrl-C restores the device wherever it lands: in a step (also
     between a command's frame and its ack, so the device counts as written to before the send), during the
     restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
     summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`), and the device is
@@ -73,7 +77,8 @@ model, from which the shipped readers are generated).
     are outlets, listed as `2+ outlets`); its restore is checked outlet by outlet.
   - **Daytime guard** (`guard.py`): visible writes only from 07:00 to 22:00 local time (`--day-start`,
     `--day-end`, `--force-hours`, `--read-only`); listing and read steps run at any hour, and a restore is
-    never gated. `--all`'s start confirmation (or `--yes`) is the whole run's: a run started outside the window
+    never gated, since every write it sends puts back a start field the run changed. `--all`'s start
+    confirmation (or `--yes`) is the whole run's: a run started outside the window
     without `--yes` stays read-only, even once the window opens. A row whose every connect makes a visible
     write, read from its profile's connect writes (`DeviceProfile.light_effect_stop`: the `33 25` effect stop
     of the goodsType 342 bulbs H14A1, R14A1, H14C2 and R14C2, which stops a running effect), is not connected

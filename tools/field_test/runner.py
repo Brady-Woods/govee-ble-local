@@ -877,15 +877,21 @@ async def _carry_on(aw: Coroutine[Any, Any, T], run: _Run) -> T:
 
 async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None) -> Outcome:
     """A hand-written plan's restore as an :class:`Outcome`, then (``start``: ``--all``, once the start was
-    captured) the generic restore from that start, which puts back what the plan's own restore doesn't (the
-    H6062's segment levels, the H6061's mixed colours)."""
+    captured) one poll checks it (:func:`.restore.check_restore`, no question asked) and, where that check
+    is not exact, the generic restore from that start puts back only the fields it found off or didn't read
+    back (the H6062's segment levels, the H6061's mixed colours). Where it is exact (or its poll failed) the
+    generic restore sends nothing and only records what can't be restored."""
     result = await _restore_with(run.plan, run.dev, initial, run.address, run.names)
     out = Outcome(["the plan's restore"], [] if result == "ok" else [result])
     if start is not None and getattr(run.dev, "profile", None) is not None:
-        generic = await restore_start(run.dev, start, run.describe)
+        check = await check_restore(run.dev, start, out, run.watch, changed=run.changed)
+        off = frozenset(check.diffs) | frozenset(check.unread)
+        out.actions.append(f"the plan's restore checked: {check.result}"
+                           + (f", the generic restore puts back {', '.join(sorted(off))}" if off else ""))
+        generic = await restore_start(run.dev, start, run.describe, only=off)
         out.actions += generic.actions
         out.errors += generic.errors
-        out.unrestorable += generic.unrestorable
+        out.unrestorable += [u for u in generic.unrestorable if u not in out.unrestorable]
     return out
 
 
@@ -943,8 +949,8 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
     library's frame-log internals changed), the capture is redacted straight away rather than left raw.
 
     Under ``--all`` a partial or failed restore is tried again (:data:`RESTORE_RETRY_BACKOFF`, each after a
-    fresh scan and connect), and a hand-written plan's restore is followed by the generic one from the
-    captured start (:func:`_plan_restore`).
+    fresh scan and connect), and a hand-written plan's restore is checked with one poll and followed by the
+    generic one from the captured start for what that check found off (:func:`_plan_restore`).
 
     One Ctrl-C at any point here (or before, in a step) still restores the device: the restore, the
     disconnect and the flush run through :func:`_carry_on`, and one at the check's poll or its question

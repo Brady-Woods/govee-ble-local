@@ -571,6 +571,26 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
                            state=DeviceState(is_on=True), update=answered_by_nobody)
     was_on = restore.StartState(DeviceState(is_on=True), frozenset({"is_on"}), "plug")
     assert (await restore.restore_start(lamp, was_on, str)).actions == ["relay on"] and relay == [True]
+    # nothing to put back (a plan's restore checked exact): no poll, no write, the same notes; a light that
+    # started off is never lit to put its brightness back: reading off, it gets nothing, reading on, its
+    # brightness and its power off; no restore sends a power-on only to light it
+    assert await restore.restore_start(flag, unread, str, only=frozenset()) == restore.Outcome([], [], noted)
+    sent: list[Any] = []
+
+    async def record(*args: Any) -> None:
+        sent.append(args)
+
+    dimmed = SimpleNamespace(profile=polled, pact=None, capabilities=("power", "brightness"), zones=(),
+                             state=DeviceState(), set_power=record, set_brightness=record)
+    was_off = restore.StartState(DeviceState(is_on=False, brightness=50), frozenset({"is_on", "brightness"}))
+    for now_on, wrote in ((False, []), (True, [(50,), (False,)])):
+        async def reads(on: bool = now_on) -> Any:
+            dimmed.state.is_on = on
+            return dimmed.state
+
+        dimmed.update, sent[:] = reads, []
+        done = (await restore.restore_start(dimmed, was_off, str)).actions
+        assert sent == wrote and "power on" not in done and (not wrote) is done[0].startswith("not sent")
     # a row with the app's empty unlock check needs no secret once that check was sent and acked; a step with
     # no field (a hand-written plan's) may change any colour, brightness or power
     acked = readback.FrameWatch("AA:BB:CC:DD:EE:01")
@@ -917,41 +937,49 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     monkeypatch.setattr(runner, "check_restore", real_check)
 
     # a restore the light ignores at first (a dropout) is tried again and ends exact; one it ignores for good
-    # is NOT RESTORED after its retries, and the run (no prompts) stops there; under the H6047's own plan the
-    # generic restore follows the plan's
-    def ignore_the_restored_brightness(client: Any, plain: bytes) -> None:
-        if main["restoring"] and plain[:2] == b"\x33\x04" and main["ignore"]:
+    # is NOT RESTORED after its retries, and the run (no prompts) stops there; under the H6047's own plan one
+    # poll checks the plan's restore, and the generic restore sends only what that left off (its gradual
+    # flag, with no power-on for a light that reads on), nothing after an exact one
+    def ignore_a_restore_write(client: Any, plain: bytes) -> None:
+        if main["restoring"] and plain[:2] == main["op"] and main["ignore"]:
             main["ignore"] -= 1
-            return client.push(frame(0x33, 0x04, 0), 0.005)   # acked, not applied
+            return client.push(frame(0x33, plain[1], 0), 0.005)   # acked, not applied
         return answer(client, plain)
 
-    def restoring(*a: Any, **k: Any) -> Any:
-        main["restoring"] = True
-        return real_restore(*a, **k)
+    def restoring(real: Any) -> Any:
+        def begin(*a: Any, **k: Any) -> Any:
+            main["restoring"] = True
+            return real(*a, **k)
+        return begin
 
-    light.on_write = ignore_the_restored_brightness
-    monkeypatch.setattr(runner, "restore_start", restoring)
+    light.on_write = ignore_a_restore_write
+    monkeypatch.setattr(runner, "restore_start", restoring(real_restore))
+    monkeypatch.setattr(runner, "_restore_with", restoring(runner._restore_with))
     capsys.readouterr()
+    acted: list[list[str]] = []
     for plan, ignore, retries, left in (("--generic", 1, 1, []),
                                         ("--generic", 3, 2, ["brightness: start 50, now 100"]),
-                                        ("--force-hours", 0, 0, [])):
-        main.update(restoring=False, ignore=ignore)
+                                        ("--force-hours", 0, 0, []), ("--force-hours", -1, 0, [])):
+        main.update(restoring=False, ignore=abs(ignore), op=b"\x33\x04" if ignore >= 0 else b"\x33\xa3")
         rc, again, again_out = run_all("--all", plan, "--force-hours", "--no-prompt", "--yes", "--unattended",
                                        "--only", f"{entries[0].ref},{entries[4].ref}")
         bars = again["devices"][0]
         assert (bars["restore"]["retries"], bars["not_restored"]) == (retries, left), (plan, ignore)
         stopped = f"not run (stopped: {entries[0].ref} was not restored)"
         assert (again["devices"][1]["result"] == stopped) is bool(left)
+        acted.append(json.loads((again_out / bars["report"]).read_text())["restore_check"]["actions"])
         sim.pct = start[2]
     shown = capsys.readouterr().out
     assert f"NOT RESTORED: {entries[0].ref} H6047 (light): brightness: start 50, now 100" in shown
-    actions = json.loads((again_out / bars["report"]).read_text())["restore_check"]["actions"]
-    assert actions[0] == "the plan's restore" and "power on" in actions
+    checked = "the plan's restore checked: "
+    assert acted[2:] == [["the plan's restore", f"{checked}exact"],
+                         ["the plan's restore", f"{checked}partial, the generic restore puts back gradual",
+                          "gradual"]]
     assert bars["plan"] == "hand" and bars["counts"]["fail"] == 0 and bars["restore"]["result"] == "exact"
     assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
     # with prompts, the tab closed at "go on with the next device?" after one: its prompt sees EOF on the
     # terminal, so the rest are not run (interrupted), exit 130
-    main.update(restoring=False, ignore=3)
+    main.update(restoring=False, ignore=3, op=b"\x33\x04")
     with monkeypatch.context() as m:
         m.setattr(runner, "_on_a_terminal", lambda: True)
         m.setattr("builtins.input", hung_up)
