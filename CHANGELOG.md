@@ -8,6 +8,8 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-10-23
+
 ### Added
 - **`bound_advertisement(advertisement_data, sku, *, fallback_name=None)`, in `__all__`.** It reads an
   advertisement's pact and encrypt flag from its Govee manufacturer data whatever the local name, for a caller
