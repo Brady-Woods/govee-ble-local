@@ -324,23 +324,35 @@ model, from which the shipped readers are generated).
   - **Daytime guard** (`guard.py`): visible writes only from 07:00 to 22:00 local time (`--day-start`,
     `--day-end`, `--force-hours`, `--read-only`); listing and read steps run at any hour, and a restore is
     never gated. `--all`'s start confirmation (or `--yes`) is the whole run's: a run started outside the window
-    without `--yes` stays read-only, even once the window opens.
+    without `--yes` stays read-only, even once the window opens. A row whose every connect makes a visible
+    write, read from its profile's connect writes (`DeviceProfile.light_effect_stop`: the `33 25` effect stop
+    of the goodsType 342 bulbs H14A1, R14A1, H14C2 and R14C2, which stops a running effect), is not connected
+    to outside the window or on a read-only run, checked at its turn: `--list` and the summary mark it
+    `skipped: its connect sends 33 25 (effect stop), a visible change, outside the window` (or `on a read-only
+    run`). Inside the window it runs as any other device; the handshake, a plug's unlock and its time sync
+    still go out at any hour. A hand-written step that sends nothing is a read step (the H6047's
+    `segment_readback_count`), so night and read-only runs keep it.
   - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
     verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`, where a write step
-    nothing verified, a skipped one or a Ctrl-C keeps a device from `pass`) beside each device's
+    nothing verified, a skipped one, a device skipped for its connect or a Ctrl-C keeps a device from `pass`;
+    totals count the skipped devices) beside each device's
     report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug secrets are scrubbed
     from every file. `--library checkout` / `installed` and `--expect-version` pick and pin the library under test;
     `installed` refuses a source tree or an editable install. `TOOL_VERSION` is 3.
   - **Changes for one device:** with no hand-written plan for the SKU (and none heard without `--sku`), the
     generic plan runs instead of "no test plan"; `--sku` accepts any SKU; a hand-written plan's restore runs
     only once a write step was sent, so a run outside the window writes nothing. The exit code stays 0 for a
-    completed run and 1 for one that could not complete; `--all` exits 1 on any failed step, aborted device,
-    or partial or failed restore. Both exit 3 when refused and 130 when interrupted.
+    completed run and 1 for one that could not complete (a device skipped for its connect among them);
+    `--all` exits with its gate: 0 `pass`, 1 `fail` (a failed step, an aborted device, a partial or failed
+    restore), 4 `incomplete` (a device not reached or skipped, a write skipped by the window or not verified,
+    a plug without a secret). Both exit 2 with nothing to test, 3 when refused and 130 when interrupted
+    (`tools/README.md`'s exit-code table).
   - The test suite sets `GOVEE_FIELD_TEST_NO_SCAN` (the tool's scans then raise instead of reaching bleak's
     real scanner) and a session ref key for every test (`tests/conftest.py`).
   - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
-    rows too) and `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE:
-    an H6047 simulator, the H5083 firmware image, a modelled and an unsupported row).
+    rows too; the visible connect write the tool reads is what the library's connect sends) and
+    `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE: an H6047
+    simulator, the H5083 firmware image, an H14A1, a modelled and an unsupported row).
 
 ### Changed
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app

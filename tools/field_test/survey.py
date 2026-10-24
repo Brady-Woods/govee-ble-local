@@ -57,6 +57,7 @@ class Heard:
     kind: str | None = None         # light / plug / card (generic.device_kind), None when unsupported
     plan: str | None = None         # "hand" (a plans/<sku>.py), "generic", or None (not tested)
     outlets: str | None = None      # plugs only: popcount of the relay mask; "2+" / "?" when any bit counts
+    connect_visible: str | None = None   # a visible write every connect sends (guard.visible_connect)
     seen_at: float = 0.0            # time.monotonic() of the latest advertisement
 
     @property
@@ -68,7 +69,8 @@ class Heard:
         return {"ref": self.ref, "sku": self.sku, "tier": self.tier,
                 "pact": list(self.pact) if self.pact else None, "kind": self.kind, "rssi": self.rssi,
                 "name": mask_name(self.name), "address": mask_address(self.address),
-                "plan": self.plan, "outlets": self.outlets, "reason": self.reason}
+                "plan": self.plan, "outlets": self.outlets, "connect_visible": self.connect_visible,
+                "reason": self.reason}
 
 
 def _scanner() -> Any:
@@ -173,11 +175,12 @@ def _merge(entry: Heard | None, ble: Any, adv: Any) -> Heard:
 
 
 def describe(entry: Heard, *, generic: bool = False) -> Heard:
-    """Identify and classify a merged entry (sku, pact, tier, reason, kind, plan, outlets). ``generic``:
-    the generic plan is used where a hand-written one exists (``--generic``)."""
+    """Identify and classify a merged entry (sku, pact, tier, reason, kind, plan, outlets, connect_visible).
+    ``generic``: the generic plan is used where a hand-written one exists (``--generic``)."""
     from govee_ble_local.identify import identify
 
     from .generic import device_kind
+    from .guard import visible_connect
     from .plan import PLANS
 
     ident = identify(entry.name, entry.adv.manufacturer_data)
@@ -186,6 +189,7 @@ def describe(entry: Heard, *, generic: bool = False) -> Heard:
     entry.tier, entry.reason, profile = classify(entry.sku, entry.pact)
     entry.kind = device_kind(profile) if profile is not None else None
     entry.outlets = outlets(profile)
+    entry.connect_visible = visible_connect(profile)
     hand = not generic and entry.sku in PLANS
     entry.plan = None if profile is None else ("hand" if hand else "generic")
     return entry

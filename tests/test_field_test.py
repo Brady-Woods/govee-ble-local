@@ -249,8 +249,9 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     whose step names are unique, whose plugs get no write step without the allow-list (and with it, toggle
     from a mixed start of their outlets only where the power write sets outlet 0 alone), whose card rows read
     nothing back, whose refusal steps raise GoveeBleNotSupported before any I/O, and whose other steps the
-    library accepts (a fake connection: writes acked, reads answered with nothing). One property over the
-    table, not a test per SKU."""
+    library accepts (a fake connection: writes acked, reads answered with nothing). The visible write the tool
+    reads from each profile's connect writes is what the library's every connect sends but a plug's time
+    sync. One property over the table, not a test per SKU."""
     from unittest.mock import AsyncMock
 
     from fake_ble import ble_device
@@ -260,6 +261,7 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     from govee_ble_local.devices.device import Device
 
     generic = importlib.import_module("field_test.generic")
+    guard = importlib.import_module("field_test.guard")
     readback = importlib.import_module("field_test.readback")
     restore = importlib.import_module("field_test.restore")
     every_reply = [readback.Frame(0.0, "rx", op, 0x15, frozenset(range(256)))
@@ -287,6 +289,10 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
             if hasattr(dev._conn, name):
                 setattr(dev._conn, name, AsyncMock(side_effect=fake))
         kind = generic.device_kind(profile)
+        visible = {f[:2].hex(" ") for f in dev._session_frames() if f[:2] != b"\x33\xb5"}   # but a time sync
+        label = guard.visible_connect(profile) or ""
+        if bool(visible) != bool(label) or not all(op in label for op in visible):
+            bad.append(f"{sku}: its connect sends {sorted(visible)}, the tool reads {label!r}")
         start = restore.StartState(dev.snapshot(), frozenset(), kind)
         steps = generic.generic_steps(ft.PlanContext(dev, sku, {}, kind=kind, start=start))
         names = [s.name for s in steps]
@@ -323,12 +329,15 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
 def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt(
     ft: Any, runner: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--list connects nothing and lists the plug by its ref; --all started at 05:00 runs read steps only,
-    even once the window opens during the run, and writes no relay of a plug that is not allow-listed;
-    --force-hours lifts that. A Ctrl-C (the main task cancelled, as asyncio.run does) as the H6047's restore
-    begins lets that restore finish and marks the devices after it not run; one after the first write went
-    out, before its ack, still restores the H6047. Modelled and unsupported devices are listed only. A
-    write step nothing verified keeps the gate incomplete. Every file the runs write is masked."""
+    """--list connects nothing and lists the plug by its ref; --all started at 05:00 runs read steps only
+    (the H6047 plan's segment read-back too), even once the window opens during the run, writes no relay of a
+    plug that is not allow-listed, and connects to no H14A1, whose every connect sends 33 25 (an effect stop):
+    --list and the summary mark it skipped, as does a read-only run by day, and the run exits 4 (incomplete).
+    Inside the window it connects as normal; --force-hours lifts the window. A Ctrl-C (the main task
+    cancelled, as asyncio.run does) as the H6047's restore begins lets that restore finish and marks the
+    devices after it not run; one after the first write went out, before its ack, still restores the H6047.
+    Modelled and unsupported devices are listed only. A write step nothing verified keeps the gate
+    incomplete (exit 4). Every file the runs write is masked."""
     from fake_ble import FakeGovee, FirmwareGovee, ble_device, frame, virtual_time
     from test_h6047_field_test import _Sim
 
@@ -341,7 +350,7 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     sim.bars, sim.gradual = [True, False], True                 # start: left bar on, right bar off
     sim.rgb.update({i: (9, 8, 7) for i in range(5, 10)})
     start = (sim.on, list(sim.bars), sim.pct, sim.gradual, dict(sim.rgb), dict(sim.kelvin))
-    light, plug = FakeGovee(encrypted=False), FirmwareGovee()
+    light, plug, bulb = FakeGovee(encrypted=False), FirmwareGovee(), FakeGovee(encrypted=False)
 
     def answer(client: Any, plain: bytes) -> None:   # the H6047 simulator behind a real connection
         if plain[0] == 0x33:
@@ -352,7 +361,7 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
                 client.push(reply, 0.005)
 
     light.on_write = answer
-    peers: dict[str, Any] = {"AA:BB:CC:DD:EE:47": light, "AA:BB:CC:DD:EE:83": plug}
+    peers: dict[str, Any] = {"AA:BB:CC:DD:EE:47": light, "AA:BB:CC:DD:EE:83": plug, "AA:BB:CC:DD:EE:14": bulb}
 
     async def establish(cls: Any, device: Any, name: str, **kw: Any) -> Any:
         return await peers[device.address].establish(cls, device, name, **kw)
@@ -375,8 +384,12 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
                                                    manufacturer_data={}, rssi=-70)),
         heard("AA:BB:CC:DD:EE:02", SimpleNamespace(local_name="ihoment_H9999_1A2B", manufacturer_data={},
                                                    rssi=-80)),
+        heard("AA:BB:CC:DD:EE:14", SimpleNamespace(local_name="ihoment_H14A1_1A2B", manufacturer_data={},
+                                                   rssi=-60)),
     ]
-    assert [e.tier for e in entries] == ["default", "default", "modelled", "unsupported"]
+    assert [e.tier for e in entries] == ["default", "default", "modelled", "unsupported", "default"]
+    assert [e.connect_visible for e in entries] == [None, None, None, None, "33 25 (effect stop)"]
+    no_effect_stop = "skipped: its connect sends 33 25 (effect stop), a visible change, outside the window"
 
     async def fake_survey(_seconds: float, **_k: Any) -> list[Any]:
         return list(entries)
@@ -400,18 +413,22 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
         summary = out / "fieldtest-summary-T.json"
         return rc, json.loads(summary.read_text()) if summary.exists() else {}, out
 
-    # --list: every device, its tier, and the plug by its ref and outlets; no connection, any hour
-    rc, _, listed = run_all("--list")
-    shown = capsys.readouterr().out
-    assert rc == 0 and light.establish_calls == plug.establish_calls == 0
-    assert f"{entries[1].ref} H5083 ihoment_H5083_xxxx AA:BB:CC:xx:xx:xx 1 outlet" in shown
-    assert [h["tier"] for h in json.loads((listed / "fieldtest-list-T.json").read_text())["heard"]] == [
-        "default", "default", "modelled", "unsupported"]
-
-    # 05:00: read steps only, though the window opens before the first device's turn (no --yes); nothing
-    # visible is written, the plug's relay least of all
+    # --list at 05:00: every device, its tier, and the plug by its ref and outlets; no connection, any hour;
+    # the H14A1 marked as --all would leave it now
     clock = {"now": datetime.datetime(2026, 10, 23, 5, 0)}
     monkeypatch.setattr(guard, "now", lambda: clock["now"])
+    rc, _, listed = run_all("--list")
+    shown = capsys.readouterr().out
+    assert rc == 0 and light.establish_calls == plug.establish_calls == bulb.establish_calls == 0
+    assert f"{entries[1].ref} H5083 ihoment_H5083_xxxx AA:BB:CC:xx:xx:xx 1 outlet" in shown
+    assert f"ihoment_H14A1_xxxx AA:BB:CC:xx:xx:xx  ({no_effect_stop})" in shown
+    rows = json.loads((listed / "fieldtest-list-T.json").read_text())["heard"]
+    assert [(h["tier"], h["skip"]) for h in rows] == [
+        ("default", None), ("default", None), ("modelled", None), ("unsupported", None),
+        ("default", no_effect_stop)]
+
+    # 05:00: read steps only, though the window opens before the first device's turn (no --yes); nothing
+    # visible is written, the plug's relay least of all, and the H14A1 is not connected to
     real_device = runner.run_device
 
     async def device_at_0730(*a: Any, **k: Any) -> Any:
@@ -421,15 +438,27 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     monkeypatch.setattr(runner, "run_device", device_at_0730)
     rc, night, _ = run_all("--all", "--no-prompt")
     monkeypatch.setattr(runner, "run_device", real_device)
-    assert rc == 0 and night["gate"] == "incomplete"
-    assert [d["sku"] for d in night["devices"]] == ["H6047", "H5083"]   # the others are listed only
+    assert rc == 4 and night["gate"] == "incomplete"
+    assert [d["sku"] for d in night["devices"]] == ["H6047", "H14A1", "H5083"]   # the others: listed only
     steps = [s for d in night["devices"] for s in d["steps"]]
     assert all(s["kind"] == "read" or s["verdict"] == "skipped" for s in steps)
-    assert {s["step"]: s["verdict"] for s in night["devices"][1]["steps"]} == {
+    assert [steps[0][k] for k in ("step", "kind", "verdict")] == ["segment_readback_count", "read", "pass"]
+    assert night["devices"][1]["result"] == no_effect_stop and not night["devices"][1]["steps"]
+    assert bulb.establish_calls == 0 and night["totals"]["skipped"] == 1
+    assert {s["step"]: s["verdict"] for s in night["devices"][2]["steps"]} == {
         "session_setup": "unverifiable", "relay_read": "pass"}            # no secret: no unlock sent
     assert (sim.on, sim.bars, sim.pct, sim.gradual) == start[:4]
     assert "write_tx power" not in plug.sim.requests()
     assert night["devices"][0]["restore"]["result"] == "not_needed"
+
+    # 07:30: a read-only run still leaves the H14A1 alone; one that may write connects to it as normal
+    rc, ro, _ = run_all("--all", "--read-only", "--no-prompt", "--only", entries[4].ref)
+    assert rc == 4 and ro["devices"][0]["result"] == no_effect_stop.replace("outside the window",
+                                                                            "on a read-only run")
+    assert bulb.establish_calls == 0
+    rc, lit, lit_out = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
+    assert lit["devices"][0]["result"] == "completed" and bulb.establish_calls >= 1
+    assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
 
     # --force-hours lifts the window; a Ctrl-C as the H6047's restore begins: it is restored all the same,
     # and the run stops after it
@@ -443,8 +472,9 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     rc, day, out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes")
     monkeypatch.setattr(runner, "restore_start", real_restore)
     assert rc == 130 and day["gate"] == "fail" and day["window"]["forced"] is True
-    bars, rest = day["devices"]
-    assert bars["result"] == "completed" and bars["interrupted"] and rest["result"] == "not run (interrupted)"
+    bars, *rest = day["devices"]
+    assert bars["result"] == "completed" and bars["interrupted"]
+    assert [r["result"] for r in rest] == ["not run (interrupted)"] * 2
     verdicts = {s["step"]: s["verdict"] for s in bars["steps"]}
     assert verdicts.pop("segment_brightness_0_9") == "fail"   # the simulator ignores 33 05 15 02
     assert [verdicts.pop(k) for k in verdicts.copy() if k.startswith("scene_")] == ["fail"]   # and scenes
@@ -474,8 +504,11 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     summary = importlib.import_module("field_test.summary")
     ok = {"result": "completed", "counts": {"pass": 1}, "steps": [{"kind": "write", "verdict": "pass"}]}
     unverified = {**ok, "steps": [{"kind": "write", "verdict": "unverifiable"}]}
-    assert [summary.gate_verdict({"devices": [d]}) for d in (ok, unverified)] == ["pass", "incomplete"]
-    for path in (*out.iterdir(), *listed.iterdir()):
+    failed = {**ok, "counts": {"pass": 0, "fail": 1}}
+    assert [summary.gate_verdict({"devices": [d]}) for d in (ok, unverified, failed)] == [
+        "pass", "incomplete", "fail"]
+    assert [runner._exit_code({"devices": [d]}, False) for d in (ok, unverified, failed)] == [0, 4, 1]
+    for path in (*out.iterdir(), *listed.iterdir(), *lit_out.iterdir()):
         text = path.read_text()
         assert "DD:EE" not in text and "1A2B" not in text, path.name
         assert '"wire": "' not in text, path.name

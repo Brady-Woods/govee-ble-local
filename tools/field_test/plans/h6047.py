@@ -75,7 +75,7 @@ def build_steps(ctx: PlanContext) -> list[Step]:
     s: list[Step] = [
         Step("segment_readback_count", _nothing, _ten_segments,
              "Nothing was sent. Press y to continue (the read-back must list exactly segments 0..9).",
-             note="the old read-back reported two phantom segments, 10 and 11"),
+             note="the old read-back reported two phantom segments, 10 and 11", kind="read"),
         Step("power_on", partial(dev.set_power, True), state_is("is_on", True),
              "Is the light ON? (whole-device power frame is 33 01 01)",
              note="whole-device power: 33 01 01"),
@@ -135,7 +135,8 @@ def build_steps(ctx: PlanContext) -> list[Step]:
 
 
 async def _nothing() -> None:
-    """A read-back-only step: nothing is sent."""
+    """A read-back-only step: nothing is sent (so its step is ``kind="read"``: it runs at night and on a
+    read-only run too)."""
 
 
 def _then(*calls: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:

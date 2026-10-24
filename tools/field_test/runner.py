@@ -16,7 +16,9 @@ the step (pass / fail / unverifiable, ``readback.py``), may ask the tester, rest
     fieldtest-summary-<time>.json   every device heard, and per device tested its verdicts
 
 All are safe to attach to a GitHub issue (see ``masking.py``). Visible writes run only inside the
-daytime window (``guard.py``); relay toggles only on allow-listed, confirmed plugs.
+daytime window (``guard.py``), and a device whose every connect makes a visible write (its profile's connect
+writes: the bulbs' ``33 25`` effect stop) is not connected to outside it or on a read-only run; relay
+toggles only on allow-listed, confirmed plugs.
 
 No module of this package imports the library when it loads: :func:`main` chooses it first
 (``--library``: this checkout's ``src`` once its classes are generated, or the installed wheel).
@@ -43,7 +45,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from . import survey as _survey
 from .generic import device_kind, generic_plan, generic_steps
-from .guard import Window, parse_hhmm
+from .guard import Window, connect_skip, parse_hhmm, visible_connect
 from .masking import (
     describe_error,
     json_default,
@@ -59,7 +61,7 @@ from .masking import (
 from .plan import PLANS, PlanContext, SkuPlan, Snapshot, Step
 from .readback import FrameWatch, Judgement, carried, judge, judge_fields, outlet_mask
 from .restore import Outcome, RestoreCheck, StartState, capture_start, check_restore, restore_start
-from .summary import Summary, console_table, counts, device_failed
+from .summary import Summary, console_table, counts, gate_verdict
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -76,7 +78,7 @@ FRAME_LOG_FLUSH_SECONDS = 2.0
 CONNECT_BACKOFF = (2.0, 5.0, 10.0)
 CARD_RESCAN_SECONDS = 4.0
 KIND_ORDER = {"light": 0, "card": 1, "plug": 2}
-EXIT_OK, EXIT_FAIL, EXIT_NOTHING, EXIT_REFUSED, EXIT_INTERRUPTED = 0, 1, 2, 3, 130
+EXIT_OK, EXIT_FAIL, EXIT_NOTHING, EXIT_REFUSED, EXIT_INCOMPLETE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
 SURVEY_SECONDS = 20.0   # --list / --all
 # What single-device discovery scans with, set by run() for its own call only (--scan-seconds, --generic).
 DISCOVER_OPTIONS: dict[str, Any] = {}
@@ -294,6 +296,7 @@ def _target(ble: Any, adv: Any, sku: str, generic: bool) -> _survey.Heard:
     entry.tier, entry.reason, profile = _survey.classify(entry.sku, entry.pact)
     entry.kind = device_kind(profile) if profile is not None else entry.kind
     entry.outlets = _survey.outlets(profile)
+    entry.connect_visible = visible_connect(profile)
     entry.plan = "hand" if (not generic and entry.sku in PLANS) else ("generic" if profile else None)
     return entry
 
@@ -320,6 +323,13 @@ class Policy:
     @property
     def prompts(self) -> bool:
         return self.ask != "none"
+
+    def connect_skip_reason(self, h: _survey.Heard) -> str | None:
+        """Why ``h`` is not connected to now: every connect of its row makes a visible write
+        (``h.connect_visible``) and writes are not allowed (outside the window, a run started there without
+        ``--yes``, a read-only run). None: it connects as any other device."""
+        return connect_skip(h.connect_visible, read_only=self.read_only,
+                            writes_allowed=not self.writes_off and self.window.allows_writes())
 
 
 def _window(args: argparse.Namespace) -> Window:
@@ -791,12 +801,18 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         rec["counts"] = counts(report["steps"])
         rc = report.get("restore_check") or {}
         rec["restore"] = {k: rc.get(k) for k in ("result", "unrestorable", "diffs", "errors")} if rc else None
-        if not result.startswith(("completed", "interrupted")):
+        if not result.startswith(("completed", "interrupted", "skipped")):
             rec["errors"].append(rec["result"])
         return rec
 
     print(f"\n== {target.ref} {sku} ({target.tier}, {target.kind or '?'}, plan {target.plan}) "
           f"{mask_name(target.name)!r} {mask_address(address)}")
+    # Its connect itself would change the device visibly (the bulbs' 33 25 stops a running effect): checked
+    # at its turn, so a run that crosses the window's edge connects to it only inside the window.
+    skip = policy.connect_skip_reason(target)
+    if skip is not None:
+        print(f"  {skip}")
+        return done(skip)
     try:
         if not await _survey.acquire(target, policy.retries):
             return done("not reached: not heard again")
@@ -909,25 +925,31 @@ def _base_summary(args: argparse.Namespace, policy: Policy, lib: dict[str, Any])
                         "ask": policy.ask, "generic": policy.generic, "read_only": policy.read_only}}
 
 
-def _exit_code(devices: list[dict[str, Any]], interrupted: bool) -> int:
-    """``--all``: 0 when no device failed (a step, an abort, a partial or failed restore), else 1."""
+def _exit_code(data: dict[str, Any], interrupted: bool) -> int:
+    """``--all``: the summary's gate as the exit code: 0 ``pass``, 1 ``fail`` (a failed step, an aborted
+    device, a partial or failed restore), 4 ``incomplete`` (a device not reached or skipped, a write skipped
+    by the window or not verified, a plug without a secret); 130 when interrupted, 2 when nothing was
+    tested."""
     if interrupted:
         return EXIT_INTERRUPTED
-    if not devices:
+    if not data.get("devices"):
         return EXIT_NOTHING
-    return EXIT_FAIL if any(device_failed(d) for d in devices) else EXIT_OK
+    return {"pass": EXIT_OK, "fail": EXIT_FAIL}.get(gate_verdict(data), EXIT_INCOMPLETE)
 
 
-def _print_listing(heard: list[_survey.Heard]) -> None:
+def _print_listing(heard: list[_survey.Heard],
+                   skip: Callable[[_survey.Heard], str | None] | None = None) -> None:
+    """The listing; ``skip`` marks a device that would not be connected to now
+    (``Policy.connect_skip_reason``)."""
     print(f"\nGovee devices heard: {len(heard)}")
     print(f"  {'ref':6s} {'sku':6s} {'tier':11s} {'pact':6s} {'kind':5s} {'plan':7s} {'rssi':>4s}  "
           "name / address")
     for h in heard:
         pact = f"{h.pact[0]},{h.pact[1]}" if h.pact else "-"
         rssi = str(h.rssi) if h.rssi is not None else "?"
+        why = h.reason or (skip(h) if skip is not None and h.plan else None)
         print(f"  {h.ref:6s} {h.sku or '?':6s} {h.tier:11s} {pact:6s} {h.kind or '-':5s} {h.plan or '-':7s} "
-              f"{rssi:>4s}  {mask_name(h.name)} {mask_address(h.address)}"
-              + (f"  ({h.reason})" if h.reason else ""))
+              f"{rssi:>4s}  {mask_name(h.name)} {mask_address(h.address)}" + (f"  ({why})" if why else ""))
     plugs = [h for h in heard if h.kind == "plug"]
     if plugs:
         print("\nPlugs (a relay toggles only with --toggle-plugs REF and the run-time confirmation):")
@@ -938,14 +960,17 @@ def _print_listing(heard: list[_survey.Heard]) -> None:
 
 async def list_devices(args: argparse.Namespace, out_dir: Path, stamp: str) -> int:
     """``--list``: scan, print every Govee device heard and the plugs, write the masked listing. No
-    connection, at any hour."""
+    connection, at any hour; a device that ``--all`` would not connect to now (its connect writes visibly,
+    and writes are not allowed: the window, ``--read-only``) is marked ``skipped``."""
     seconds = args.scan_seconds or SURVEY_SECONDS
+    policy = Policy(window=_window(args), read_only=bool(args.read_only))
     print(f"Scanning for {seconds:.0f} s ...")
     heard = await _survey.survey(seconds, generic=bool(args.generic))
-    _print_listing(heard)
+    _print_listing(heard, policy.connect_skip_reason)
     path = out_dir / f"fieldtest-list-{stamp}.json"
+    rows = [{**h.masked(), "skip": policy.connect_skip_reason(h) if h.plan else None} for h in heard]
     text = json.dumps({"tool_version": TOOL_VERSION, "listed": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                       "heard": [h.masked() for h in heard]}, indent=1) + "\n"
+                       "window": policy.window.as_dict(), "heard": rows}, indent=1) + "\n"
     write_text_atomic(path, mask_text_all(text, _masks(heard)))
     print(f"\nListing -> {path}")
     return EXIT_OK if heard else EXIT_NOTHING
@@ -976,7 +1001,7 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     summary = Summary(out_dir / f"fieldtest-summary-{stamp}.json", _base_summary(args, policy, lib))
     summary.mask = _masks(heard)
     summary.data["heard"] = [h.masked() for h in heard]
-    _print_listing(heard)
+    _print_listing(heard, policy.connect_skip_reason)
     only, skip = _keys(args.only), _keys(args.skip)
     tiers = {"default", "modelled"} if args.allow_modelled else {"default"}
     chosen = [h for h in heard if h.tier in tiers and (not only or _wanted(h, only)) and not _wanted(h, skip)]
@@ -1025,7 +1050,7 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     print(console_table(summary.data, summary.path))
     print("\nAttach the summary (and any device's report and frame capture): addresses, names, serials, "
           "Wi-Fi MACs and secrets are masked.")
-    return _exit_code(summary.data["devices"], interrupted)
+    return _exit_code(summary.data, interrupted)
 
 
 async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Window | None = None,

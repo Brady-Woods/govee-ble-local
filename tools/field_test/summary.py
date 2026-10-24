@@ -52,10 +52,17 @@ def device_passed(dev: dict[str, Any]) -> bool:
             and not unverified_writes(dev) and not dev.get("interrupted"))
 
 
+def device_skipped(dev: dict[str, Any]) -> bool:
+    """Not connected to: every connect of its row makes a visible write, and writes were not allowed
+    (``guard.connect_skip``)."""
+    return str(dev.get("result") or "").startswith("skipped")
+
+
 def totals(data: dict[str, Any]) -> dict[str, int]:
     devices = data.get("devices", [])
     not_run = [d for d in devices if str(d.get("result", "")).startswith("not run")]
-    tested = [d for d in devices if d not in not_run]
+    skipped = [d for d in devices if device_skipped(d)]
+    tested = [d for d in devices if d not in not_run and d not in skipped]
     failed = [d for d in tested if device_failed(d)]
     reached = [d for d in tested if device_completed(d)
                or str(d.get("result", "")).startswith(("aborted", "interrupted"))]
@@ -63,13 +70,13 @@ def totals(data: dict[str, Any]) -> dict[str, int]:
     tested_refs = {d.get("ref") for d in devices}
     return {"heard": len(data.get("heard", [])), "tested": len(tested), "passed": len(passed),
             "failed": len(failed), "unverified": len([d for d in tested if unverified_writes(d)]),
-            "not_reached": len(tested) - len(reached), "not_run": len(not_run),
+            "not_reached": len(tested) - len(reached), "skipped": len(skipped), "not_run": len(not_run),
             "listed_only": len([h for h in data.get("heard", []) if h.get("ref") not in tested_refs])}
 
 
 def gate_verdict(data: dict[str, Any]) -> str:
     """``fail`` (a step failed, a device aborted, a restore partial or failed), ``incomplete`` (a device not
-    reached or not run, a write skipped or unverified, a Ctrl-C, nothing tested), else ``pass``."""
+    reached, not run or skipped, a write skipped or unverified, a Ctrl-C, nothing tested), else ``pass``."""
     devices = data.get("devices", [])
     if any(device_failed(d) for d in devices):
         return "fail"

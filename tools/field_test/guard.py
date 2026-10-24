@@ -2,13 +2,25 @@
 
 Every step that changes a device (``Step.kind == "write"``) is checked against the window when it is
 about to run, so a run that crosses the late hour skips the rest of its writes; a restore is never
-gated (it only puts the start state back). Listing, connecting and reading run at any hour.
-``--force-hours`` lifts the window and is recorded in every report.
+gated (it only puts the start state back). Listing, connecting and reading run at any hour, with one
+exception: a row whose every connect itself makes a visible write (:func:`visible_connect`, read from its
+profile's connect writes) is not connected to outside the window or on a read-only run
+(:func:`connect_skip`). ``--force-hours`` lifts the window and is recorded in every report.
 """
 from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+from typing import Any
+
+# The writes every connect of a row sends after the handshake and any unlock (its devices.yaml
+# ``connect_writes``), by the DeviceProfile field that carries each: a plug's time sync, and the bulb
+# screens' effect stop (bulblight ``VM4Light.i5``).
+CONNECT_WRITES: tuple[tuple[str, str], ...] = (
+    ("relay", "plug_sync_time"), ("light_effect_stop", "light_effect_stop"))
+# Of those, the ones a person would see, as the listing and the summary name them. ``33 25 01`` stops a
+# running ``33 24`` effect; a plug's time sync changes nothing visible.
+VISIBLE_CONNECT_WRITES: dict[str, str] = {"light_effect_stop": "33 25 (effect stop)"}
 
 
 def now() -> _dt.datetime:
@@ -54,3 +66,31 @@ class Window:
 
     def as_dict(self) -> dict[str, object]:
         return {"start": f"{self.start:%H:%M}", "end": f"{self.end:%H:%M}", "forced": self.forced}
+
+
+def connect_writes(profile: Any) -> tuple[str, ...]:
+    """The writes every connect to ``profile``'s row sends (the spec's command names, in the library's
+    order). Read with ``getattr``: an older wheel's profile without a field sends none of that write."""
+    return tuple(name for attr, name in CONNECT_WRITES if getattr(profile, attr, False))
+
+
+def visible_connect(profile: Any) -> str | None:
+    """What every connect to ``profile``'s row sends that a person would see (``"33 25 (effect stop)"``), or
+    None (also for no profile)."""
+    seen = [VISIBLE_CONNECT_WRITES[w] for w in connect_writes(profile) if w in VISIBLE_CONNECT_WRITES]
+    return ", ".join(seen) or None
+
+
+def connect_skip(visible: str | None, *, read_only: bool, writes_allowed: bool) -> str | None:
+    """Why a device whose connect sends ``visible`` (:func:`visible_connect`) is not connected to: writes are
+    not allowed now (outside the window, or a run started there without ``--yes``), or the run is read-only.
+    None: it connects as any other device."""
+    if not visible:
+        return None
+    if not writes_allowed:
+        where = "outside the window"
+    elif read_only:
+        where = "on a read-only run"
+    else:
+        return None
+    return f"skipped: its connect sends {visible}, a visible change, {where}"
