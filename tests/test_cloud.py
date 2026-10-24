@@ -17,7 +17,7 @@ def test_parse_secret_and_ble_mac_from_device_settings() -> None:
         "address": "00:00:5E:00:53:D1",       # BLE MAC
         "wifiMac": "00:00:5E:00:53:D0",        # embedded in `device` id
         "bleName": "ihoment_H5083_A2D1",
-        "secretCode": "YVUhCQtzXFQ=",          # 8-byte base64 secret
+        "secretCode": "ASNFZ4mrze8=",          # 8-byte base64 secret
         "pactType": 2,
         "pactCode": 2,
     }
@@ -32,16 +32,16 @@ def test_parse_secret_and_ble_mac_from_device_settings() -> None:
     dev = GoveeCloudAccount._parse(raw)
     assert dev.sku == "H5083"
     assert dev.ble_mac == "00:00:5E:00:53:D1"          # from settings.address, not the device id
-    assert dev.secret == bytes.fromhex("615521090b735c54")
+    assert dev.secret == bytes.fromhex("0123456789abcdef")
 
 
 def test_parse_no_settings_falls_back_to_device_id() -> None:
     """Without deviceSettings, ble_mac falls back to the device id's last 6 octets
     and secret is None."""
     dev = GoveeCloudAccount._parse(
-        {"sku": "H6008", "device": "08:73:5C:E7:53:A6:26:90", "deviceName": "Bulb"}
+        {"sku": "H6008", "device": "0A:08:00:00:5E:00:53:08", "deviceName": "Bulb"}
     )
-    assert dev.ble_mac == "5C:E7:53:A6:26:90"
+    assert dev.ble_mac == "00:00:5E:00:53:08"
     assert dev.secret is None
 
 

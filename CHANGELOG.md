@@ -294,6 +294,7 @@ model, from which the shipped readers are generated).
 ### Changed
 - Tests: the cloud and field-test masking tests use example addresses from the documentation range
   (RFC 7042, `00:00:5E:00:53:xx`) or locally administered ones. No library change.
+- Tests and docs: made-up example device identifiers and secret.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
@@ -2021,7 +2022,7 @@ model, from which the shipped readers are generated).
 ## [1.4.0] — 2026-10-18
 
 ### Added
-- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
+- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `0A:A6:02:00:5E:00:53:56`), read
   with `aa 07 02`. An alias of `serial_number`, which holds the same value.
 - `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
 - New exceptions, defined in `govee_ble_local.exceptions` and exported in `govee_ble_local.__all__`:

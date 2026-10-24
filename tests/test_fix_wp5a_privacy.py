@@ -68,8 +68,8 @@ def test_mask_text_masks_the_address_in_every_form(masking: ModuleType, text: st
 
 
 def test_mask_text_masks_any_mac_shaped_token_and_the_macos_uuid(masking: ModuleType) -> None:
-    other = "11:22:33:44:55:66 dev_AA_BB_CC_DD_EE_FF 2D:DB:5C:E7:53:F4:74:56"
-    assert masking.mask_text(other) == "11:22:33:xx:xx:xx dev_AA_BB_CC_xx_xx_xx 2D:DB:5C:xx:xx:xx:xx:xx"
+    other = "11:22:33:44:55:66 dev_AA_BB_CC_DD_EE_FF 0A:A6:02:00:5E:00:53:56"
+    assert masking.mask_text(other) == "11:22:33:xx:xx:xx dev_AA_BB_CC_xx_xx_xx 0A:A6:02:xx:xx:xx:xx:xx"
     uuid = "A1B2C3D4-1111-2222-3333-444455556666"
     assert masking.mask_text(f"{uuid.lower()}: gone", uuid) == "A1B2C3D4-…: gone"
     keep = "33 05 15 01 ff d5 a1, 2026-10-15T12:00:00, v1.00.13, 0x05"
@@ -225,7 +225,7 @@ def test_snapshot_redacts_every_identifying_device_state_field(masking: ModuleTy
     names += [n for n, v in vars(DeviceState).items() if isinstance(v, property)]
     identifying = {n for n in names if "mac" in n or "serial" in n or n.endswith("_id")}
     assert {"serial_number", "device_id", "wifi_mac", "ble_mac"} <= identifying <= set(REDACTED_KEYS)
-    st = DeviceState(is_on=True, serial_number="2D:DB:5C:E7:53:F4:74:56", wifi_mac=WIFI, ble_mac=ADDR)
+    st = DeviceState(is_on=True, serial_number="0A:A6:02:00:5E:00:53:56", wifi_mac=WIFI, ble_mac=ADDR)
     snap = masking.snapshot(st, ("is_on", *sorted(identifying)))
     assert snap == {"is_on": True, "ble_mac": "<redacted>", "device_id": "<redacted>",
                     "serial_number": "<redacted>", "wifi_mac": "<redacted>"}
