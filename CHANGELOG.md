@@ -1307,8 +1307,8 @@ model, from which the shipped readers are generated).
   it.
 - Nothing else for existing SKUs. What changes for the SKUs admitted at 1.6.1:
   - under Fixed: H6188's colour temperature, H6061's whole-device RGB, H60A6 at pact (1,1), the segment brightness
-    of H6098 / H8098 / H6690, a refused or unacked live `33 b2` check on the account-locked plugs (H5080, H5082,
-    H5083, H5085, H5089, H5160, H5161), H6061's poll walk, which ends at its first unanswered group (a poll that
+    of H6098 / H8098 / H6690, a refused, unacked or cancelled live `33 b2` check on the account-locked plugs
+    (H5080, H5082, H5083, H5085, H5089, H5160, H5161), H6061's poll walk, which ends at its first unanswered group (a poll that
     loses a group sends no later group), and decision 2's live mask, which changes the whole-device colour,
     colour-temperature and segment frames of the 13 h61d3 IC-sized SKUs admitted by default at 1.6.1 (H6641,
     H6640, H61B3, H61B6, H1A42, H1A43, H1A44, H1AA2, H1AA5, H1AB1, H1AB2, H1AB3, H1B6A) and H6641's
