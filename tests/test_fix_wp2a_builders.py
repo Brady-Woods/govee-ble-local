@@ -14,7 +14,8 @@ from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, Gove
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
 
-ALL_SCHEMES: tuple[b.ColorScheme, ...] = ("h60a6", "h6006", "h61a8", "h6188", "h6061")
+ALL_SCHEMES: tuple[b.ColorScheme, ...] = (
+    "h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02", "kelvin_v9")
 
 
 # ── a scheme that can't express the request: GoveeBleNotSupported, not a bare ValueError ──
@@ -72,15 +73,16 @@ def test_unknown_scheme_is_refused_not_sent_as_h60a6() -> None:
 # The colour sub-mode each scheme's frames use (33 05 <sub> ...); nothing may fall through to another's.
 _FAMILY: dict[b.ColorScheme, int] = {
     "h60a6": b.SUB_COLOR_15, "h6061": b.SUB_COLOR_15, "h61a8": b.SUB_COLOR_0B,
-    "h6006": b.SUB_COLOR_0D, "h6188": b.SUB_COLOR_0D,
+    "h6006": b.SUB_COLOR_0D, "h6188": b.SUB_COLOR_0D, "legacy_02": b.SUB_COLOR_02,
+    "kelvin_v9": b.SUB_COLOR_15,
 }
 _TINT_2700 = (0xFF, 0xAE, 0x54)   # a Kelvin tint colour: the CCT-pick path on every scheme with CCT
+_RGB = frozenset(ALL_SCHEMES) - {"kelvin_v9"}   # colour instruction 9 writes a Kelvin only (Bytes.D)
 # builder -> (call, the schemes that can express it)
 _BUILDERS: dict[str, tuple[Callable[[b.ColorScheme], bytes | list[bytes]], frozenset[str]]] = {
-    "color_rgb_frames": (lambda s: b.color_rgb_frames(1, 2, 3, s), frozenset(ALL_SCHEMES)),
-    "color_rgb_frames tint pick": (lambda s: b.color_rgb_frames(*_TINT_2700, s, None, (2000, 9000)),
-                                   frozenset(ALL_SCHEMES)),
-    "color_rgb": (lambda s: b.color_rgb(1, 2, 3, s), frozenset(ALL_SCHEMES)),
+    "color_rgb_frames": (lambda s: b.color_rgb_frames(1, 2, 3, s), _RGB),
+    "color_rgb_frames tint pick": (lambda s: b.color_rgb_frames(*_TINT_2700, s, None, (2000, 9000)), _RGB),
+    "color_rgb": (lambda s: b.color_rgb(1, 2, 3, s), _RGB),
     "color_temp": (lambda s: b.color_temp(4000, s), frozenset(ALL_SCHEMES) - {"h61a8"}),
     "segment_rgb": (lambda s: b.segment_rgb(1, 1, 2, 3, s), frozenset({"h60a6", "h61a8"})),
     "segment_rgb tint pick": (lambda s: b.segment_rgb(1, *_TINT_2700, s, 13, (2000, 9000)),

@@ -15,7 +15,7 @@ from conftest import require_optional
 
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _resolve
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import profile_for, supported_skus
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -56,6 +56,19 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
     supported = {"families": edited("barelightv1", "17", support="modelled"), "mode_color_parse": {}}
     projected = gen.Projector(schema).project(gen._supported(supported, _resolve.LEVELS), "#")
     _resolve.routes(projected["families"])
+    # A pairing write's pact is an exact-pact condition (NewRgb2TLUtil.isNewRgb2TL4BleIot): H615A-E route at
+    # (2,1) on stringlightv2 40 / 108, and their (65535, 255) route is for review until a goodsType-40 row
+    # lists that pact; a row of another goodsType that accepts it contradicts the app's write. Without a pact
+    # the advert may be the write's, where the app runs other frames, so the SKU needs its pact.
+    paired = _resolve.bind_review(fams)
+    assert [line.split(":")[0] for line in paired] == [f"H613{c}" for c in "ABCDEF"] + [
+        f"H615{c}" for c in "ABCDE"]
+    assert profile_for("H615A", pact=(2, 1)) is not None and profile_for("H615A", pact=(65535, 255)) is None
+    assert profile_for("H615E", goods_type=108) is None and "H615E" in supported_skus()
+    assert not any(line.startswith("H615A") for line in _resolve.bind_review(
+        edited("stringlightv2", "40", pacts=["2,1", "65535,255"])))
+    with pytest.raises(_resolve.SpecError, match=r"^stringlightv2 goodsType 108 \(H615E\): pacts any accept"):
+        _resolve.routes(edited("stringlightv2", "108", pacts="any"))
     # A target row is never the route without an advertised pact: the app rewrites only a record whose pact
     # meets the gate, and runs a pact-less one at its source goodsType (profile.profile_for).
     served = [(sku, gt) for sku, targets in _resolve.pact_gates(FAMILIES).items()

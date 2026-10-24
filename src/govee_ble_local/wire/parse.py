@@ -37,12 +37,12 @@ _Command = _C.Command
 # One colour-group record as the group parsers return it: (brightness | None, r, g, b).
 GroupRecord = tuple[int | None, int, int, int]
 
-# The reply bodies the single-reply decoders read, as the library reads them: aa 36 is the two bars
-# (form_36 bar_pair: H6047), aa 41 the H6062 section count (form_41 section_count), aa a2 / aa a5 the
-# mechanism-B batches (form_a2 bulb_batch_v1, form_a5 bulb_batch_v2: H61A8). Nothing else here depends on
-# a device fact.
+# The reply bodies the single-reply decoders read, as the library reads them: aa 34 is the H6057 device
+# detail (form_34 device_detail), aa 36 the two bars (form_36 bar_pair: H6047), aa 41 the H6062 section
+# count (form_41 section_count), aa a2 / aa a5 the mechanism-B batches (form_a2 bulb_batch_v1, form_a5
+# bulb_batch_v2: H61A8). Nothing else here depends on a device fact.
 _REPLY: Final = _spec.profile(
-    f_36=int(_C.Form36.bar_pair), f_41=int(_C.Form41.section_count),
+    f_34=int(_C.Form34.device_detail), f_36=int(_C.Form36.bar_pair), f_41=int(_C.Form41.section_count),
     f_a2=int(_C.FormA2.bulb_batch_v1), f_a5=int(_C.FormA5.bulb_batch_v2))
 
 
@@ -109,6 +109,18 @@ def request_command(frame: bytes) -> int:
     return int(command)
 
 
+def write_command(frame: bytes) -> int:
+    """The command of a built ``33`` write, read by the frame reader (``write_command.command``): the
+    command its ack carries, which the app matches the ack on besides the proType
+    (``AbsControllerNoEvent4Single.isSameController:176-179``). ValueError for a frame that isn't a ``33``
+    write with a command (a 2-byte frame is proType and checksum, with no body)."""
+    pro_type, command = _head_command(frame, _spec.TX)
+    if pro_type != _C.ProType.write or command is None:
+        got = "no proType" if pro_type is None else f"proType 0x{int(pro_type):02X}"
+        raise ValueError(f"not a 33 write with a command ({got}): {shown_hex(frame)}")
+    return int(command)
+
+
 def find_reply(frames: list[bytes], command_type: int) -> bytes | None:
     """First ``0xAA`` frame in ``frames`` whose command is ``command_type`` (the frame reader's
     ``pro_type`` and ``read_reply.command``), else None. A reply whose body doesn't parse is still
@@ -137,6 +149,15 @@ def parse_light_power(frame: bytes, prof: Any = _REPLY) -> bool | None:
     is not an aa 01 reply. Not for plugs, whose byte is a relay mask (:func:`parse_power`)."""
     b = _reply_state(frame, _Command.power, prof)
     return None if b is None else bool(b.is_on)
+
+
+def parse_detail_power(frame: bytes) -> bool | None:
+    """AA 34 reply on the H6057 (the device-detail read, form_34 ``device_detail``): on while the light is
+    open (the spec's ``device_detail.light_open``, byte 0 bit 7: ``Controllers.d``, ``H6057Info4Detail.H``),
+    the screen's on / off and its light switch's state, whatever the white noise does; None if this is not
+    an aa 34 reply that reads."""
+    b = getattr(_reply_state(frame, _Command.cmd_34), "body", None)
+    return None if b is None else bool(b.light_open)
 
 
 def parse_relay_on(frame: bytes, prof: Any) -> bool | None:
@@ -215,7 +236,15 @@ class BarKelvin:
     right: int
 
 
-ModeColor = KelvinReport | BarKelvin | ColorReport
+@dataclass(frozen=True)
+class HeadPair:
+    """H7061's 0x15 report (goodsType 98, the spec's ``bri_rgb_pair``): ``(brightness, rgb)`` for each lamp
+    head, the brightness a signed byte, as ``H70606162Info4Detail.I`` stores them (SubMode4Color's colours
+    and relative brightness). It carries no colour temperature."""
+    heads: tuple[tuple[int, Rgb], tuple[int, Rgb]]
+
+
+ModeColor = KelvinReport | BarKelvin | HeadPair | ColorReport
 
 
 def mode_reply(frame: bytes, prof: Any) -> Any:
@@ -266,7 +295,8 @@ def mode_color(m: Any, *, unsigned_kelvin: bool = False) -> ModeColor | None:
     * ``rgb_kelvin_tint`` (``ModeParseStrategyConfig.a``): ``(None, kelvin)`` for a Kelvin > 0 (``is_cct``),
       the tint as the colour for a negative one (``shows_tint``), else the colour;
     * ``rgb_kelvin`` (``[r, g, b][kelvin s16be]``): ``(None, kelvin)`` for a Kelvin > 0, else the colour;
-    * ``rgb_only`` (H6052InfoDetail.G): the colour.
+    * ``rgb_only`` (H6052InfoDetail.G): the colour;
+    * ``bri_rgb_pair`` (H7061's two heads, ``H70606162Info4Detail.I``): :class:`HeadPair`.
 
     ``unsigned_kelvin`` is the library's default ``"rgb_kelvin"`` parse, which no app screen uses: the
     Kelvin read unsigned (``s2 & 0xFFFF``), and on the 0x0d tint layout ANY non-zero Kelvin is CCT
@@ -300,6 +330,8 @@ def mode_color(m: Any, *, unsigned_kelvin: bool = False) -> ModeColor | None:
         return (None, int(layout.kelvin)) if layout.is_cct else (_rgb(layout.color), None)
     if isinstance(layout, _S.RgbOnly):
         return _rgb(layout.color), None
+    if isinstance(layout, _S.BriRgbPair):
+        return HeadPair(((int(layout.bri), _rgb(layout.color)), (int(layout.bri_b), _rgb(layout.color_b))))
     return None   # a layout no profile in the library selects
 
 
@@ -428,16 +460,21 @@ class IcCount:
     # their byte-order check fires (``ic_count_byte_order_suspect``, 0x1000 or more), where the app's read
     # throws and stores no count.
     ic_count_checked: int | None = None
+    # The two section bytes (2 and 5) summed as Java bytes, as the sectioned IC-pair reader passes them on
+    # (the spec's ``section_sum``, ``ControllerIcNum.d``): None where that reader throws (``app_pair_fails``)
+    # or the reply is under 6 bytes.
+    section_sum: int | None = None
 
 
 def parse_ic_count(frame: bytes) -> IcCount | None:
-    """AA 40 reply: the live IC count and the reply's third byte (see :class:`IcCount`)."""
+    """AA 40 reply: the live IC count, the reply's third byte and the section sum (see :class:`IcCount`)."""
     b = _reply_state(frame, _Command.ic_num)
     if b is None or getattr(b, "segment", None) is None:   # shorter than [ic_count s2][segment]
         return None
-    checked = b.ic_count_checked
+    checked, sections = b.ic_count_checked, b.section_sum
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment),
-                   ic_count_checked=None if checked is None else int(checked))
+                   ic_count_checked=None if checked is None else int(checked),
+                   section_sum=None if sections is None else int(sections))
 
 
 @dataclass(frozen=True)

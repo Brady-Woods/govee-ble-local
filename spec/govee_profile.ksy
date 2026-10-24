@@ -57,7 +57,13 @@ types:
       - id: f_30
         type: u1
         enum: govee_common::form_30
-        doc: 33 30, aa 30, TLV 0x30 (zone power vs light direction)
+        doc: |
+          33 30, aa 30, TLV 0x30 (zone power vs light direction vs the H6057
+          light switch)
+      - id: f_34
+        type: u1
+        enum: govee_common::form_34
+        doc: aa 34 (the H6057 device detail; H6047's 33 34 is a bar swap)
       - id: f_36
         type: u1
         enum: govee_common::form_36
@@ -154,9 +160,10 @@ types:
   power_rule:
     doc: |
       CONTEXT: when the aa 01 reply byte means on, at the connect read and
-      in the aa 01 heartbeat: a light (masks 0) at byte == 1, or at any
-      non-zero byte under light_nonzero / light_heartbeat_nonzero; a plug
-      (relay bitmask, bit i = relay i) at (byte & mask) != 0.
+      in the aa 01 heartbeat, and when the advert's switch byte does: a light
+      (masks 0) at byte == 1, or at any non-zero aa 01 byte under
+      light_nonzero / light_heartbeat_nonzero; a plug (relay bitmask, bit i =
+      relay i) at (byte & mask) != 0.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32
       - split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45
@@ -195,6 +202,15 @@ types:
         doc-ref:
           - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:85-90
           - base-classes3/com/govee/home/main/device/moment/musicfeast/h1168/VM4MusicFeast.java:1418-1440
+      - id: advert_on_mask
+        type: u1
+        doc: |
+          the device list's advert switch-byte mask (devices.yaml
+          advert_on_mask); 0 = a light (on when the byte == 1)
+        doc-ref:
+          - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:393-407
+          - split_plugnew/com/govee/h5080/pact/Model.java:254-266
+          - split_plugnew/com/govee/h5080/pact/Model4Plug2.java:269-290
   mode_decode:
     doc: |
       CONTEXT: the screen's mode-report decode per colour sub-mode cXX (aa 05

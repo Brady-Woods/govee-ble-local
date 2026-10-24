@@ -36,6 +36,9 @@ Reliability rules this module enforces (each one learned from live failures):
   wait (the operation deadline, the caller's) gives the lock up at once and leaves
   each teardown to its abandon at its bound, as without a limit. The disconnect's
   errors are logged, never raised.
+* A ``send_once`` (the device-list card's session, a ``session: per_command`` row) holds no link: it
+  connects, writes its one frame, reads the reply for at most the write-ack timeout, and tears the link
+  down, each session ``PER_COMMAND_SESSION_GAP`` after the last one's release.
 * Errors are normalised: bleak/asyncio/timeout failures surface as typed
   :class:`GoveeBleError` subclasses (auth and not-supported errors are permanent and
   never retried; a write the device refuses is :class:`GoveeBleCommandRejected`).
@@ -88,6 +91,7 @@ from ..const import (
     IDLE_DISCONNECT_DELAY,
     NOTIFY_CHAR_UUID,
     OPERATION_TIMEOUT,
+    PER_COMMAND_SESSION_GAP,
     PSK,
     QUERY_DEFAULT_TIMEOUT,
     QUERY_TERMINAL,
@@ -118,7 +122,7 @@ from ..wire.build import (
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
-from ..wire.parse import bgc_encrypt_version, parse_write_ack
+from ..wire.parse import bgc_encrypt_version, parse_write_ack, write_command
 from ..wire.reassemble import BurstAssembler
 from ..wire.redact import carries_secret, mask_secret, shown_hex
 from . import handshake
@@ -318,6 +322,9 @@ class GoveeConnection:
         # when its task ends.
         self._teardowns: dict[asyncio.Task[None], float] = {}
         self._active_until = 0.0  # loop time; warm-window end after a user command
+        # Loop time the last send_once session was released (its link torn down): the next starts
+        # PER_COMMAND_SESSION_GAP after it at the earliest. None before the first.
+        self._released_at: float | None = None
         # The keep-alive read to send while the link is up (None: none) and when (HeartbeatTiming). Checked
         # here, before any I/O: a 20-byte aa read with its checksum, and a known timing. Without a heartbeat
         # the timing is ignored: no chain is ever armed (_arm_heartbeat), so neither timing sends a beat or
@@ -1083,14 +1090,17 @@ class GoveeConnection:
                 f"got {len(frame)}"
             )
 
-    def _check_write_frame(self, frame: bytes) -> None:
-        """Validate a frame for an ack-verified send: 2+ bytes AND a write (proType 0x33)."""
+    def _check_write_frame(self, frame: bytes) -> int:
+        """Validate a frame for an ack-verified send, 2+ bytes AND a write (proType 0x33) with a command, and
+        return the command, both read by the frame reader (:func:`..wire.parse.write_command`)."""
         self._check_frame(frame)
-        if frame[0] != PRO_WRITE:
+        try:
+            return write_command(frame)
+        except ValueError as err:
             raise GoveeBleInvalidValue(
                 f"{self.address}: only a write frame (proType 0x{PRO_WRITE:02X}) has an ack to "
-                f"wait for; got proType 0x{frame[0]:02X} (use query() for reads)"
-            )
+                f"wait for; {err} (use query() for reads)"
+            ) from None
 
     async def send_many(self, frames: list[bytes]) -> None:
         """Send several write frames back to back under ONE lock acquisition and
@@ -1146,27 +1156,82 @@ class GoveeConnection:
 
         await self._run(op, extend_warm=True)
 
+    async def send_once(self, frame_plaintext: bytes) -> None:
+        """Send one write on a session of its own, as the app's device-list card does (a devices.yaml
+        ``session: per_command`` row; spec devices.yaml timing.per_command): the card builds a client for each
+        command, writes its one frame and closes it (``CardCommManagerProxy.u`` -> ``triggerBleCmd$2``).
+
+        One operation under the lock and the deadline: it waits until ``PER_COMMAND_SESSION_GAP`` has passed
+        since the last such session's release (``CardCommManagerProxy.s``, which ``triggerBleCmd$2`` waits
+        out), drops any link still up so the frame goes out on a fresh session, connects and sets the session
+        up as every connect does (the BGC read, the handshake where the cipher needs it, any unlock and
+        session frames), writes the frame once, then tears the link down, failed or not, and stamps the
+        release. No retry, no second copy, and nothing armed afterwards: no idle timer (no link is left) and
+        no heartbeat (the teardown stops any).
+
+        The card counts the write's completion as success and reads no reply (its ``GMessageMulti`` registers
+        no reply timeout, ``ClientUnionMgr.excuBusinessSend``). Before closing, this reads the device's reply
+        for up to ``WRITE_ACK_TIMEOUT`` and raises :class:`GoveeBleCommandRejected` on a refusal (a non-zero
+        status), so a refused write is not reported as done; a good reply ends the wait at once, and no reply,
+        or a link lost while it waits, is a success, as on the card. Every frame must be a write (proType
+        0x33), else GoveeBleInvalidValue before any I/O."""
+        command_type = self._check_write_frame(frame_plaintext)
+
+        async def op() -> None:
+            loop = asyncio.get_running_loop()
+            if self._released_at is not None:
+                wait = self._released_at + PER_COMMAND_SESSION_GAP - loop.time()
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            try:
+                if self._client is not None:
+                    await self._disconnect_locked()   # a fresh session for each command (none is held)
+                await self._ensure_connected_locked()
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("%s: TX %s (its own session)", self.address,
+                                  describe_frame(frame_plaintext, "tx")[0])
+                self._drain()
+                await self._send_frame(frame_plaintext)
+                try:
+                    reply = await self._await_reply(PRO_WRITE, command_type, WRITE_ACK_TIMEOUT)
+                except _LinkLost:
+                    reply = None   # the write went out: the card's success
+                if reply is not None:
+                    self._check_ack(reply, command_type)
+            finally:
+                try:
+                    await self._disconnect_locked()
+                finally:
+                    self._released_at = loop.time()
+
+        await self._run(op, extend_warm=False)
+
+    def _check_ack(self, ack: bytes, command_type: int) -> None:
+        """Raise :class:`GoveeBleCommandRejected` when the write ack ``ack`` (``write_ack.result``) refuses
+        the write (a status other than 0)."""
+        status = parse_write_ack(ack)
+        if status not in (None, 0):
+            # DEBUG only: the typed exception carries the same text and the caller
+            # decides whether to log it (the unlock path re-raises it as an auth error).
+            _LOGGER.debug(
+                "%s: device rejected write 0x%02X (status 0x%02X)",
+                self.address, command_type, status,
+            )
+            raise GoveeBleCommandRejected(
+                f"{self.address}: device rejected write 0x{command_type:02X} "
+                f"(status 0x{status:02X})"
+            )
+
     async def _send_write_verified(self, frame_plaintext: bytes) -> bytes:
-        command_type = frame_plaintext[1]
+        command_type = write_command(frame_plaintext)   # checked before the operation (_check_write_frame)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("%s: TX %s", self.address, describe_frame(frame_plaintext, "tx")[0])
         for attempt in range(WRITE_ATTEMPTS):
             self._drain()
             await self._send_frame(frame_plaintext)
             ack = await self._await_reply(PRO_WRITE, command_type, WRITE_ACK_TIMEOUT)
-            status = None if ack is None else parse_write_ack(ack)   # write_ack.result
             if ack is not None:
-                if status not in (None, 0):
-                    # DEBUG only: the typed exception carries the same text and the caller
-                    # decides whether to log it (the unlock path re-raises it as an auth error).
-                    _LOGGER.debug(
-                        "%s: device rejected write 0x%02X (status 0x%02X)",
-                        self.address, command_type, status,
-                    )
-                    raise GoveeBleCommandRejected(
-                        f"{self.address}: device rejected write 0x{command_type:02X} "
-                        f"(status 0x{status:02X})"
-                    )
+                self._check_ack(ack, command_type)
                 return ack
             _LOGGER.debug(
                 "%s: no ack for write 0x%02X (attempt %d/%d)",

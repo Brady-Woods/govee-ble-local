@@ -241,8 +241,9 @@ def _stream(buf: bytes) -> Any:
     return KaitaiStream(BytesIO(buf))
 
 
-_FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_36", "f_40", "f_41", "f_a2",
-                 "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30", "f_ee_40")
+_FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_34", "f_36", "f_40", "f_41",
+                 "f_a2", "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30",
+                 "f_ee_40")
 # govee_profile struct -> its params, each with the govee_common enum it takes (None: a plain number)
 _LEAVES: Final[dict[str, dict[str, str | None]]] = {
     "CommandForms": {f: "Form" + "".join(p.capitalize() for p in f[2:].split("_")) for f in _FORMS},
@@ -250,7 +251,7 @@ _LEAVES: Final[dict[str, dict[str, str | None]]] = {
     "ColorGroupForm": {"rule": "GroupCountRule", "num_per_group": None, "has_brightness": None,
                        "num_pieces": None},
     "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None, "light_nonzero": None,
-                  "light_heartbeat_nonzero": None},
+                  "light_heartbeat_nonzero": None, "advert_on_mask": None},
     "ModeDecode": {"c02": "ColorDecode", "c0b": "ColorDecode", "c0d": "ColorDecode", "c14": "ColorDecode",
                    "c15": "ColorDecode", "music": "MusicDecode", "empty_fails": None},
 }
@@ -264,10 +265,11 @@ def make_profile(**facts: Any) -> Any:
 
     Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
     has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero,
-    light_heartbeat_nonzero; and the mode decode c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode
-    object serves both mode and mode_status). An enum-typed fact may be given by its member name, e.g.
-    make_profile(f_15_01="kelvin_tint"). Generated parents check a profile param by identity: build one object
-    per set of device facts and reuse it (the library's wire_profile() does this from devices.yaml)."""
+    light_heartbeat_nonzero, advert_on_mask; and the mode decode c02, c0b, c0d, c14, c15, music, empty_fails
+    (one mode_decode object serves both mode and mode_status). An enum-typed fact may be given by its member
+    name, e.g. make_profile(f_15_01="kelvin_tint"). Generated parents check a profile param by identity: build
+    one object per set of device facts and reuse it (the library's wire_profile() does this from
+    devices.yaml)."""
     profile_cls = _module("govee_profile").GoveeProfile
     common = _module("govee_common").GoveeCommon
     unknown = set(facts) - {k for params in _LEAVES.values() for k in params}
@@ -408,13 +410,16 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     its models list the SKU, its connectivity (else the family's) holds ble, and its pacts are 'any' or hold
     the pact (any listed pact when no pact is advertised, but on the goodsType a pact-conditioned
     assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate;
-    and on a pact_required row, whose goodsType the app also runs at other pacts on a path the row doesn't
-    serve); a row without pacts is never a route. Exactly one row is a route; none or several leave the SKU
-    unrouted unless the caller knows the goodsType."""
+    and on no row of a SKU a bind item names: its write's pact runs other facts than the row's, so a client
+    without the pact can't tell them apart; and on a pact_required row, whose goodsType the app also runs at
+    other pacts on a path the row doesn't serve); a row without pacts is never a route. Exactly one row is a
+    route; none or several leave the SKU unrouted unless the caller knows the goodsType."""
     gated = {(model, item.get("goods_type")) for fam in reg.get("families", [])
              for item in fam.get("assigned_goods_type") or []
              if set(item.get("condition") or {}) == {"min_pact_type", "min_pact_code"}
              for model in item.get("models") or []}
+    paired = {model for fam in reg.get("families", []) for item in fam.get("assigned_goods_type") or []
+              if item.get("context") == "bind" for model in item.get("models") or []}
     out: list[tuple[str, int]] = []
     for fam in reg.get("families", []):
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
@@ -422,7 +427,7 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
             if ("support" not in row or sku not in (row.get("models") or []) or pacts is None
                     or "ble" not in (row.get("connectivity") or fam.get("connectivity") or [])):
                 continue
-            if pact is None and ((sku, int(gt)) in gated or row.get("pact_required")):
+            if pact is None and ((sku, int(gt)) in gated or sku in paired or row.get("pact_required")):
                 continue
             if pacts == "any" or pact is None or f"{pact[0]},{pact[1]}" in pacts:
                 out.append((fam["id"], int(gt)))
@@ -540,13 +545,23 @@ def _selftest(*, strict: bool = False) -> int:
               and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
         reg = yaml.safe_load(path.read_text(encoding="utf-8"))
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none; "
-              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H6076 -> "
-              "straightfloorlamp 69 at (2,1), none without a pact (pact_required)",
+              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H615E -> "
+              "stringlightv2 108 at (2,1), none at its pairing write's (65535,255) or without a pact; "
+              "H6076 -> straightfloorlamp 69 at (2,1), none without a pact (pact_required)",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == []
               and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == []
+              and ble_rows(reg, "H615E", (2, 1)) == [("stringlightv2", 108)]
+              and ble_rows(reg, "H615E", (65535, 255)) == [] and ble_rows(reg, "H615E") == []
               and ble_rows(reg, "H6076", (2, 1)) == [("straightfloorlamp", 69)]
               and ble_rows(reg, "H6076") == [])
+        check("device-list card rows: H70B2 -> h70b2 185 at (1,1) only; H6631 -> h6630 286 at (2,4), where "
+              "H6630 has no row; each a per_command session with no keep-alive",
+              ble_rows(reg, "H70B2", (1, 1)) == [("h70b2", 185)] and ble_rows(reg, "H70B2", (1, 2)) == []
+              and ble_rows(reg, "H6631", (2, 4)) == [("h6630", 286)] and ble_rows(reg, "H6630", (2, 4)) == []
+              and all((r["session"], r["power_read"], r["heartbeat"]) == ("per_command", "advert", "none")
+                      for r in (client_row(reg, "h70b2", 185), client_row(reg, "h6630", 285),
+                                client_row(reg, "h6630", 286))))
         h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=pact, soft=s, hard=h)
                  for pact, s, h in (((1, 1), "3.03.18", "3.01.10"), ((1, 1), "1.03.00", "3.08.01"),
                                     ((1, 2), "1.05.00", "1.00.01"))]
@@ -559,9 +574,13 @@ def _selftest(*, strict: bool = False) -> int:
               == [([0, 1, 2, 3], [2000, 9000]), ([0, 1, 2, 3], [2700, 6500]), ([0, 1, 2, 3], [2000, 9000])]
               and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000]
               and [r["scene_versions"] for r in h6168] == [[0, 1, 2, 3], [0, 1, 2], [0, 1, 2]])
-        check("H60A6 pact (1,1): no 0xA5 in the status read; with the pact unknown the row's own applies",
+        check("H60A6 pact (1,1): no 0xA5 in the status read; H7070 adds 0x42 at (1,2) / (2,1); with the pact "
+              "unknown the row's own applies",
               client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]
-              and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"])
+              and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"]
+              and [client_row(reg, "h6092", 283, pact=p)["status_read"]
+                   for p in (None, (1, 1), (1, 2), (2, 1))]
+              == [["cmd_41", "cmd_0c"]] * 2 + [["cmd_41", "cmd_0c", "write_check_ic"]] * 2)
 
     try:
         _gbf()
@@ -621,6 +640,24 @@ def _selftest(*, strict: bool = False) -> int:
     g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
     check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
 
+    def ic_reply(*data: int) -> Any:
+        return parse_frame(append_bcc(bytes([0xAA, 0x40, *data])), "rx").body.state.body
+
+    check("aa 40 reply: section_sum = bytes 2 + 5 as Java bytes, absent where ControllerIcNum.d throws",
+          ic_reply(0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08).section_sum == 18
+          and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
+          and ic_reply(0x10, 0x00, 0x05).section_sum is None)
+
+    def detail_reply(*data: int) -> Any:
+        prof = make_profile(f_34="device_detail")
+        return parse_frame(append_bcc(bytes([0xAA, 0x34, *data])), "rx", prof).body.state.body.body
+
+    check("aa 34 reply (H6057 device detail): main switch on = light (byte 0 bit 7) or white noise playing "
+          "(byte 2 bits 4 and 7)",
+          [detail_reply(*b).main_switch_on for b in ((0x80,), (0x7F,), (0x00, 0, 0x90), (0x00, 0, 0x80))]
+          == [True, False, True, False] and detail_reply(0x80).light_open
+          and not detail_reply(0x00, 0, 0x90).light_open)
+
     from govee_commands import (  # the catalogue imports this module
         build_op15_color_temp_bytes_r,
         build_op15_color_v5,
@@ -637,6 +674,26 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 23 panels",
           (v5.color.r, v5.color.g, v5.color.b, v5.kelvin) == (0x12, 0x34, 0x56, 0) and not v5.is_cct
           and v5.mask.bits[:24] == [True] * 23 + [False])
+
+    from govee_commands import build_color_legacy
+
+    flag = _gbf().Color02Flag
+    rgb02, tint02 = (parse_frame(build_color_legacy(*args), "tx").body.params.params
+                     for args in ((0x11, 0x22, 0x33), (0xFF, 0xFF, 0xFF, 1, 0xFF, 0xAE, 0x54)))
+    check("build_color_legacy round-trips both Config.fu forms (color_02_write: Bytes.a, Bytes.o)",
+          (rgb02.color.r, rgb02.color.g, rgb02.color.b, rgb02.white_flag) == (0x11, 0x22, 0x33, flag.rgb)
+          and (tint02.color.r, tint02.white_flag) == (0xFF, flag.white_tint)
+          and (tint02.tint.r, tint02.tint.g, tint02.tint.b) == (0xFF, 0xAE, 0x54))
+    # The white types (devices.yaml white_type): rgb_black's slot 00 00 00 is still CCT; rgb_self_tem_color
+    # over a partial posSet is the tint as plain RGB (kelvin 0).
+    prof16 = make_profile(f_15_01="kelvin_tint", num_segments=16)
+    black, partial = (parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, pos, kind), "tx",
+                                  prof16).body.params.params.data
+                      for pos, kind in (([True] * 16, 0), ([True, False] * 8, 3)))
+    check("Bytes.r white types: rgb_black leads 00 00 00 at 2700 K; partial rgb_self_tem_color is RGB",
+          (black.color.r, black.color.g, black.color.b, black.kelvin, black.is_cct) == (0, 0, 0, 2700, True)
+          and (partial.color.r, partial.color.g, partial.color.b, partial.kelvin, partial.is_cct)
+          == (100, 50, 16, 0, False))
 
     k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
     kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))

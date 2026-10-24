@@ -96,9 +96,9 @@ def sku_from_local_name(name: str) -> str | None:
     """Extract the SKU from a Govee local name — a port of ``BaseBleProcessor.parse``.
 
     - name contains ``ihoment_`` / ``Govee_`` / ``Minger_``, or starts with ``GBK_``: split on
-      ``_``; exactly 3 parts, SKU = the middle one (``ihoment_H5083_A2D1`` -> ``H5083``). (c(), d())
+      ``_``; exactly 3 parts, SKU = the middle one (``ihoment_H5083_5383`` -> ``H5083``). (c(), d())
     - ``GVH`` / ``GVR`` with an ``_``: SKU = ``name[2:index('_')]`` (``GVH6188_1A2B`` -> ``H6188``);
-      without one: needs >= 11 chars, SKU = ``name[2:7]`` (``GVH60A67457`` -> ``H60A6``). (e(), f())
+      without one: needs >= 11 chars, SKU = ``name[2:7]`` (``GVH60A65357`` -> ``H60A6``). (e(), f())
     - otherwise ``GV``: needs >= 10 chars, SKU = ``"H" + name[2:6]`` (``GV61881A2B`` -> ``H6188``).
       (g())
 
@@ -213,15 +213,17 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
 
     Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.z: the byte right after
     pactType(2)+pactCode(1) in the Govee mfg data (scanRecord i+8; bleak value
-    index 4) == 1 means ON. Only a broadcast whose header byte (the company-id low
-    byte, scanRecord i+2), read as a signed Java byte, is >= 2 carries it: a v0/v1
-    header (or one with bit 7 set) is skipped, and the app logs that the broadcast has
-    no switch state. Returns True/False, or None if the advertisement doesn't carry it
-    (not a Govee broadcast / header below 2 / too short).
+    index 4) == 1 means ON. Only a broadcast whose header byte (the company-id low byte, scanRecord
+    i+2), read as a signed Java byte, is >= 2 carries it: a v0/v1 header (or one with bit 7 set) is
+    skipped, and the app logs that the broadcast has no switch state. Returns True/False, or None if the
+    advertisement doesn't carry it (not a Govee broadcast / header below 2 / too short).
 
     ``on_mask`` decodes the byte as a bitmask instead: ON when any of its bits is set. The plugs'
     device-list models do that (h5080 ``Model.z``, ``Model4Plug2.z``; see
-    ``DeviceProfile.advert_on_mask``). ``Device.advertised_on`` applies the device's own mask.
+    ``DeviceProfile.advert_on_mask``). Both decodes are the spec's: the entry's ``device_state`` read as a
+    ``govee_state`` ``power_state`` from the advert (``source`` advert, ``is_on``), with the mask as the
+    ``govee_profile`` ``power_rule.advert_on_mask`` (0 = a light). ``Device.advertised_on`` applies the
+    device's own mask.
 
     The first Govee entry that carries the byte is read, as the app reads one broadcast. A merged record's
     first entry may be a stale one; ``Device.advertised_on`` hands it the entry that last changed
@@ -231,8 +233,11 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
         # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
         if not entry.has_switch_state:
             continue
-        switch = int(entry.switch_byte)
-        return switch == 1 if on_mask is None else bool(switch & on_mask)
+        if on_mask == 0:   # a mask with no bits (0 or False) is never on, as 1.7.0 read it
+            return False   # (the spec's advert_on_mask 0 means a light, so it can't carry this case)
+        rule = _spec.profile(advert_on_mask=on_mask or 0).power
+        return bool(_spec.read(_spec.State.PowerState, entry.device_state, _spec.State.Source.advert,
+                               rule).is_on)
     return None
 
 

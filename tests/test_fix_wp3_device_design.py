@@ -158,9 +158,9 @@ def test_passive_matcher_constants_agree_with_identify() -> None:
     # The public tuple keeps its value (LOCAL_NAME_PREFIXES is semver API) ...
     assert LOCAL_NAME_PREFIXES == ("ihoment_", "Govee_", "Minger_", "GVH", "GVR", "GV", "GBK_")
     # ... and identify() accepts a well-formed name under every prefix in it ...
-    names = {"ihoment_": "ihoment_H5083_A2D1", "Govee_": "Govee_H5083_A2D1",
-             "Minger_": "Minger_H5083_A2D1", "GBK_": "GBK_H5083_A2D1", "GVH": "GVH5083_A2D1",
-             "GVR": "GVR5083_A2D1", "GV": "GV50831A2B"}
+    names = {"ihoment_": "ihoment_H5083_5383", "Govee_": "Govee_H5083_5383",
+             "Minger_": "Minger_H5083_5383", "GBK_": "GBK_H5083_5383", "GVH": "GVH5083_5383",
+             "GVR": "GVR5083_5383", "GV": "GV50835383"}
     assert set(names) == set(LOCAL_NAME_PREFIXES)
     for prefix, name in names.items():
         assert name.startswith(prefix) and sku_from_local_name(name) is not None, prefix
@@ -277,6 +277,23 @@ def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.Monke
     d._learn_pact((1, 1))   # unchanged: not logged again
     assert d.pact == (1, 1) and d.profile is dimmer
     assert [r.getMessage().split(": ", 1)[1][:28] for r in caplog.records] == ["advertises pact 1,1, which n"]
+    # Where the other row differs only in what a pact picks within a row, the later pact re-selects it, as the
+    # app runs the row the unit's pact gives it (profile.reroute): an H6118 built without a pact has goodsType
+    # 6's raw brightness, and its BK pact (10, 1) gives goodsType 39's percent; (1, 1) gives 6 back.
+    bk = make_device(ble_device("AA:BB:CC:DD:EE:3E", "ihoment_H6118_ABCD"), "H6118")
+    assert bk is not None and bk.profile is profile_for("H6118") and bk.profile.brightness_range == (20, 254)
+    for pact, raw in (((10, 1), None), ((1, 1), (20, 254))):
+        bk._learn_pact(pact)
+        assert bk.profile is profile_for("H6118", pact=pact) and bk.profile.brightness_range == raw, pact
+    # The keep-alive opt-out (heartbeat=None) is kept across the re-selection, and doesn't block it.
+    base = profile_for("H6118")
+    assert base is not None and base.heartbeat is not None
+    quiet = Device(dataclasses.replace(base, heartbeat=None), ble_device("AA:BB:CC:DD:EE:3F", "GVH6118"),
+                   sku="H6118")
+    quiet._learn_pact((10, 1))
+    bk_pact = profile_for("H6118", pact=(10, 1))
+    assert bk_pact is not None and quiet.profile == dataclasses.replace(bk_pact, heartbeat=None)
+    assert len(caplog.records) == 1   # no re-selection warns
 
 
 def test_a_modelled_row_needs_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -361,7 +378,9 @@ def test_brightness_max_must_be_positive() -> None:
     for bad in (k41, {**k41, **base, "kelvin_by_hardware": (("3.08.01", 2700, 6500),)},
                 {**base, "kelvin_by_pact": (((4, 1), 9500, 9900),)},                  # outside the base
                 {**base, "kelvin_by_pact": (((4, 1), 2000, 2500), ((4, 2), 8000, 9000))},   # none on all
-                {"brightness_by_pact": (((2, 1), (0, 300)),)}):
+                {"brightness_by_pact": (((2, 1), (0, 300)),)},
+                {"status_read_by_pact": (((1, 2), (0x41, 0x41)),)},                         # a repeated type
+                {"status_read_by_pact": (((1, 2), (0x41,)), ((1, 2), (0x42,)))}):           # a pact twice
         with pytest.raises(GoveeBleInvalidValue, match="_by_pact"):
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **bad)  # type: ignore[arg-type]
     d = Device(DeviceProfile(skus=("HX",), capabilities=frozenset(), **base, **k41, brightness_range=(6, 254),

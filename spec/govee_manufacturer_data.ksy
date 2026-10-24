@@ -92,7 +92,9 @@ instances:
   switch_byte:
     value: device_state[0]
     if: has_switch_state
-    doc: per-SKU; H5080 plugs use bit 0 (outlet 0) and bit 1 (outlet 1)
+    doc: |
+      per-SKU; H5080 plugs use bit 0 (outlet 0) and bit 1 (outlet 1). Its
+      on/off: device_state read as govee_state power_state (source advert)
     doc-ref:
       - base-classes9/com/govee/base2home/pact/BleUtil.java:711
       - split_plugnew/com/govee/h5080/pact/Model.java:254-266

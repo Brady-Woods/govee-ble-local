@@ -16,7 +16,7 @@ def test_parse_secret_and_ble_mac_from_device_settings() -> None:
     settings = {
         "address": "00:00:5E:00:53:D1",       # BLE MAC
         "wifiMac": "00:00:5E:00:53:D0",        # embedded in `device` id
-        "bleName": "ihoment_H5083_A2D1",
+        "bleName": "ihoment_H5083_5383",
         "secretCode": "ASNFZ4mrze8=",          # 8-byte base64 secret
         "pactType": 2,
         "pactCode": 2,

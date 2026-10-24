@@ -133,13 +133,15 @@ def test_color_rgb_15_h60a6_up_to_16_segments() -> None:
                 C.build_op15_color_bytes_h(*rgb, [True] * segments)
 
 
-def test_color_temp_0d() -> None:
+def test_color_temp_0d_and_02() -> None:
     for kelvin in range(1000, 10001, 100):
         t = tint_for_kelvin(kelvin)
         # h6006: Config.bu -> Bytes.p, the tint in both colour slots.
         assert b.color_temp(kelvin, "h6006") == C.build_color_cct_0d(*t, kelvin, t)
         # h6188: Config.GM -> Bytes.A, white in the colour slot.
         assert b.color_temp(kelvin, "h6188") == C.build_color_cct_0d(255, 255, 255, kelvin, t)
+        # legacy_02: the Kelvin's tint through Config.fu -> Bytes.o, white then the tint (no Kelvin bytes).
+        assert b.color_temp(kelvin, "legacy_02") == C.build_color_legacy(255, 255, 255, 1, *t)
 
 
 def test_color_temp_15_h60a6_up_to_16_segments() -> None:
@@ -182,6 +184,9 @@ def test_rgb_pick_as_kelvin_every_tint(kelvin_range: tuple[int, int]) -> None:
         expect_15 = (C.build_op15_color_temp_bytes_r(rgb, kelvin, [True] * 13) if inside
                      else C.build_op15_color_bytes_h(*rgb, [True] * 13))
         assert b.color_rgb_frames(*rgb, "h60a6", 13, kelvin_range=kelvin_range) == [expect_15]
+        # 0x02 (Config.fu): Bytes.o(white, the picked colour) inside the range, else Bytes.a.
+        expect_02 = C.build_color_legacy(255, 255, 255, 1, *rgb) if inside else C.build_color_legacy(*rgb)
+        assert b.color_rgb_frames(*rgb, "legacy_02", kelvin_range=kelvin_range) == [expect_02]
         # h61a8 has no CCT: always RGB.
         assert b.color_rgb_frames(*rgb, "h61a8", 15, kelvin_range=kelvin_range) == [
             C.build_color_rgbic_0b(*rgb, 0x7FFF)]
@@ -214,6 +219,13 @@ def test_segment_color_temp() -> None:
         mask, kelvin = _mask(r, segments), r.randrange(20, 91) * 100
         assert b.segment_color_temp(mask, kelvin, "h60a6", segments) == C.build_op15_color_temp_bytes_r(
             tint_for_kelvin(kelvin), kelvin, _pos_set(mask, segments))
+        # The white slot per white type (Bytes.r's kind: rgb_black 0, rgb_self_tem_color 3), whole and
+        # partial.
+        for white_type, kind in (("rgb_black", 0), ("rgb_self_tem_color", 3)):
+            for m in (mask, (1 << segments) - 1):
+                assert b.segment_color_temp(m, kelvin, "h60a6", segments, white_type=white_type) == \
+                    C.build_op15_color_temp_bytes_r(
+                        tint_for_kelvin(kelvin), kelvin, _pos_set(m, segments), kind)
 
 
 def test_segment_brightness_every_mask_width() -> None:
@@ -236,6 +248,7 @@ def test_zone_bar_gradual() -> None:
             assert b.bar_switch(left, right) == C.build_bar_switch_pair(left, right)
     for on in (True, False):
         assert b.gradual(on) == C.build_gradual(on)
+        assert b.light_switch(on) == C.build_h6057_light_switch(on)   # the H6057 light switch, form_30
 
 
 def test_scene_activate_every_code() -> None:
@@ -267,6 +280,7 @@ def test_plug_and_secret_writes() -> None:
         assert b.plug_sync_time(ts, hh, mm) == C.build_plug_sync_time(ts, hh, mm)
         secret = bytes(r.randrange(256) for _ in range(b.SECRET_LEN))
         assert b.secret_check(secret) == C.build_secret_write(secret)
+    assert b.empty_secret_check() == C.build_secret_write(b"")   # the app's no-secret check
     assert b.light_effect_stop() == C.build_set_light_end()
 
 
@@ -285,6 +299,7 @@ _READS: list[tuple[str, Callable[[], bytes], Callable[[], bytes]]] = [
     ("ic_count_query", b.ic_count_query, C.read_ic_segment),
     # The catalogue's 0x41 read cites the on_off_memory controller; the frame is the same bytes.
     ("section_count_query", b.section_count_query, C.read_on_off_memory_or_section_count),
+    ("device_detail_query", b.device_detail_query, C.read_h6057_detail),
     ("status_query(full)", lambda: b.status_query(full=True),
      lambda: C.build_status_request([0x41, 0x30, 0xA5])),
     ("status_query()", b.status_query, lambda: C.build_status_request([0x41, 0x30])),
@@ -380,6 +395,7 @@ _ENUM_CONSTANTS: dict[str, tuple[int, str]] = {
     "CMD_SECTION_COUNT": (0x41, "Command.cmd_41"),
     "SUB_SCENE": (0x04, "SubMode.scene"), "SUB_COLOR_15": (0x15, "SubMode.color_rgbic_15"),
     "SUB_COLOR_0D": (0x0D, "SubMode.color_cct_0d"), "SUB_COLOR_0B": (0x0B, "SubMode.color_rgbic_0b"),
+    "SUB_COLOR_02": (0x02, "SubMode.color_legacy"),
     "OP15_SET_COLOR": (0x01, "Op15.set_color"), "OP15_SET_BRIGHTNESS": (0x02, "Op15.set_brightness"),
 }
 

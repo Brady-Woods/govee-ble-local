@@ -12,7 +12,7 @@ import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
-from ..models import DeviceState, Segment
+from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
 from .brightness import raw_to_percent
 from ._resolve import version
@@ -209,8 +209,14 @@ def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, i
     """A whole-device RGB write: the colour, or - when the app sends it as a colour temperature
     (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports (and what the app
     syncs to its Kelvin slider; both bars of a bar-switch device). ``span`` is the Kelvin range the
-    frame was built with (:func:`kelvin_range`), so the state follows what was sent."""
-    kelvin = build.rgb_as_kelvin(*rgb, profile.color_scheme, span)
+    frame was built with (:func:`kelvin_range`), so the state follows what was sent.
+
+    A profile without COLOR_TEMP keeps the colour, though its frame may be the colour-temperature form
+    (``legacy_02``'s ``Bytes.o`` on H7310 / H7318 / H6165): the app keeps the picked colours
+    (``ColorViewModel.u0``: ``SubMode4Color.p``) and its ``syncKelvin`` has no Kelvin control to drive on
+    those screens (``VM4Light.syncKelvin``; ``Config.EO`` gives them no colour temperature)."""
+    kelvin = (build.rgb_as_kelvin(*rgb, profile.color_scheme, span)
+              if Capability.COLOR_TEMP in profile.capabilities else None)
     if kelvin is None:
         state.rgb_color, state.color_temp_kelvin = rgb, None
     else:
@@ -417,8 +423,31 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     elif isinstance(color, parse.KelvinReport):
         if color.kelvin > 0 or profile.mode_reports_kelvin:   # else the report can't say: keep what was sent
             apply_kelvin_report(state, color.kelvin)
+    elif isinstance(color, parse.HeadPair):
+        _apply_head_pair(profile, state, color)
     elif color is not None:
         state.rgb_color, state.color_temp_kelvin = color
+
+
+def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.HeadPair) -> None:
+    """H7061's two-head report (``H70606162Info4Detail.I``: SubMode4Color's colours and relative
+    brightness, the two head swatches and their "N%" of ``H7061ColorMode.updateColor`` /
+    ``updateBrightness``): head 1 is segment 0 and head 2 segment 1 (the colour page's posSet over its 2
+    pieces), each brightness clamped to the 0..100 state holds. The whole device has a colour only while
+    both heads show the same one; when that colour is an in-range Kelvin tint it is that colour temperature,
+    as the colour page maps a one-colour report to its Kelvin (``ColorViewModel.initColor4Device`` ->
+    ``KelvinConfig.f``) and as :func:`apply_rgb` folds the same pick. The report carries no Kelvin field
+    (its default parse's ``s16be(r1, g1)`` is head 1's red and green), so none is read from it."""
+    (bri_a, rgb_a), (bri_b, rgb_b) = pair.heads
+    state.segments = parse.merge_segments(state.segments, [
+        Segment(0, rgb_a, max(0, min(100, bri_a))), Segment(1, rgb_b, max(0, min(100, bri_b)))])
+    shared = rgb_a if rgb_a == rgb_b else None
+    span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
+    kelvin = None if shared is None else build.rgb_as_kelvin(*shared, profile.color_scheme, span)
+    if kelvin is None:
+        state.rgb_color, state.color_temp_kelvin = shared, None
+    else:
+        state.rgb_color, state.color_temp_kelvin = None, kelvin
 
 
 def apply_kelvin_report(state: DeviceState, kelvin: int) -> None:

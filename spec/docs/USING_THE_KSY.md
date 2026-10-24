@@ -125,16 +125,17 @@ devices. Both facts come in as **params**:
 
 ```
 govee_profile(forms, counts, group, power, mode, mode_status)
-  forms   command_forms: one selector per overloaded byte (f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_36,
-          f_40, f_41, f_a2, f_a3, f_a5, f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40); each is a
-          govee_common form_* enum
+  forms   command_forms: one selector per overloaded byte (f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_34,
+          f_36, f_40, f_41, f_a2, f_a3, f_a5, f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40); each
+          is a govee_common form_* enum
   counts  device_counts(num_segments, num_levels): the segment-mask width of a colour / brightness write,
           the level count of a 33 05 15 03 write
   group   color_group_form(rule, num_per_group, has_brightness, num_pieces): how an aa a5 / aa a2 reply
           or a TLV 0xA5 value is counted, and 4-byte [brightness, R, G, B] vs 3-byte [R, G, B] records
-  power   power_rule(relay_on_mask, relay_heartbeat_on_mask, light_nonzero, light_heartbeat_nonzero): the
-          aa 01 rules at the connect read and in the heartbeat (masks 0 = a light: state == 1, or state != 0
-          under light_nonzero, and in the heartbeat also under light_heartbeat_nonzero)
+  power   power_rule(relay_on_mask, relay_heartbeat_on_mask, light_nonzero, light_heartbeat_nonzero,
+          advert_on_mask): the aa 01 rules at the connect read and in the heartbeat, and the advert's switch
+          byte (masks 0 = a light: state == 1, or state != 0 under light_nonzero, and in the heartbeat also
+          under light_heartbeat_nonzero; the advert at state == 1)
   mode, mode_status   mode_decode(c02, c0b, c0d, c14, c15, music, empty_fails): how the mode report
           (aa 05 reply / TLV 0x05) decodes each colour sub-mode and the music sub-mode
 ```

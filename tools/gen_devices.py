@@ -69,16 +69,17 @@ KEEP: dict[str, tuple[str, ...]] = {
     "#/$defs/modeColorStrategy": ("sub_modes",),
     "#/$defs/family": ("id", "connectivity", "specs", "encryption", "assigned_goods_type", "client_profile"),
     "#/$defs/family/properties/specs": _ROW_FACTS,
-    "#/$defs/assignedGoodsType": ("models", "goods_type", "from_goods_type", "condition"),
+    "#/$defs/assignedGoodsType": ("models", "goods_type", "from_goods_type", "condition", "pact"),
     "#/$defs/family/properties/client_profile": (
         "has_brightness", "color_scheme", "power_read", "power_live", "mode_color_parse",
         "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "by_model",
         "by_goods_type", "wire"),
     "#/$defs/clientRow": (
-        "models", "connectivity", "pacts", "pact_required", "support", "power_read", "power_live",
-        "mode_color_parse", "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask",
-        "color_scheme", "color_functions", "capabilities", "segment_color_temp", "zones",
-        "segment_brightness_groups", "account_lock", "scene_dialect", *_ROW_FACTS, "mode_reports_kelvin",
+        "models", "connectivity", "pacts", "pact_required", "support", "session", "power_read",
+        "power_write", "power_live", "mode_color_parse", "mode_color_parse_status", "relay_power",
+        "relay_on_mask", "advert_on_mask", "color_scheme", "white_type", "color_temp_control",
+        "color_functions", "capabilities", "segment_color_temp", "zones", "segment_brightness_groups",
+        "account_lock", "empty_secret_check", "scene_dialect", *_ROW_FACTS, "mode_reports_kelvin",
         "status_read", "device_info_reads", "connect_reads", "connect_writes", "heartbeat",
         "heartbeat_timing", "power_resync", "ic_pieces", "by_pact", "by_firmware"),
     "#/$defs/clientModel": ("mode_color_parse", "mode_color_parse_status", "kelvin_range", "brightness_range",
@@ -238,12 +239,13 @@ def _check_status_reads(families: tuple[dict[str, Any], ...]) -> None:
 def _check_heartbeats(families: tuple[dict[str, Any], ...], beats: tuple[str, ...]) -> None:
     """Every row's heartbeat is a govee_common::command member, whose code the library sends
     (devices/profile.py), and one of ``beats``, the keep-alive reads a screen sends (the resolver's
-    ``HEARTBEATS``, which devices/profile.py also checks)."""
+    ``HEARTBEATS``, which devices/profile.py also checks), or ``none`` (no keep-alive: the resolver serves it
+    on a per_command row only)."""
     members = _members("command")
     for fam in families:
         for gt, row in fam["client_profile"]["by_goods_type"].items():
             beat = row.get("heartbeat")
-            if beat is not None and (beat not in members or beat not in beats):
+            if beat is not None and beat != "none" and (beat not in members or beat not in beats):
                 raise GenError(f"{fam['id']} goodsType {gt}: heartbeat {beat!r} is not a keep-alive read "
                                f"(govee_common enum command, one of {sorted(beats)})")
 
@@ -375,6 +377,7 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
     resolve = _resolver()
     routed = resolve.catalogue(doc["families"], catalogue)
     reassigned = resolve.reassignment_review(doc["families"])
+    paired = resolve.bind_review(doc["families"])
     only = frozenset(sku for skus in routed.added.values() for sku in skus)
     fmt = pprint.PrettyPrinter(width=110, sort_dicts=False).pformat
     return "\n".join([
@@ -396,7 +399,9 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
     ]), [f">> catalogue snapshot: {len(only)} SKUs routed that no devices.yaml row lists, "
          f"{len(routed.review)} for review", *(f"   review: {line}" for line in routed.review),
          f">> pact-conditioned reassignments: {len(reassigned)} for review",
-         *(f"   review: {line}" for line in reassigned)]
+         *(f"   review: {line}" for line in reassigned),
+         f">> exact-pact pairing writes: {len(paired)} for review",
+         *(f"   review: {line}" for line in paired)]
 
 
 def main(argv: list[str] | None = None) -> int:

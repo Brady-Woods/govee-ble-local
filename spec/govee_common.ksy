@@ -648,10 +648,13 @@ enums:
         - split_h6062/com/govee/striplight/ble/ComposeHeartController.java:9-11
         - H6047 handler @0x010069f0
     0x34:
-      id: swap_light
-      doc: swap the two bars' logical positions (H6047)
+      id: cmd_34
+      doc: |
+        overloaded (form_34): 33 34 swaps the two bars' logical positions
+        (H6047, an empty write); aa 34 is the H6057 device-detail read
       doc-ref:
         - H6047 handler @0x01005080
+        - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:62-70
     0x35:
       id: without_interrupt
       -orig-id: SINGLE_WITHOUT_INTERRUPT
@@ -1597,10 +1600,19 @@ enums:
     2:
       id: light_direction
       doc: |
-        one-byte value (H6038 calibration direction, H6057 main light, H71xx)
+        one-byte value (H6038 calibration direction, H71xx chart report)
       doc-ref:
         - split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45
-        - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-956
+        - base-classes12/com/govee/base_h71xx/sku_base/ble/controller/ReportChartController.java:24-31
+    3:
+      id: light_switch
+      doc: |
+        the H6057 header's light switch (command_light_switch 0x30), a one-byte
+        1 / 0 that switches the light alone, not the white-noise speaker; its
+        state reads back as the aa 34 device_detail light_open (no aa 30 read)
+      doc-ref:
+        - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:949-967
+        - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
   form_36:
     0:
       id: unknown
@@ -1620,6 +1632,16 @@ enums:
       doc: H6057 worry-free-at-night, 7 bytes
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/WorryFreeAtNightBean.java:90-92
+  form_34:
+    0:
+      id: unknown
+      doc: not known; body raw (the H6047 33 34 swap write has no body to read)
+    1:
+      id: device_detail
+      doc: the H6057 aa 34 device-detail reply (Controller4ExtBytes read of 0x34)
+      doc-ref:
+        - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:34-70
+        - base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytes.java:49-64
   form_40:
     0:
       id: unknown
@@ -1745,7 +1767,8 @@ enums:
     2:
       id: kelvin_tint
       doc: |
-        [rgb][kelvin u2be][tint rgb][seg_mask cap 7]; zeros for plain RGB
+        [rgb][kelvin u2be][tint rgb][seg_mask cap 7]; zeros for plain RGB; a
+        CCT's rgb is the device's white slot (op15_color color)
       doc-ref:
         - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501
         - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326

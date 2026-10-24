@@ -46,6 +46,8 @@ seq:
         'govee_common::command::new_timer': timer_slots
         'govee_common::command::cmd_30': >-
           cmd_30_state(profile.forms.f_30, source)
+        'govee_common::command::cmd_34': >-
+          cmd_34_state(profile.forms.f_34, source)
         'govee_common::command::cmd_36': >-
           cmd_36_state(profile.forms.f_36, source)
         'govee_common::command::ic_num': ic_count
@@ -153,12 +155,13 @@ types:
       - firmware-h60a1-wifi/decompiled/H60A1_ble_dispatcher.c:559-560
   power_state:
     doc: |
-      AA 01 reply / TLV 0x01: the power byte (a light's on flag or a plug's
-      relay bitmask), then one aux byte in a reply.
+      AA 01 reply / TLV 0x01 / the advert's switch byte: the power byte (a
+      light's on flag or a plug's relay bitmask), then one aux byte in a reply.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32
       - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288
       - split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45
+      - base-classes9/com/govee/base2home/pact/BleUtil.java:719-743
     params:
       - id: source
         type: u1
@@ -179,14 +182,22 @@ types:
       is_on:
         value: >-
           source == source::status_tlv ? state != 0 :
+          (source == source::advert ?
+          (power.advert_on_mask != 0 ? (state & power.advert_on_mask) != 0 : state == 1) :
           (power.relay_on_mask != 0 ? (state & power.relay_on_mask) != 0 :
-          (power.light_nonzero ? state != 0 : state == 1))
+          (power.light_nonzero ? state != 0 : state == 1)))
         doc: |
-          on at the connect read (reply) or in the status TLV; a light's reply
-          by the power rule (== 1, or != 0 under light_nonzero)
+          on at the connect read (reply), in the status TLV, or in the advert;
+          a light's reply by the power rule (== 1, or != 0 under
+          light_nonzero), a light's advert at == 1 and a plug's by its
+          advert_on_mask
         doc-ref:
           - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:29-33
           - split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:176-178
+          - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:393-407
+          - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:77-101
+          - split_plugnew/com/govee/h5080/pact/Model.java:254-266
+          - split_plugnew/com/govee/h5080/pact/Model4Plug2.java:269-290
       is_on_heartbeat:
         value: >-
           power.relay_heartbeat_on_mask != 0 ? (state & power.relay_heartbeat_on_mask) != 0 :
@@ -1110,6 +1121,8 @@ types:
   cmd_30_state:
     doc: |
       Command 0x30 under form_30; light_direction is read from the TLV only.
+      light_switch has no 0x30 read: its state is the aa 34 device_detail
+      light_open.
     params:
       - id: form
         type: u1
@@ -1127,6 +1140,82 @@ types:
         if: >-
           form != govee_common::form_30::light_direction
           or source == source::status_tlv
+  cmd_34_state:
+    doc: |
+      Command 0x34 under form_34: device_detail for the aa 34 reply (H6057);
+      other combinations stay in rest.
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_34
+      - id: source
+        type: u1
+        enum: source
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_34::device_detail': device_detail
+        if: >-
+          form == govee_common::form_34::device_detail
+          and source == source::read_reply
+  device_detail:
+    doc: |
+      Form device_detail of 0x34: the H6057 aa 34 reply, [switch flags][battery]
+      [music flags][music code][volume][brightness] (Controllers.e). The screen's
+      header has two switches: the light switch shows light_open, the main switch
+      (33 01) shows main_switch_on.
+    doc-ref:
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:30-58
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/DeviceInfoNotifyParse.java:61-70
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:517-545,571-588
+      - base-classes12/com/govee/base2light/util/ParseUtils.java:54-56,72-74
+    seq:
+      - id: switch_flags
+        type: u1
+        doc: |
+          bit 7 the light open; bits 6-2 energy saving, power-on without
+          interruption, worry-free, prompt tone and guide light (SwitchInfo)
+      - id: battery
+        type: u1
+      - id: music_flags
+        type: u1
+        doc: |
+          bit 6 Bluetooth audio, bit 5 game, bit 4 white noise, bit 3 group
+          control; bit 7 playing, read only in white-noise mode (MusicTypeInfo)
+      - id: music_code
+        type: u1
+      - id: volume
+        type: u1
+      - id: brightness
+        type: u1
+    instances:
+      light_open:
+        value: (switch_flags & 0x80) != 0
+        doc: |
+          the light-open flag (H6057Info4Detail.H, bit 7: Controllers.d's
+          getBit2Boolean(b, 8)): the light switch's state (33 30 under form_30
+          light_switch), and the screen's on / off (switchCur), which shows the
+          closed screen while it is clear
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:208-210
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1226-1228
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:34-45
+          - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,141-173
+      white_noise_playing:
+        value: (music_flags & 0x10) != 0 and (music_flags & 0x80) != 0
+        doc: MusicTypeInfo isPlay (set only in white-noise mode)
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/MusicTypeInfo.java:117-119
+      main_switch_on:
+        value: light_open or white_noise_playing
+        doc: |
+          the header main switch's state: the light open or white noise
+          playing; it writes 33 01 01 only when both are off, else 33 01 00
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:183-213
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1231-1264
   cmd_36_state:
     doc: |
       Command 0x36 under form_36: bar_pair for the aa 36 reply (H6047),
@@ -1369,6 +1458,25 @@ types:
       segment_signed:
         value: 'segment >= 0x80 ? segment - 0x100 : segment'
         if: _io.size >= 3
+      segment_2_signed:
+        value: 'segment_2 >= 0x80 ? segment_2 - 0x100 : segment_2'
+        if: _io.size >= 6
+        doc: the second section byte, read as a Java byte
+      section_sum:
+        value: segment_signed + segment_2_signed
+        if: _io.size >= 6 and not app_pair_fails
+        doc: |
+          the two section bytes (2 and 5) summed as Java bytes, as the sectioned
+          IC-pair reader (ControllerIcNum.d) passes them on: the rgbiclight screen's
+          colour read-back walks this many pieces when it is not 0, else its static
+          count. Absent where that reader throws, so the read never completes and
+          the screen walks nothing: below 6 bytes (it reads bytes 3-5 whatever the
+          length; an aa 40 read reply carries 17) or on an IC field of 0x1000 or
+          more (app_pair_fails).
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,111-139
+          - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:329-339,981-991
+          - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:917-923,938-946
       has_second_pair:
         value: _io.size >= 6 and ic_count_2 != 0
       ic_total:
@@ -1594,6 +1702,13 @@ enums:
     2:
       id: status_tlv
       doc: the value of a 0xAC status TLV (exactly len bytes)
+    3:
+      id: advert
+      doc: |
+        the Govee manufacturer data's device_state (power_state only: its
+        switch byte, where has_switch_state; govee_manufacturer_data)
+      doc-ref:
+        - base-classes9/com/govee/base2home/pact/BleUtil.java:700-717
   cct_test:
     0:
       id: none

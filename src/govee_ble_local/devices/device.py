@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import copy
 import logging
 import time
@@ -44,7 +45,7 @@ from ..transport.connection import ConnectBudget, GoveeConnection
 from ..wire import build, parse, reassemble
 from . import _fold, _readback
 from .brightness import percent_to_device
-from .profile import DeviceProfile, profile_for, refuses_pact, wire_profile
+from .profile import DeviceProfile, profile_for, refuses_pact, reroute, wire_profile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +64,12 @@ _ReadResult = Literal["applied", "stale", "none"]
 # the profile table with one of them; the power-only and power-and-brightness screens (H7004 /
 # H7017, ControllerStrategyConfig.k1) send none. A test pins that each of the others still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
+
+# The Device whose read_secret() runs in this task (Device._pairing_read). The connection sets a session up,
+# and so calls Device._unlock_frames, in the task of the operation that opened it, so only the read's own
+# session setup and unlock step see it: an operation in another task (asyncio.gather) never does.
+_PAIRING_READ: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "govee_ble_local_pairing_read", default=None)
 
 
 class _BudgetKw(TypedDict, total=False):
@@ -170,20 +177,27 @@ class Device:
         re-learn it for the next session (:meth:`ingest_advertisement`). ``sku`` names the
         device (default: the profile's first SKU). ``secret`` is the 8-byte account-lock key, sent
         after every handshake on a profile that requires one (:meth:`set_secret` can supply it
-        later). ``frame_log=<path>`` persists a JSONL session capture. ``idle_disconnect`` is the
-        seconds of inactivity after which the link is dropped: None uses the library default
-        (``const.IDLE_DISCONNECT_DELAY``), 0 or less keeps the link up. While the link is up the device sends
-        its profile's keep-alive read (:attr:`.DeviceProfile.heartbeat`), which never keeps it up longer. A
-        profile with ``heartbeat=None`` sends none, whatever its ``heartbeat_timing``: to turn it off on a
-        SKU whose profile has one, ``Device(dataclasses.replace(profile, heartbeat=None), ...)``.
+        later; without one, a profile whose screen sends the empty check sends that,
+        :attr:`.DeviceProfile.empty_secret_check`). ``frame_log=<path>`` persists a JSONL session
+        capture. ``idle_disconnect`` is the seconds of inactivity after which the link is dropped: None
+        uses the library default (``const.IDLE_DISCONNECT_DELAY``), 0 or less keeps the link up. While the
+        link is up the device sends its profile's keep-alive read (:attr:`.DeviceProfile.heartbeat`), which
+        never keeps it up longer. A profile with ``heartbeat=None`` sends none, whatever its
+        ``heartbeat_timing``: to turn it off on a SKU whose profile has one,
+        ``Device(dataclasses.replace(profile, heartbeat=None), ...)``.
 
         Raises GoveeBleInvalidValue if ``secret`` is not exactly 8 bytes."""
         self.profile = profile
         self._ble_device = ble_device
         self._sku = (sku or profile.skus[0]).upper()
         self._secret = self._checked_secret(secret)
-        # set_secret() changed the secret: send its 33 b2 unlock on the live session (see set_secret).
+        # set_secret() changed the secret: send its 33 b2 unlock on the live session (see set_secret). Also
+        # armed when read_secret's session skipped the empty check (_unlock_frames).
         self._unlock_pending = False
+        # Held by read_secret() across its read (_read_reply), inside _read_gate, before the connection lock.
+        # A session that read sets up sends no empty check (_unlock_frames), so an operation that overlaps the
+        # read waits for it before its own unlock step (_send_pending_unlock), which then sends the check.
+        self._pairing_lock = asyncio.Lock()
         self._scenes_warm = False        # bundled scene catalog loaded off the loop (update()), and it worked
         # The last scene catalog load's failure (its message), which the sync scene properties raise with no
         # I/O until update() loads the catalog again off the loop (_scene_lookup).
@@ -216,9 +230,14 @@ class Device:
         # so the next reply may predate them.
         self._zone_power_posted: dict[int, set[bool]] = {}
         # Serializes the bar-switch read-modify-write in set_zone_power (one frame carries both
-        # bars). Lock order: _scene_lock, then this, then _read_gate, then the connection lock;
-        # never take it from inside a connection operation. release() takes all four, in that order.
+        # bars). Lock order: _scene_lock, _brightness_lock, then this, then _read_gate, then the connection
+        # lock; never take it from inside a connection operation. release() takes all five, in that order.
         self._bar_lock = asyncio.Lock()
+        # On a kelvin_with_brightness profile, serializes every 33 04 writer (set_brightness, turn_on) with
+        # the illumination pair (set_color_temp, turn_on(kelvin=)), which re-sends the brightness state holds,
+        # so the pair never builds its 33 04 from a level a concurrent brightness write is changing
+        # (_held_brightness_lock). Taken after _scene_lock, before _bar_lock (see _bar_lock).
+        self._brightness_lock = asyncio.Lock()
         # Serializes scene writes, so a scene's upload and its activation are never split by another
         # scene's (the connection lock is per-operation). Outermost lock (see _bar_lock).
         self._scene_lock = asyncio.Lock()
@@ -229,8 +248,14 @@ class Device:
         self._link_write = (0, -1)
         # Held by a scene write across its upload and activation, and briefly by every read-back
         # (_read_reply, _query_status), so no poll lands between the two (see set_scene_by_name).
-        # Innermost device lock: taken after _scene_lock and _bar_lock, before the connection lock.
+        # Innermost device lock but _pairing_lock: taken after _scene_lock and _bar_lock, before the
+        # connection lock.
         self._read_gate = asyncio.Lock()
+        # A session="per_command" profile's writes (the device-list card's taps): held by each of its commits
+        # (_commit) and across a _turn_on_taps call's power-on and brightness, so no other write lands between
+        # the two (the card's slider sends only while its switch shows on). Taken before the connection lock,
+        # never from inside a connection operation; no other device lock is taken under it.
+        self._tap_lock = asyncio.Lock()
         self._discarded_reads = 0        # cumulative count of discarded stale reads
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
@@ -270,20 +295,32 @@ class Device:
     def _learn_pact(self, pact: tuple[int, int] | None) -> bool:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
         (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
-        whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`), and picks the
+        the TLV types the 0xAC status read requests (:meth:`_status_types`), and picks the
         profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
         without pact info (``pact`` None) changes nothing. Returns whether :attr:`pact` changed.
 
-        The profile was routed when the device was built (``create_device``) and is kept: a pact heard
-        later that none of its rows accepts, where the app's scan would refuse the device or take another
-        row (``profile.refuses_pact``), is logged as a warning, once per change of pact."""
+        The profile was routed when the device was built (``create_device``). A pact heard later that none
+        of its rows accepts, where the app's screen takes another row, re-selects that row's profile when
+        the two differ only in what a pact picks within a row (``profile.reroute``: the BK rows' brightness
+        range, H6118 / H6194 / H6179 at (10, 1) after an advert without a pact), as the app runs the row the
+        unit's pact gives it; :attr:`profile` is then that profile, and the capabilities, zones and the link
+        are unchanged. Otherwise (the app's scan would refuse the device, or it runs the device on other
+        facts: another row that differs in more, a pact route such as H60A6's at (1, 1) after an advert
+        without a pact, or a pairing write's pact no row lists, H615A-E's (65535, 255)) the profile is kept
+        and a warning is logged, once per change of pact."""
         if pact is None or pact == self._pact:
             return False
         self._pact = pact
         if refuses_pact(self.profile, self._sku, pact):
+            other = reroute(self.profile, self._sku, pact)
+            if other is not None:
+                _LOGGER.info("%s (%s): advertises pact %d,%d, which routes it to another row; it takes that "
+                             "row's profile", self._ble_device.address, self._sku, *pact)
+                self.profile = other
+                return True
             _LOGGER.warning(
                 "%s (%s): advertises pact %d,%d, which no row of its profile accepts (the app's scan refuses "
-                "it there or takes another row); it keeps the profile it was built with",
+                "it there, or runs it on other facts); it keeps the profile it was built with",
                 self._ble_device.address, self._sku, *pact,
             )
         return True
@@ -398,6 +435,14 @@ class Device:
         return self.profile.capabilities
 
     @property
+    def supports_segment_brightness(self) -> bool:
+        """Whether :meth:`set_segment_brightness` can send: the profile has
+        :attr:`~govee_ble_local.models.Capability.SEGMENTS` and its screen the segment-brightness slider
+        (:attr:`.DeviceProfile.segment_brightness`). A caller offering brightness per segment or zone checks
+        it: H61D2-H61D6 have segment colour without segment brightness."""
+        return Capability.SEGMENTS in self.profile.capabilities and self.profile.segment_brightness
+
+    @property
     def zones(self) -> tuple[Zone, ...]:
         """The profile's independently-switchable zones (empty for unzoned devices)."""
         return self.profile.zones
@@ -424,7 +469,9 @@ class Device:
         """Lowest supported colour temperature, or None if unconstrained. It may change once the
         hardware or soft version is read (:attr:`DeviceProfile.kelvin_by_hardware` /
         :attr:`DeviceProfile.kelvin_by_software`) or a pact is advertised
-        (:attr:`DeviceProfile.kelvin_by_pact`)."""
+        (:attr:`DeviceProfile.kelvin_by_pact`). On a device without COLOR_TEMP that has one (the
+        ``legacy_02`` H7310 / H7318 / H6165 rows) the range is not a colour temperature it offers: it only
+        decides which RGB picks go out in the colour-temperature form (:func:`build.rgb_as_kelvin`)."""
         span = self._kelvin_range()
         return self.profile.min_kelvin if span is None else span[0]
 
@@ -481,8 +528,10 @@ class Device:
         seconds, while ``is_on`` still holds what that read gave; None when no read has, or it no longer does.
 
         Stamped only by a read that returned the on/off: an answered 0xAC status read (its TLV 0x01; a reply
-        without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 36``
-        bar read of a bar-switch device (in a poll, or before a bar write), and a plug's ``aa 01`` relay read.
+        without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 34``
+        device-detail read that replaces it on the H6057 (its light flag,
+        :attr:`.DeviceProfile.detail_power_read`), the ``aa 36`` bar read of a bar-switch device (in a poll,
+        or before a bar write), and a plug's ``aa 01`` relay read.
         A read that returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as
         stale, an advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of
         the read before it.
@@ -591,19 +640,44 @@ class Device:
         if cap not in self.profile.capabilities:
             raise GoveeBleNotSupported(f"{self._sku}: {cap.name} not supported")
 
-    def _require_segment_color_temp(self) -> None:
-        """A Kelvin on a piece selection: SEGMENTS, COLOR_TEMP and :attr:`.DeviceProfile.segment_color_temp`
-        (false where the app's Kelvin covers every piece, and on the SKUs that field lists, whose Part-tab
-        Kelvin covers whole zones). :meth:`set_segment_color_temp` only: a zone's Kelvin doesn't read it."""
+    def _require_masked_kelvin(self, *, pieces: bool) -> None:
+        """A Kelvin on part of the device: SEGMENTS, COLOR_TEMP, and not a screen that writes colour
+        temperature over the whole device only (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination
+        tab, or a colour page whose Kelvin pick sets every piece). On a piece selection (``pieces``,
+        :meth:`set_segment_color_temp`) also :attr:`.DeviceProfile.segment_color_temp` (false where the app's
+        Kelvin covers every piece, and on the SKUs that field lists, whose Part-tab Kelvin covers whole
+        zones). A zone's Kelvin (:meth:`set_zone_color_temp`, ``pieces`` false) doesn't read it."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        if not self.profile.segment_color_temp:
-            zones = ", or over a zone: set_zone_color_temp" if self.profile.zones else ""
-            raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on a piece selection (the app "
+        p = self.profile
+        if p.whole_device_kelvin or (pieces and not p.segment_color_temp):
+            where = "a piece selection" if pieces else "a zone"
+            zones = (", or over a zone: set_zone_color_temp"
+                     if pieces and p.zones and not p.whole_device_kelvin else "")
+            raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on {where} (the app "
                                        f"sends it over every piece: set_color_temp{zones})")
 
     def _unlock_frames(self) -> list[bytes]:
-        return [build.secret_check(self._secret)] if self._secret else []
+        """The unlock each session sends after the handshake on a :attr:`.DeviceProfile.requires_secret`
+        profile: the set secret's ``33 b2`` check; with none, the empty check where the screen sends it on
+        every connect (:attr:`.DeviceProfile.empty_secret_check`), else nothing. A session that
+        :meth:`read_secret` sets up skips the empty check, as the pairing screen reads the secret with no
+        check (``AbsPairAc4SecretV1.T1:107-113``); the next other operation on that session sends it first
+        (:meth:`_send_pending_unlock`), as the control screen's connect read does. Only the read's own session
+        skips it (:meth:`_pairing_read`): a session another operation sets up while the read is in flight
+        sends it."""
+        if self._secret:
+            return [build.secret_check(self._secret)]
+        if not self.profile.empty_secret_check:
+            return []
+        if self._pairing_read():
+            self._unlock_pending = True
+            return []
+        return [build.empty_secret_check()]
+
+    def _pairing_read(self) -> bool:
+        """True in the task of this Device's :meth:`read_secret`, while it runs (``_PAIRING_READ``)."""
+        return _PAIRING_READ.get() is self
 
     @staticmethod
     def _sync_time_frame() -> bytes:
@@ -663,25 +737,40 @@ class Device:
         self, budget: ConnectBudget | None = None, *, ticket: int | None = None,
     ) -> None:
         """Send the ``33 b2`` unlock for a secret set while the session was already up (see
-        :meth:`set_secret`). Without a live session nothing is sent: the next session setup sends
-        it. A rejection is a GoveeBleAuthError, as at session setup; an unacked unlock is only
-        logged, as at session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
+        :meth:`set_secret`), or, with none, the empty check a :meth:`read_secret` session skipped
+        (:meth:`_unlock_frames`; never in the read_secret itself). With no secret on an
+        :attr:`.DeviceProfile.empty_secret_check` profile, an operation that overlaps a read_secret waits for
+        it first (``_pairing_lock``), so its frames never go out ahead of the check on a session the read set
+        up. Without a live session nothing is sent: the next session setup sends it. A rejection ends the
+        session and is a GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at
+        session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
         out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
         calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
         write retry's reconnect ran out of them) is raised, and the next session setup sends the
         unlock."""
-        if not self._unlock_pending:
-            return
+        pairing = self._pairing_read()
+        if (not pairing and not self._secret and self.profile.empty_secret_check
+                and self._pairing_lock.locked()):
+            async with self._pairing_lock:   # the read in flight may set a session up without the check
+                pass
+        if not self._unlock_pending or (pairing and not self._secret):
+            return   # a pairing read sends no empty check: it stays pending for the next operation
         self._unlock_pending = False   # taken: a concurrent operation doesn't send it twice
         secret = self._secret
-        if not secret or not self._conn.is_connected:
+        unlock = self._unlock_frames() if self._conn.is_connected else []
+        if not unlock:
             return   # the next session setup sends it (or there is none)
         done = False   # the write finished: acked, rejected, or unacked (treated as sent)
         try:
-            await self._conn.send(build.secret_check(secret), **_budget_kw(budget))
+            await self._conn.send(unlock[0], **_budget_kw(budget))
             done = True
         except GoveeBleCommandRejected as err:
             done = True
+            # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end the
+            # session, so the next operation's setup sends the check again and is refused the same way, as the
+            # app's compose stops at its failed check. An operation that overlaps it can still get a frame out
+            # first (CHANGELOG: known issue, fixed in the next release).
+            await self._conn.disconnect()
             raise GoveeBleAuthError(
                 f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
             ) from err
@@ -716,7 +805,7 @@ class Device:
         r, g, b = rgb
         return self._build_or_unsupported(
             build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span,
-            pieces=self.profile.segments or None)
+            pieces=self.profile.segments or None, white_type=self.profile.white_type)
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -748,7 +837,13 @@ class Device:
         device's own power next changes: unlike the app, which reads each broadcast on its own, the device's
         identical frames fire no callback here (a known limitation, habluetooth#645). The result is what
         :meth:`ingest_advertisement` would read from the same advertisement now; only ingesting it moves on
-        the advertisement this one is compared with."""
+        the advertisement this one is compared with.
+
+        Always None on a :attr:`.DeviceProfile.light_switch_power` profile (H6057): its power is the light
+        switch, which only the ``aa 34`` read reads back. The switch byte is the device-list card's
+        (``AbsBaseBleModel.z``), whose toggle writes the ``33 01`` main switch (``AbsLightModel4BleIot.v0`` ->
+        ``AbsDeviceModel4BleIot.l:72-88``), and the control screen never reads it, so nothing shows it to be
+        the light's state rather than the main switch's (on while white noise plays)."""
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return None
@@ -756,9 +851,12 @@ class Device:
 
     def _read_advertised_on(self, mfg: dict[int, bytes]) -> tuple[bool | None, dict[int, bytes], int | None]:
         """:meth:`advertised_on` of ``mfg``, with the Govee entries and the latest key an ingest keeps for the
-        next advertisement."""
+        next advertisement (kept on a :attr:`.DeviceProfile.light_switch_power` profile too, whose on/off is
+        None)."""
         record = _govee_record(mfg)
         latest = _latest_govee_key(record, self._govee_last, self._govee_latest)
+        if self.profile.light_switch_power:
+            return None, record, latest
         entry = {latest: record[latest]} if latest in record else record
         return parse_broadcast_onoff(entry, on_mask=self.profile.advert_on_mask), record, latest
 
@@ -766,13 +864,13 @@ class Device:
         """Update passive state from a BLE advertisement — no connection needed.
 
         Reads on/off from the Govee manufacturer data (:meth:`advertised_on`, decoded with the profile's
-        ``advert_on_mask`` on the plugs), the advertised pact (:attr:`pact`) and the encrypt flag, all
-        whatever the advertised name. The flag picks the command channel of the next session, never of the
-        one that is up, and only when every Govee pact entry agrees on it (:meth:`_learn_cipher`); a BGC
-        version of 1 or 2 still overrides it (:attr:`encryption`). The pact too is learned only when every
-        pact entry agrees (:meth:`_learn_advertised_pact`), while the on/off comes from the Govee entry that
-        last changed (:meth:`advertised_on`): a merged record can hold a stale or foreign entry, frozen at
-        its last value.
+        ``advert_on_mask`` on the plugs; none on the H6057's light switch), the advertised pact (:attr:`pact`)
+        and the encrypt flag, all whatever the advertised name. The flag picks the command channel of the
+        next session, never of the one that is up, and only when every Govee pact entry agrees on it
+        (:meth:`_learn_cipher`); a BGC version of 1 or 2 still overrides it (:attr:`encryption`). The pact
+        too is learned only when every pact entry agrees (:meth:`_learn_advertised_pact`), while the on/off
+        comes from the Govee entry that last changed (:meth:`advertised_on`): a merged record can hold a
+        stale or foreign entry, frozen at its last value.
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
         stored, whether or not the on/off changed with it. A change of the flag fires nothing.
@@ -781,7 +879,7 @@ class Device:
         which are fresher than the advert's. The pact is not: no command or read sets it. Any change of
         the pact counts, since :attr:`pact` is itself exposed and the values it picks (:attr:`min_kelvin`
         / :attr:`max_kelvin`, :attr:`scene_versions`, the brightness range and whether brightness can be
-        written yet, the 0xAC status read's colour groups) may change with it. An advertisement without
+        written yet, the 0xAC status read's TLV types) may change with it. An advertisement without
         pact info, or with the pact already heard, leaves it as it was."""
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
@@ -802,7 +900,11 @@ class Device:
 
     async def connect(self) -> None:
         """Establish the BLE session now (connect, handshake, unlock) instead of lazily on
-        the first command. Idempotent; the connection's idle timer still applies afterwards."""
+        the first command. Idempotent; the connection's idle timer still applies afterwards. On a
+        ``session="per_command"`` profile it opens nothing: the app's device-list card opens a link only to
+        send a command (:attr:`.DeviceProfile.session`)."""
+        if self.profile.session == "per_command":
+            return
         # A secret set on the live session goes out on it first; without one, the session setup
         # below sends it (so it is never sent twice).
         await self._send_pending_unlock()
@@ -815,13 +917,15 @@ class Device:
 
         The Device stays usable: the next operation connects again (link, handshake, unlock, session frames),
         as after an idle disconnect, with no warm window left over (a read gets the base idle delay; a write
-        opens its own). It takes the Device's locks in their order (``_scene_lock``, ``_bar_lock``,
-        ``_read_gate``, then the connection's), so it waits for each link operation already running or queued
-        before it (each lock is FIFO), and never lands inside a sequence: a :meth:`set_scene_by_name` (its
-        version read and catalog load, its upload and its activation), or an H6047 bar's ``aa 36`` read and
-        the ``33 36`` built from it. It can land between the steps of a call no device lock spans (a poll's
-        reads, a plug's power write and its re-read): those later steps reconnect (a plug's re-read ends with
-        its ``33 b5`` time sync, a write, which opens a fresh warm window on the new link). A write called
+        opens its own). It takes the Device's locks in their order (``_scene_lock``, ``_brightness_lock``,
+        ``_bar_lock``, ``_read_gate``, then the connection's), so it waits for each link operation already
+        running or queued before it (each lock is FIFO), and never lands inside a sequence: a
+        :meth:`set_scene_by_name` (its version read and catalog load, its upload and its activation), an H6047
+        bar's ``aa 36`` read and the ``33 36`` built from it, or the illumination pair's brightness read and
+        the pair built from it (:attr:`.DeviceProfile.kelvin_with_brightness`). It can land between the steps
+        of a call no device lock spans (a poll's reads, a plug's power write and its re-read): those later
+        steps reconnect (a plug's re-read ends with its ``33 b5`` time sync, a write, which opens a fresh warm
+        window on the new link). A write called
         after it either queues behind it and reconnects or, if it reaches the link first (a setter that takes
         no device lock, or is handed one, while release() waits for one), keeps the link and its window: the
         release then drops nothing and returns False. That is the link it wrote on, whether the device acked
@@ -835,7 +939,7 @@ class Device:
         errors are logged at DEBUG. Cancelled while it waits for a lock, it leaves the queue and drops
         nothing; cancelled during the teardown, the teardown runs on, detached, to that bound."""
         ticket = self._ticket()
-        async with self._scene_lock, self._bar_lock, self._read_gate:
+        async with self._scene_lock, self._brightness_lock, self._bar_lock, self._read_gate:
             # Asked under the connection lock, after every operation queued before the drop: a write called
             # after this release that ended on the link that is up, acked or refused, keeps it, with its
             # window. One cancelled (while it waited or after its frames went out), or that wrote on a link
@@ -909,6 +1013,17 @@ class Device:
         self._tickets += 1
         return self._tickets
 
+    def _held_brightness_lock(self) -> contextlib.AbstractAsyncContextManager[None]:
+        """``_brightness_lock`` on a :attr:`.DeviceProfile.kelvin_with_brightness` profile, else a no-op.
+        Every ``33 04`` writer takes it, and so does the illumination pair, across its build and its write:
+        the pair re-sends the brightness ``state`` holds, which a brightness write sets only once its frame is
+        acked, so without it a ``set_color_temp`` started while a ``set_brightness`` is in flight would
+        re-send the old level after the new one and leave the device there (``View4IlluminationMode.I0``
+        reads the level the screen holds, which its brightness control has already set)."""
+        if self.profile.kelvin_with_brightness:
+            return self._brightness_lock
+        return contextlib.nullcontext()
+
     def _zone_power_lock(self) -> contextlib.AbstractAsyncContextManager[None]:
         """``_bar_lock`` on a bar-switch device (whose zone write is a read-modify-write of both bars,
         :meth:`_set_bar_power`), else a no-op: every writer of ``zone_power`` takes it, so a bar write
@@ -966,7 +1081,14 @@ class Device:
 
         No write vouches for :attr:`power_read_at`: an acked one that changes ``is_on`` drops it, and so does
         a power write (``zones`` or ``fixture``) that raises, whatever its power, and a write that wakes the
-        device or lights a zone while ``is_on`` is not True, acked or not."""
+        device or lights a zone while ``is_on`` is not True, acked or not.
+
+        A ``session="per_command"`` profile commits through :meth:`_commit_once` instead, under
+        ``_tap_lock`` (it makes no read, so it has no :attr:`power_read_at` to drop)."""
+        if self.profile.session == "per_command":
+            async with self._tap_lock:
+                await self._commit_once(frames, apply, authoritative=authoritative)
+            return
         mine = self._ticket() if ticket is None else ticket
         await self._send_pending_unlock(ticket=mine)
         batch = [frames] if isinstance(frames, bytes) else frames
@@ -1003,6 +1125,29 @@ class Device:
             self._power_unsure = False
         elif zones and not any(zones.values()) and not (known_on and self._others_confirmed_lit(zones)):
             self._set_power_unsure()
+        if authoritative:
+            self._mark_authoritative()
+        self._notify()
+
+    async def _commit_once(
+        self, frames: bytes | list[bytes], apply: Callable[[], None], *, authoritative: bool,
+    ) -> None:
+        """:meth:`_commit` on a ``session="per_command"`` profile: one tap of the app's device-list card, its
+        one frame on a session of its own (``GoveeConnection.send_once``; ``AbsDeviceModel4BleIot.k`` / ``l``
+        build one frame each, as ``A0`` is null). The caller holds ``_tap_lock``. Once the write is done
+        (acked, or unanswered, as on the card): bump ``_mutation_seq``, ``apply`` the state,
+        make it authoritative over the advertised on/off unless ``authoritative`` is False, and notify, as the
+        card saves a switch on its own success (``AbsLightModel4BleIot.w0``) and shows the brightness it sent.
+        A failed or refused write raises and applies nothing. More than one frame raises GoveeBleNotSupported
+        before any I/O (the card never sends two in one session); no zone power is tracked (such a row has
+        none)."""
+        batch = [frames] if isinstance(frames, bytes) else list(frames)
+        if len(batch) != 1:
+            raise GoveeBleNotSupported(
+                f"{self._sku}: a per_command session sends one frame, and this write needs {len(batch)}")
+        await self._conn.send_once(batch[0])
+        self._mutated()
+        apply()
         if authoritative:
             self._mark_authoritative()
         self._notify()
@@ -1111,7 +1256,10 @@ class Device:
         allows it - the global 33 01 switch (which on H60A6 also drives both
         zones; H6047's main switch sends it too - ``33 36`` is only its per-bar
         buttons, see :meth:`set_zone_power`). Only a zoned fixture without a
-        zone-driving master switch falls back to one 33 30 frame per zone."""
+        zone-driving master switch falls back to one 33 30 frame per zone, and the H6057
+        (:attr:`.DeviceProfile.light_switch_power`) sends its light switch, ``33 30 <1 / 0>``."""
+        if self.profile.light_switch_power:
+            return [build.light_switch(on)]
         if self.profile.zones and not self.profile.global_power and not self.profile.bar_switch:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
         if self.profile.relay:
@@ -1168,7 +1316,9 @@ class Device:
         _fold.apply_power(self.profile, self._state, on, confirmed=self._power_zones())
 
     async def set_power(self, on: bool) -> None:
-        """Switch the device on or off.
+        """Switch the device on or off. On a :attr:`.DeviceProfile.light_switch_power` profile (H6057) this
+        is the light switch, ``33 30 <1 / 0>``: it switches the light alone, so off leaves the white-noise
+        speaker playing, as the screen's light switch does.
 
         Raises GoveeBleNotSupported without POWER; connection errors propagate. A plug with
         :attr:`.DeviceProfile.power_resync` then re-reads as its app does (:meth:`_resync_after_power`);
@@ -1222,56 +1372,120 @@ class Device:
         COLOR_TEMP) or when the colour scheme can't express it, and for a ``brightness`` while the
         device's brightness range waits for the advertised pact (as :meth:`set_brightness`), before
         any write, so the power-on is not sent either; GoveeBleError if a device that reports its own
-        segment count (H6062) does not answer that read."""
+        segment count (H6062) does not answer that read. On a profile whose screen sets colour temperature on
+        its illumination tab (:attr:`.DeviceProfile.kelvin_with_brightness`) a ``kelvin`` goes out as that
+        tab's pair, the Kelvin frame then ``33 04`` (``brightness``, else the held one, read first when
+        unknown: GoveeBleError, before any write, when it stays unknown).
+
+        On a ``session="per_command"`` profile each part is a session of its own (:meth:`_turn_on_taps`)."""
+        if self.profile.session == "per_command":
+            await self._turn_on_taps(brightness=brightness, rgb=rgb, kelvin=kelvin, power=power)
+            return
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
         pick = _check_rgb(rgb) if rgb is not None else None
         pct = _check_pct(brightness) if brightness is not None else None
         kelvin = self._check_kelvin(kelvin) if kelvin is not None else None
         ticket = self._ticket()
-        # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
-        # heartbeat between them.
-        with self._conn.hold_heartbeat():
-            if pick is not None or kelvin is not None:
-                await self._ensure_segment_count()
-            frames: list[bytes] = []
-            if power:
-                self._require(Capability.POWER)
-                frames += self._power_frames(True)
-            if pct is not None:
-                self._require(Capability.BRIGHTNESS)
-                frames.append(self._brightness_frame(pct))
-            span = self._kelvin_range()   # once: the frame and the state use the same range
-            if pick is not None:
-                self._require(Capability.RGB)
-                frames += self._color_rgb_frames(pick, span)
-            elif kelvin is not None:
-                self._require(Capability.COLOR_TEMP)
-                frames.append(self._build_or_unsupported(
-                    build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                    pieces=self.profile.segments or None))
-            if not frames:
-                return
-
-            def apply() -> None:
+        # A 33 04 writer, and with a kelvin the illumination pair: under _held_brightness_lock, build to
+        # write.
+        async with self._held_brightness_lock():
+            # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
+            # heartbeat between them.
+            with self._conn.hold_heartbeat():
+                if pick is not None or kelvin is not None:
+                    await self._ensure_segment_count()
+                frames: list[bytes] = []
+                level = pct   # the 33 04 the frames carry (the pair's is the held one without pct)
                 if power:
-                    self._apply_power(True)
-                if pct is not None:
-                    self._state.brightness = pct
+                    self._require(Capability.POWER)
+                    frames += self._power_frames(True)
+                # The illumination tab's pair (View4IlluminationMode.I0): the brightness follows the Kelvin.
+                pair = kelvin is not None and self.profile.kelvin_with_brightness
+                if pct is not None and not pair:
+                    self._require(Capability.BRIGHTNESS)
+                    frames.append(self._brightness_frame(pct))
+                span = self._kelvin_range()   # once: the frame and the state use the same range
                 if pick is not None:
-                    _fold.apply_rgb(self.profile, self._state, pick, span)
+                    self._require(Capability.RGB)
+                    frames += self._color_rgb_frames(pick, span)
                 elif kelvin is not None:
-                    _fold.apply_kelvin(self.profile, self._state, kelvin)
+                    self._require(Capability.COLOR_TEMP)
+                    frames.append(self._build_or_unsupported(
+                        build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
+                        pieces=self.profile.segments or None, white_type=self.profile.white_type))
+                    if pair:
+                        self._require(Capability.BRIGHTNESS)
+                        level = pct if pct is not None else await self._held_brightness()
+                        frames.append(self._brightness_frame(level))
+                if not frames:
+                    return
 
-            async with self._zone_power_lock():
-                await self._commit(frames, apply, fixture=power,
-                                   zones=dict.fromkeys(self._power_zones(), True) if power else None,
-                                   ticket=ticket)
-            if power:
-                await self._resync_after_power()
+                def apply() -> None:
+                    if power:
+                        self._apply_power(True)
+                    if level is not None:
+                        self._state.brightness = level
+                    if pick is not None:
+                        _fold.apply_rgb(self.profile, self._state, pick, span)
+                    elif kelvin is not None:
+                        _fold.apply_kelvin(self.profile, self._state, kelvin)
+
+                async with self._zone_power_lock():
+                    await self._commit(frames, apply, fixture=power,
+                                       zones=dict.fromkeys(self._power_zones(), True) if power else None,
+                                       ticket=ticket)
+                if power:
+                    await self._resync_after_power()
+
+    async def _turn_on_taps(
+        self, *, brightness: int | None, rgb: tuple[int, int, int] | None, kelvin: int | None, power: bool,
+    ) -> None:
+        """:meth:`turn_on` (and :meth:`set_brightness`) on a ``session="per_command"`` profile: the app's
+        device-list card's taps, each a session of its own with its one frame (:meth:`_commit_once`), power
+        first. The card sends power and brightness only, never both in one session, and sends brightness only
+        while its switch shows the light on (``LightHolderConvert``: ``z = M() && (J() || !H())``; ``J()`` is
+        the switch). So a brightness goes after a power-on session whenever the light is not known to be on
+        (``state.is_on`` not True), ``power`` or not (the user's call, DECISIONS.md 6: the card's two taps,
+        each a frame it sends). The checks run first, before any I/O, as on a held profile:
+        GoveeBleInvalidValue for a bad value, GoveeBleNotSupported without the capability a part needs, for an
+        ``rgb`` or ``kelvin`` (the card sends no colour), and while the brightness range waits for the
+        advertised pact. Both taps go out under ``_tap_lock``, which every per_command write takes, so no
+        other write lands between them, and whether the light is known to be on is read under it. Each tap
+        applies its own state once done, so a failed brightness leaves a completed power-on in state, as the
+        card saves the switch on its own success (``AbsLightModel4BleIot.w0``)."""
+        if rgb is not None and kelvin is not None:
+            raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
+        if rgb is not None:
+            _check_rgb(rgb)
+        pct = _check_pct(brightness) if brightness is not None else None
+        if kelvin is not None:
+            self._check_kelvin(kelvin)
+        if power:
+            self._require(Capability.POWER)
+        frame: bytes | None = None
+        if pct is not None:
+            self._require(Capability.BRIGHTNESS)
+            frame = self._brightness_frame(pct)
+        if rgb is not None or kelvin is not None:
+            self._require(Capability.RGB if rgb is not None else Capability.COLOR_TEMP)
+            raise GoveeBleNotSupported(f"{self._sku}: a per_command session sends power and brightness only")
+        async with self._tap_lock:
+            if power or (frame is not None and self._state.is_on is not True
+                         and Capability.POWER in self.capabilities):
+                await self._commit_once(self._power_frames(True), lambda: self._apply_power(True),
+                                        authoritative=True)
+            if frame is not None and pct is not None:
+                level = pct
+
+                def apply() -> None:
+                    self._state.brightness = level
+
+                await self._commit_once(frame, apply, authoritative=True)
 
     async def turn_off(self) -> None:
-        """Power off; equivalent to ``set_power(False)``."""
+        """Power off; equivalent to ``set_power(False)`` (on the H6057, the light alone: the white noise keeps
+        playing)."""
         await self.set_power(False)
 
     async def set_brightness(self, pct: int) -> None:
@@ -1281,14 +1495,22 @@ class Device:
         range waits for the advertised pact: on a profile with ``brightness_by_pact`` (the pact picks the
         byte the app writes) until an advertisement carrying the pact is heard (:attr:`pact`;
         :meth:`ingest_advertisement`, or the advertisement given at construction). GoveeBleInvalidValue
-        for a non-int."""
+        for a non-int. On a ``session="per_command"`` profile a device not known to be on gets a power-on
+        session first (:meth:`_turn_on_taps`)."""
+        if self.profile.session == "per_command":
+            self._require(Capability.BRIGHTNESS)
+            await self._turn_on_taps(brightness=_check_pct(pct), rgb=None, kelvin=None, power=False)
+            return
         self._require(Capability.BRIGHTNESS)
         level = _check_pct(pct)
+        frame = self._brightness_frame(level)
+        ticket = self._ticket()
 
         def apply() -> None:
             self._state.brightness = level
 
-        await self._commit(self._brightness_frame(level), apply)
+        async with self._held_brightness_lock():   # not between the illumination pair's build and its write
+            await self._commit(frame, apply, ticket=ticket)
 
     # -- colour -------------------------------------------------------------
     async def set_rgb(self, rgb: tuple[int, int, int]) -> None:
@@ -1314,17 +1536,57 @@ class Device:
         that read. Like the app, an out-of-range value is clamped to the device's Kelvin range
         (:attr:`min_kelvin` / :attr:`max_kelvin`; not rejected) and then rounded to the nearest 100 K,
         the only values the app sends; the Kelvin actually sent is what ``state`` keeps, and the frame
-        carries the app's tint."""
+        carries the app's tint. On a profile whose screen sets colour temperature on its illumination tab
+        (:attr:`.DeviceProfile.kelvin_with_brightness`) the write is that tab's pair: the Kelvin frame, then
+        ``33 04`` <the held brightness>, each acked in order; the brightness is read first when unknown, and
+        GoveeBleError, with nothing written, when it stays unknown."""
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
-            await self._ensure_segment_count()
-            frame = self._build_or_unsupported(
-                build.color_temp, sent, self.profile.color_scheme, self.segment_count,
-                pieces=self.profile.segments or None)
-            await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent),
-                               ticket=ticket)
+        # The pair's 33 04 and its write under one hold, so no brightness write lands between them.
+        async with self._held_brightness_lock():
+            with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+                await self._ensure_segment_count()
+                frame = self._build_or_unsupported(
+                    build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+                    pieces=self.profile.segments or None, white_type=self.profile.white_type)
+                frames: bytes | list[bytes] = frame
+                level: int | None = None
+                if self.profile.kelvin_with_brightness:
+                    # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
+                    level = await self._held_brightness()
+                    frames = [frame, self._brightness_frame(level)]
+
+                def apply() -> None:
+                    _fold.apply_kelvin(self.profile, self._state, sent)
+                    if level is not None:   # the level the pair sent is the device's now
+                        self._state.brightness = level
+
+                await self._commit(frames, apply, ticket=ticket)
+
+    async def _held_brightness(self) -> int:
+        """The brightness the illumination tab's pair re-sends
+        (:attr:`.DeviceProfile.kelvin_with_brightness`): ``state.brightness``, as the app sends
+        ``illuminationCur()[0]``, the brightness its screen holds from its connect read (h60a1
+        ``Info4Detail.i``, from the 0xAC TLV 0x04; bulblight ``VM4Light``, from aa 04). When it is not known,
+        the profile's own read runs once first (the status read, else aa 04), and GoveeBleError, before any
+        write, when it is still unknown: a guessed ``33 04`` would change the brightness.
+        GoveeBleNotSupported without BRIGHTNESS. The caller holds the heartbeat."""
+        self._require(Capability.BRIGHTNESS)
+        if self._state.brightness is None:
+            if self.profile.readback == "status":
+                await self._read_status()
+            elif self.profile.readback == "polled":
+                def apply(raw: int) -> None:
+                    self._state.brightness = self._brightness_pct(raw)
+
+                await self._read_command(
+                    "brightness", build.brightness_query(), parse.parse_brightness, apply)
+        held = self._state.brightness
+        if held is None:
+            raise GoveeBleError(f"{self._sku}: the brightness is not known (its read was not answered); not "
+                                "sending the colour temperature with a guessed brightness")
+        return held
 
     async def set_segment_rgb(self, indices: Sequence[int], rgb: tuple[int, int, int]) -> None:
         """Set the colour of selected segments (indices 0 .. :attr:`segment_count` - 1).
@@ -1341,7 +1603,7 @@ class Device:
             n = self.segment_count
             frame = self._build_or_unsupported(
                 build.segment_rgb, _mask(indices, n), r, g, b, self.profile.color_scheme, n,
-                self._kelvin_range())
+                self._kelvin_range(), white_type=self.profile.white_type)
 
             carried = self._carried(indices, build.COLOR_MASK_CAP)
 
@@ -1361,11 +1623,14 @@ class Device:
         ``ColorViewModel.m0``). An empty ``indices`` still sends a zero mask, where the app's strips refuse an
         empty selection with a toast and send nothing (a follow-up).
 
-        Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
-        brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
-        GoveeBleError if a device that reports its own segment count (H6062) does not answer
-        that read."""
+        Raises GoveeBleNotSupported without SEGMENTS, where the screen has no segment-brightness slider
+        (:attr:`.DeviceProfile.segment_brightness`: H61D2-H61D6; :attr:`supports_segment_brightness`), or for
+        colour schemes without per-segment brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a
+        non-int ``pct`` or a bad index; GoveeBleError if a device that reports its own segment count (H6062)
+        does not answer that read."""
         self._require(Capability.SEGMENTS)
+        if not self.profile.segment_brightness:
+            raise GoveeBleNotSupported(f"{self._sku}: no segment brightness on this control screen")
         level = _check_pct(pct)
         ticket = self._ticket()
         with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
@@ -1423,18 +1688,20 @@ class Device:
 
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
         :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or one that widens to
-        whole zones, on the SKUs that field lists) or for non-maskable schemes;
-        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built
-        profile with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile
-        reaches it: H6062, the one row that reads its segment count, has segment_color_temp false)."""
-        self._require_segment_color_temp()
+        whole zones, on the SKUs that field lists), where :attr:`.DeviceProfile.whole_device_kelvin` is set (a
+        table profile with it and SEGMENTS has segment_color_temp false too) or for non-maskable schemes;
+        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built profile
+        with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile reaches
+        it: H6062, the one row that reads its segment count, has segment_color_temp false)."""
+        self._require_masked_kelvin(pieces=True)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
         with self._conn.hold_heartbeat():   # a section_count_read aa 41 read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
-                build.segment_color_temp, _mask(indices, n), sent, self.profile.color_scheme, n)
+                build.segment_color_temp, _mask(indices, n), sent, self.profile.color_scheme, n,
+                white_type=self.profile.white_type)
 
             def apply() -> None:
                 # A colour-mode write leaves scene mode, as set_color_temp does.
@@ -1573,7 +1840,8 @@ class Device:
             n = self.segment_count
             kelvin_range = self._kelvin_range()
             frame = self._build_or_unsupported(
-                build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range)
+                build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range,
+                white_type=self.profile.white_type)
 
             def apply() -> None:
                 _fold.update_segments(self._state, z.segments, rgb=pick)
@@ -1596,13 +1864,13 @@ class Device:
         picked, ``ColorModeH60A6.canClickColorTem:519-541``; H6047: each bar touched, 0-4 / 5-9,
         ``ColorMode10Segment.canClickColorTem:655-691``).
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments or for a
-        colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown zone
-        (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile with
-        :attr:`.DeviceProfile.section_count_read` does not answer that read (no zoned table profile reads
-        aa 41)."""
-        self._require(Capability.SEGMENTS)
-        self._require(Capability.COLOR_TEMP)
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
+        :attr:`.DeviceProfile.whole_device_kelvin` is set (the screen writes colour temperature over the whole
+        device only), for a zone without segments or for a colour scheme whose CCT frame carries no segment
+        mask; GoveeBleInvalidValue for an unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``;
+        GoveeBleError if a hand-built profile with :attr:`.DeviceProfile.section_count_read` does not answer
+        that read (no zoned table profile reads aa 41)."""
+        self._require_masked_kelvin(pieces=False)
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:
@@ -1612,7 +1880,8 @@ class Device:
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
-                build.segment_color_temp, _mask(z.segments, n), sent, self.profile.color_scheme, n)
+                build.segment_color_temp, _mask(z.segments, n), sent, self.profile.color_scheme, n,
+                white_type=self.profile.white_type)
 
             def apply() -> None:
                 # A zone colour write leaves scene mode, as set_color_temp does.
@@ -1801,9 +2070,16 @@ class Device:
           either way.
 
         Raises GoveeBleInvalidValue, before any I/O, unless ``connect_attempts`` is an integer >= 1
-        and ``connect_timeout`` a finite number > 0 (where given)."""
+        and ``connect_timeout`` a finite number > 0 (where given).
+
+        On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
+        nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness
+        the last it sent), so the call notifies and returns the state, which stays ``optimistic``."""
         budget = (None if connect_attempts is None and connect_timeout is None
                   else ConnectBudget(connect_attempts, connect_timeout))
+        if self.profile.session == "per_command":
+            self._notify()
+            return self._state
         # The poll is the app's connect read, during which it sends no heartbeat: none between its reads.
         with self._conn.hold_heartbeat():
             return await self._update(budget)
@@ -1834,7 +2110,8 @@ class Device:
             pass
         else:
             _unhandled(self.profile.readback, "readback")
-        if self.profile.ic_num_read_only and not self.profile.color_readback_live_ic:
+        if (self.profile.ic_num_read_only and not self.profile.color_readback_live_ic
+                and not self.profile.color_readback_ic_sections):
             # The screen's connect read; it sizes nothing.
             await self._read_reply(build.ic_count_query(), budget)
         # Segment / single-colour read-back layered on top (spec Change 7).
@@ -1990,9 +2267,12 @@ class Device:
         return self._pact[0] == gate[0] and self._pact[1] >= gate[1]
 
     def _status_types(self) -> tuple[int, ...]:
-        """The TLV types the 0xAC status read requests: the profile's ``status_read``, without the 0xA5
-        colour groups where :meth:`_wants_color_groups` rules them out."""
-        types = self.profile.status_read
+        """The TLV types the 0xAC status read requests: the advertised pact's ``status_read_by_pact`` entry,
+        else the profile's ``status_read`` (no entry, or no pact heard), without the 0xA5 colour groups where
+        :meth:`_wants_color_groups` rules them out. Worked out for each request, so a pact heard later
+        changes the next one."""
+        types = dict(self.profile.status_read_by_pact).get(self._pact, self.profile.status_read) \
+            if self._pact is not None else self.profile.status_read
         if self._wants_color_groups():
             return types
         return tuple(t for t in types if t != reassemble.TYPE_COLOR_GROUP)
@@ -2052,8 +2332,8 @@ class Device:
         return applied
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
-        """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
-        came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
+        """The polled read-back (aa 01 or aa 34 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live
+        field came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
         capability, as the app's connect read does (``ControllerStrategyConfig.k1`` reads aa 04 on H7017
         only, and H7004's screen has no brightness), and aa 05 with :data:`_MODE_REPORT_CAPS`."""
         drops = self._power_read_drops   # when the power read is issued (_stamp_power_read)
@@ -2077,8 +2357,9 @@ class Device:
         # A light is on only for a byte of 1, as the app's control screens read it, or for any non-zero byte
         # where its screen reads it so (DeviceProfile.light_nonzero; parse_light_power).
         prof = wire_profile(self.profile)
+        detail = self.profile.detail_power_read
         since = self._power_unsure_seq   # when the read that gives the on/off is issued (_finish_read)
-        power_read = await self._read_command(
+        power_read = not detail and await self._read_command(
             "power", build.power_query(), lambda r: parse.parse_light_power(r, prof), apply_power,
             budget) == "applied"
         applied = power_read   # see _read_status / _finish_read
@@ -2086,6 +2367,14 @@ class Device:
                 "brightness", build.brightness_query(), parse.parse_brightness, apply_brightness,
                 budget) == "applied":
             applied = True
+        if detail:
+            # H6057: no aa 01; the aa 34 device-detail read after aa 04, as the screen's connect list sends
+            # them (Compose4InfoBleIotH6057), on while the light is open (parse_detail_power), the state of
+            # the light switch its power writes (DeviceProfile.light_switch_power).
+            since = self._power_unsure_seq
+            if await self._read_command("power", build.device_detail_query(), parse.parse_detail_power,
+                                        apply_power, budget) == "applied":
+                applied = power_read = True
         if self.profile.bar_switch:
             bars_since = self._power_unsure_seq
             if await self._read_bar_switch(budget) == "applied":
@@ -2167,9 +2456,15 @@ class Device:
         (:func:`.parse.request_command`) - or None after ``INFO_READ_TIMEOUT``. A single-reply read:
         ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait
         short to the burst idle gap. ``budget``: the calling poll's connect limits (:meth:`update`), or
-        None for the transport's."""
+        None for the transport's. GoveeBleNotSupported on a ``session="per_command"`` profile, before any I/O:
+        the app's device-list card reads nothing over GATT."""
+        if self.profile.session == "per_command":
+            raise GoveeBleNotSupported(f"{self._sku}: the device-list card's session reads nothing over GATT")
         command_type = parse.request_command(frame)
-        async with self._read_gate:   # never between a scene's upload and its activation
+        # Never between a scene's upload and its activation (_read_gate). read_secret's read also holds
+        # _pairing_lock, which an overlapping operation waits for.
+        pairing = self._pairing_lock if self._pairing_read() else contextlib.nullcontext()
+        async with self._read_gate, pairing:
             await self._send_pending_unlock(budget)   # a secret set on the live session goes first
             frames = await self._conn.query(
                 frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT,
@@ -2181,9 +2476,18 @@ class Device:
 
         For the SETUP/bootstrap case: an unbound plug returns its secret without one
         being supplied, so call this BEFORE set_secret() (while `_secret` is None the
-        post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg).
-        The frame builder is build.secret_read()."""
-        reply = await self._read_reply(build.secret_read())
+        post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg). As the
+        pairing screen reads it (``AbsPairAc4SecretV1.T1:107-113``: the read alone with no secret), a
+        :attr:`.DeviceProfile.empty_secret_check` light's session set up for this read sends no empty
+        check either; the next other operation on that session sends it first. That holds for an operation
+        that overlaps the read too (``asyncio.gather``): a session it sets up sends the empty check, and on
+        the read's session it waits for the read, then sends the check before its own frames. On a session
+        already up the read goes on that session. The frame builder is build.secret_read()."""
+        token = _PAIRING_READ.set(self)
+        try:
+            reply = await self._read_reply(build.secret_read())
+        finally:
+            _PAIRING_READ.reset(token)
         return parse.parse_secret(reply) if reply else None
 
 
