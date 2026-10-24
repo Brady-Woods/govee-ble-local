@@ -91,6 +91,11 @@ class Refused(Exception):
     """The run is refused before it touches a device (exit 3)."""
 
 
+class ConnectSkipped(Exception):
+    """A connect attempt not made: the device's connect writes visibly and writes are not allowed now
+    (``Policy.connect_skip_reason``, the message)."""
+
+
 # -- the library under test ---------------------------------------------------------------------
 
 
@@ -497,11 +502,23 @@ class _Run:
     interrupted: bool = False   # a first Ctrl-C reached this device's run (it then restores and stops)
     abandon: bool = False       # a second one: the restore is abandoned
     warnings: list[str] = dataclasses.field(default_factory=list)
+    target: _survey.Heard | None = None
+    connected: bool = False     # the tool's connect held (nothing polls a device it never connected to)
+
+    def connect_skip(self) -> str | None:
+        """Why nothing that could connect this device may be sent now: its connect writes visibly and writes
+        are not allowed (``Policy.connect_skip_reason``). A poll on a link the device dropped re-opens it,
+        connect writes and all, so once the window closes on such a device the tool polls it no more (its
+        restore aside, which is never gated)."""
+        return None if self.target is None else self.policy.connect_skip_reason(self.target)
 
 
 def _skip_reason(step: Step, run: _Run) -> str | None:
     if step.skip:
         return step.skip
+    quiet = run.connect_skip() if step.kind == "read" else None
+    if quiet is not None:
+        return quiet.removeprefix("skipped: ")
     if step.kind == "write" and run.policy.read_only:
         return "read-only run"
     if step.kind == "write" and run.policy.writes_off:
@@ -599,13 +616,19 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     return rec
 
 
-async def _connect(dev: Any, target: _survey.Heard, retries: int) -> None:
-    """``dev.connect()`` with retries: between attempts the device is scanned for again (its fresh
-    BLEDevice and advertisement handed to the Device), backing off 2, 5 then 10 s. An auth error is final."""
+async def _connect(dev: Any, target: _survey.Heard, policy: Policy) -> None:
+    """``dev.connect()`` with retries (``policy.retries``): between attempts the device is scanned for again
+    (its fresh BLEDevice and advertisement handed to the Device), backing off 2, 5 then 10 s. An auth error
+    is final. Every attempt is checked against ``policy.connect_skip_reason`` right before it is made
+    (:class:`ConnectSkipped`): the scans and back-offs before it can carry a run past the window's end."""
     from govee_ble_local import GoveeBleAuthError
 
     last: BaseException | None = None
+    retries = policy.retries
     for attempt in range(retries):
+        why = policy.connect_skip_reason(target)
+        if why is not None:
+            raise ConnectSkipped(why)
         try:
             await dev.connect()
             return
@@ -731,7 +754,9 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
             report["restore_check"] = check.as_dict()
             notes = f" ({'; '.join(check.unrestorable)})" if check.unrestorable else ""
             print(f"  restore: {check.result}{notes}")
-            if run.kind != "card":
+            # One more poll, for the record: never one that would connect (a device the run did not
+            # connect to, or one whose connect writes visibly once writes are not allowed).
+            if run.kind != "card" and run.connected and run.connect_skip() is None:
                 try:
                     with contextlib.suppress(Exception):
                         report["final_state"] = snapshot(await dev.update(), run.plan.snapshot_keys)
@@ -808,7 +833,8 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     print(f"\n== {target.ref} {sku} ({target.tier}, {target.kind or '?'}, plan {target.plan}) "
           f"{mask_name(target.name)!r} {mask_address(address)}")
     # Its connect itself would change the device visibly (the bulbs' 33 25 stops a running effect): checked
-    # at its turn, so a run that crosses the window's edge connects to it only inside the window.
+    # at its turn, again before every connect attempt (_connect), and before each poll after that
+    # (_Run.connect_skip), so a run that crosses the window's edge connects to it only inside the window.
     skip = policy.connect_skip_reason(target)
     if skip is not None:
         print(f"  {skip}")
@@ -853,17 +879,16 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         return out
 
     watch = FrameWatch(address).attach()
-    run = _Run(dev, plan, is_generic, kind, policy, watch, address, names, secrets, extra)
+    run = _Run(dev, plan, is_generic, kind, policy, watch, address, names, secrets, extra, target=target)
     print(plan.title)
     if plan.intro:
         print(f"  {plan.intro}")
     start: StartState | None = None
     initial: Snapshot | None = None
     result = "aborted: not started"
-    connected = False
     try:
-        await _connect(dev, target, policy.retries)
-        connected = True
+        await _connect(dev, target, policy)
+        run.connected = True
         report["device"]["encryption"] = str(getattr(dev, "encryption", None))
         mark = watch.mark()
         st = await dev.update()
@@ -889,8 +914,11 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
             print("\nInterrupted: restoring this device (a second Ctrl-C abandons the restore) ...")
     except GoveeBleAuthError as err:
         result = f"auth failed: {describe_error(err, address, names)}"
+    except ConnectSkipped as err:   # the window closed while it was scanned for or between connect attempts
+        result = str(err)
+        print(f"  {result}")
     except Exception as err:
-        unreached = policy.gate and not connected   # --all: a device Home Assistant holds, say
+        unreached = policy.gate and not run.connected   # --all: a device Home Assistant holds, say
         result = (f"not reached: connect failed: {describe_error(err, address, names)}" if unreached
                   else f"aborted: {describe_error(err, address, names)}")
         print(f"\n{result}")

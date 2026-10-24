@@ -111,7 +111,11 @@ Notes:
   stops a running effect), is not connected to outside the window, in a run started there without `--yes`,
   or with `--read-only`. `--list` and the summary mark it `skipped: its connect sends 33 25 (effect stop), a
   visible change, outside the window` (or `on a read-only run`), and the gate is `incomplete`. Inside the
-  window it runs as any other device. Nothing else is sent outside the window.
+  window it runs as any other device. That is checked at its turn and again right before every connect
+  attempt, since the re-scans and back-offs before one can carry the run past the window's end; once the
+  window closes on it while connected, the tool polls it no more (a link it dropped would be re-opened,
+  connect writes and all), so its remaining read steps are skipped, but its restore still runs. Nothing
+  else is sent outside the window.
 - A card row (one session per command, no read-back: H70B2) is read back from its next advertisement for
   power only; its brightness and its restore rest on the tester's answers.
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a

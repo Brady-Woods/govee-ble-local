@@ -5,7 +5,9 @@ about to run, so a run that crosses the late hour skips the rest of its writes; 
 gated (it only puts the start state back). Listing, connecting and reading run at any hour, with one
 exception: a row whose every connect itself makes a visible write (:func:`visible_connect`, read from its
 profile's connect writes) is not connected to outside the window or on a read-only run
-(:func:`connect_skip`). ``--force-hours`` lifts the window and is recorded in every report.
+(:func:`connect_skip`, checked before every connect attempt), and once the window closes on it while it is
+connected it is polled no more but by its restore (a dropped link would reconnect). ``--force-hours`` lifts
+the window and is recorded in every report.
 """
 from __future__ import annotations
 

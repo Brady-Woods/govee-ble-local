@@ -333,9 +333,10 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     (the H6047 plan's segment read-back too), even once the window opens during the run, writes no relay of a
     plug that is not allow-listed, and connects to no H14A1, whose every connect sends 33 25 (an effect stop):
     --list and the summary mark it skipped, as does a read-only run by day, and the run exits 4 (incomplete).
-    Inside the window it connects as normal; a plug tested without its secret (its unlock never sent) keeps
-    the gate incomplete (exit 4) on its own. --force-hours lifts the window. A Ctrl-C (the main task
-    cancelled, as asyncio.run does) as the H6047's restore begins lets that restore finish and marks the
+    Inside the window it connects as normal; when the window closes during its turn, it gets no connect after
+    (in its re-scan) or no poll after (once connected). A plug tested without its secret (its unlock never
+    sent) keeps the gate incomplete (exit 4) on its own. --force-hours lifts the window. A Ctrl-C (the main
+    task cancelled, as asyncio.run does) as the H6047's restore begins lets that restore finish and marks the
     devices after it not run; one after the first write went out, before its ack, still restores the H6047.
     Modelled and unsupported devices are listed only. A write step nothing verified keeps the gate
     incomplete (exit 4). Every file the runs write is masked."""
@@ -463,6 +464,31 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
     rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref)   # the plug alone, no secret
     assert rc == 4 and lone["gate"] == "incomplete" and lone["devices"][0]["result"] == "completed"
+
+    # the window closes during the H14A1's turn: in its re-scan (21:59:50 to 22:00:30), so its connect is
+    # not made; or once it is connected, so nothing polls it after (a dropped link would reconnect)
+    def at_2200(real: Any) -> Any:
+        async def late(*a: Any, **k: Any) -> Any:
+            clock["now"] = datetime.datetime(2026, 10, 23, 22, 0, 30)
+            return await real(*a, **k)
+        return late
+
+    def effect_stops() -> int:
+        return sum(f[:3] == b"\x33\x25\x01" for f in bulb.received)
+
+    for module, name, connects, result in ((survey, "acquire", 0, no_effect_stop),
+                                           (runner, "capture_start", 1, "completed")):
+        clock["now"] = datetime.datetime(2026, 10, 23, 21, 59, 50)
+        calls, stops, real = bulb.establish_calls, effect_stops(), getattr(module, name)
+        monkeypatch.setattr(module, name, at_2200(real))
+        rc, edge, edge_out = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
+        monkeypatch.setattr(module, name, real)
+        report = json.loads((edge_out / edge["devices"][0]["report"]).read_text())
+        assert rc == 4 and edge["devices"][0]["result"] == result and "final_state" not in report
+        assert (bulb.establish_calls - calls, effect_stops() - stops) == (connects, connects)
+    assert edge["devices"][0]["steps"][0] == {
+        "step": "readback_baseline", "kind": "read", "verdict": "skipped", "basis": None,
+        "reason": no_effect_stop.removeprefix("skipped: ")}
 
     # --force-hours lifts the window; a Ctrl-C as the H6047's restore begins: it is restored all the same,
     # and the run stops after it
