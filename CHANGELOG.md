@@ -1717,12 +1717,26 @@ model, from which the shipped readers are generated).
   operation raised GoveeBleAuthError, but the link stayed up with the check already taken, so the next
   operation's frames went out on it unchecked; and an operation started while the check was on the link skipped
   it as taken and queued its frames behind it, so they went out too before anything ended. Now the refusal ends
-  the session first, as a refusal at session setup does (`GoveeConnection._connect_locked`), and an operation
-  that overlaps a check in flight waits for its outcome (`asyncio.gather` included): after a refusal it connects
-  again, and its own setup sends the check and is refused the same way, so no frame goes out on a link whose
-  check failed. The empty check after `read_secret()` (Added) goes the same way. With an accepted check, the
+  the session before anything else goes out on its link, as a refusal at session setup does
+  (`GoveeConnection._connect_locked`), and as nothing of the app's compose follows its failed check
+  (`AbsComposeControllerWithOpResult.onResult:315-334` -> `result2Fail`; the H6058 screen's connect list starts
+  with `Controller4Secret`, `H6058NewDetailVm.T4`). The check and the teardown run under one hold of the
+  connection lock (`GoveeConnection.send_check`), so a frame that an operation already past its own unlock step
+  queued behind the check (a plug's post-power `33 b5`) waits until the link is gone, then connects again and is
+  refused at setup. An operation that overlaps a check in flight waits for its outcome (`asyncio.gather`
+  included): after a refusal it connects again, and its own setup sends the check and is refused the same way,
+  so no frame goes out on a link whose check failed. A refusing call that is cancelled leaves the link down once
+  the refusal came, and the check pending while the link is up. A check that gets no ack still has the link set
+  up again, whose setup sends the check, and now only that: the write's retry sent it a second time on the new
+  link. The empty check after `read_secret()` (Added) goes the same way. With an accepted check, the
   overlapping operations' frames follow it in the order they were called, where a later one could go first.
-  No frame changes for an operation that overlaps nothing. Source-modelled, not live-verified.
+  No frame changes for an operation that overlaps nothing. Checked against 8290de4 on the real connection
+  against a fake peripheral, over the 12 account-locked SKUs (H5080, H5082, H5083, H5085, H5089, H5160, H5161,
+  H6050, H6051, H6058, H6071, H6075; none is behind `allow_modelled`): a known secret's writes, an accepted
+  live check and `read_secret()`'s empty check change nothing; a refused live check, or a refused empty check,
+  with a frame queued behind it now ends the link before that frame, which connects again and is refused at
+  setup (GoveeBleAuthError), where it went out on the refused link and was acked; and an unacked live check
+  goes out once on the reconnected link, not twice. Source-modelled, not live-verified.
 
 ### Spec
 - **A pact branch can give its pact a profile of its own (h60ax 303 at (1,1), hass #30).** `clientBranch` takes

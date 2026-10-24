@@ -73,6 +73,7 @@ def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> 
         return list(r(frame) if callable(r) else r)
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_check = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=send_unacked)  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]

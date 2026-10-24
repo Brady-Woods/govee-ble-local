@@ -790,15 +790,19 @@ class Device:
         (:meth:`_unlock_frames`; never in the read_secret itself). With no secret on an
         :attr:`.DeviceProfile.empty_secret_check` profile, an operation that overlaps a read_secret waits for
         it first (``_pairing_lock``), so its frames never go out ahead of the check on a session the read set
-        up. Without a live session nothing is sent: the next session setup sends it. A rejection ends the
-        session and is a GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at
-        session setup (``GoveeConnection._prepare_session``). An operation that overlaps a check in flight
+        up. Without a live session nothing is sent: the next session setup sends it, and so it is on the
+        session's own link only (``GoveeConnection.send_check``). A rejection ends the session before any
+        other frame goes out on its link, a frame queued by an operation past its own unlock step included (a
+        plug's post-power ``33 b5``), and is a GoveeBleAuthError, as at session setup; an unlock with no ack
+        tears the link down, and the next session's setup sends it, once, where it is only logged unacked, as
+        at session setup (``GoveeConnection._prepare_session``). An operation that overlaps a check in flight
         waits for its outcome (``_unlock_lock``) rather than skipping it, so none of its frames goes out on a
         link whose check is then refused: after a refusal the session is gone and its own setup sends the
-        check again. ``ticket``: the write call it goes out for (:meth:`_commit`), recorded once it went out
-        (:meth:`_wrote`). ``budget``: the calling poll's connect limits (:meth:`update`); a timeout that
-        leaves the session down (the write retry's reconnect ran out of them) is raised, and the next session
-        setup sends the unlock."""
+        check again. Cancelled mid-check, the check is pending again while the link is up (it may not have
+        reached the device), and the session is down once a refusal came. ``ticket``: the write call it goes
+        out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the calling poll's
+        connect limits (:meth:`update`); a timeout that leaves the session down (the reconnect after an
+        unacked check ran out of them) is raised, and the next session setup sends the unlock."""
         pairing = self._pairing_read()
         if (not pairing and not self._secret and self.profile.empty_secret_check
                 and self._pairing_lock.locked()):
@@ -811,26 +815,27 @@ class Device:
                 return   # a pairing read sends no empty check: it stays pending for the next operation
             self._unlock_pending = False   # taken: an operation waiting on _unlock_lock doesn't resend it
             secret = self._secret
+            link = self._conn.link_number
             unlock = self._unlock_frames() if self._conn.is_connected else []
             if not unlock:
                 return   # the next session setup sends it (or there is none)
             done = False   # the write finished: acked, rejected, or unacked (treated as sent)
             try:
-                await self._conn.send(unlock[0], **_budget_kw(budget))
+                # On that session's link only, which a refusal ends before any other frame goes out, as a
+                # rejection at session setup does (GoveeConnection._connect_locked drops the link): the next
+                # operation's setup sends the check again and is refused the same way, as the app's compose
+                # stops at its failed check. A link that stops acking is set up again, and its setup sends
+                # the check (GoveeConnection.send_check).
+                await self._conn.send_check(unlock[0], on_link=link, **_budget_kw(budget))
                 done = True
             except GoveeBleCommandRejected as err:
                 done = True
-                # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end
-                # the session, so the next operation's setup sends the check again and is refused the same
-                # way: no later frame goes out on this link unchecked (an overlapping operation waits on
-                # _unlock_lock until it is gone), as the app's compose stops at its failed check.
-                await self._conn.disconnect()
                 raise GoveeBleAuthError(
                     f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
                 ) from err
             except GoveeBleTimeout:
                 if budget is not None and not self._conn.is_connected:
-                    raise   # the poll's connect limit ran out on the write retry's reconnect: nothing sent
+                    raise   # the poll's connect limit ran out on the reconnect after an unacked check
                 done = True
                 _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
             finally:

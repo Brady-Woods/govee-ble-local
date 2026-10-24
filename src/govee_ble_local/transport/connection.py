@@ -1123,6 +1123,45 @@ class GoveeConnection:
                 f"wait for; {err} (use query() for reads)"
             ) from None
 
+    async def send_check(
+        self, frame_plaintext: bytes, *, on_link: int, connect_budget: ConnectBudget | None = None,
+    ) -> None:
+        """Send the secret check a caller owes the session on link ``on_link`` (a :attr:`link_number`; the
+        ``33 b2`` of a secret set while that session was up, ``Device._send_pending_unlock``), so that no
+        other frame goes out on the link before its outcome, as nothing of the app's compose follows its
+        failed check (``AbsComposeControllerWithOpResult.onResult:315-334`` -> ``result2Fail``):
+
+        - with that link gone once the operation holds the lock (another link, or none, up), nothing is sent
+          and no connect is made: a session set up since sent the check in its setup, and the next one will;
+        - a refusal ends the session before the lock is released, as at session setup, so no frame queued
+          behind the check goes out on the refused link, and raises :class:`GoveeBleCommandRejected`;
+        - a link that stops acking is torn down and set up again within ``connect_budget``, whose session
+          setup sends the check (a refusal there raises :class:`GoveeBleAuthError`), and the check is not sent
+          a second time on it.
+
+        A cancellation after the refusal still leaves the link down (the client is forgotten before the first
+        await, :meth:`_disconnect_locked`). GoveeBleInvalidValue, before any I/O, for a frame that is not a
+        write."""
+        self._check_write_frame(frame_plaintext)
+
+        async def op() -> None:
+            if on_link != self.link_number or not self.is_connected:
+                return   # that session is gone: its successor's setup sends the check
+            try:
+                await self._send_write_verified(frame_plaintext)
+            except GoveeBleCommandRejected:
+                await self._disconnect_locked()
+                raise
+            except (
+                _LinkLost, *_TRANSPORT_ERRORS, TimeoutError, GoveeBleTimeout, GoveeBleConnectionError,
+            ) as err:
+                _LOGGER.debug("%s: secret check failed on this link (%s); reconnecting, whose setup sends it",
+                              self.address, _err_text(err))
+                await self._disconnect_locked()
+                await self._ensure_connected_locked(connect_budget)
+
+        await self._run(op, extend_warm=True)
+
     async def send_many(self, frames: list[bytes]) -> None:
         """Send several write frames back to back under ONE lock acquisition and
         one connection (each still individually ack-verified), so a multi-part
