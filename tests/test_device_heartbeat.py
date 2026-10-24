@@ -132,6 +132,7 @@ async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follow
             # The link reads no status again, so a whole-device write sets every held piece, as the app's
             # whole-strip pick does (DelegateColorV2.F0 / G0 -> ColorModeUtil.e): H617G's 15 from the re-read.
             held = len(dev.state.segments)
+            assert held == (15 if sku == "H617G" else 0)   # applied over H617G's 15 segments; H703A's dropped
             await dev.set_color_temp(3000)
             assert [s.rgb for s in dev.state.segments] == [tint_for_kelvin(3000)] * held
             await dev.set_rgb((1, 2, 3))
