@@ -37,12 +37,17 @@ def run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> Device:
+# An aa 40 reply of IC 70 (14 pieces on H6641): an IC-sized row's colour write reads it first.
+_IC_70: Replies = {0x40: [_frame(0xAA, 0x40, 0x00, 70, 0x00)]}
+
+
+def _dev(sku: str, replies: Replies | None = None, *, allow_modelled: bool = False,
+         **profile_overrides: Any) -> Device:
     """Device with a mocked connection. ``replies`` maps the request's command byte (frame[1]) to
     reply frames, or to a function of the request frame returning them."""
-    if profile_overrides:
+    if profile_overrides or allow_modelled:
         # A changed profile is a new Device: the profile is read-only after construction.
-        profile = profile_for(sku)
+        profile = profile_for(sku, allow_modelled=allow_modelled)
         assert profile is not None
         d: Device | None = Device(dataclasses.replace(profile, **profile_overrides),
                                   ble_device("AA:BB:CC:DD:EE:3A", sku), sku=sku)
@@ -69,6 +74,7 @@ def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> 
         return list(r(frame) if callable(r) else r)
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_check = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=send_unacked)  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
@@ -285,7 +291,7 @@ def test_masked_colour_write_clears_the_active_scene(write: Any, overrides: dict
 
 
 def test_h6641_segment_rgb_clears_scene() -> None:
-    d = _dev("H6641")
+    d = _dev("H6641", _IC_70)
     run(d.set_scene(5))
     run(d.set_segment_rgb([0], (1, 2, 3)))
     assert d.state.scene_code is None
@@ -575,7 +581,7 @@ def test_scene_report_clears_the_colours(sku: str) -> None:
     # The H60A6 reads its mode from the status burst's 0x05 TLV; the others from aa 05.
     replies = ({0x03: _mode_burst(0x04, 0x10, 0x00)} if sku == "H60A6"
                else {0x05: [_frame(0xAA, 0x05, 0x04, 0x10, 0x00)]})
-    d = _dev(sku, replies)
+    d = _dev(sku, {**replies, **_IC_70})
     run(d.set_color_temp(4000))
     run(d._read_status() if d.profile.readback == "status" else d._read_polled())
     assert d.state.scene_code == 16
@@ -603,7 +609,7 @@ def test_h6062_0d_report_is_not_read_as_bulb_rgb() -> None:
 
 @pytest.mark.parametrize("sku", ["H6641", "H6047"])
 def test_0d_report_is_ignored_where_the_app_does_not_parse_it(sku: str) -> None:
-    d = _dev(sku, {0x05: [_frame(0xAA, 0x05, 0x0D, 0x01, 0x0F, 0xA0)]})
+    d = _dev(sku, {0x05: [_frame(0xAA, 0x05, 0x0D, 0x01, 0x0F, 0xA0)], **_IC_70})
     run(d.set_rgb((9, 8, 7)))
     run(d._read_polled())
     assert d.state.rgb_color == (9, 8, 7) and d.state.color_temp_kelvin is None
@@ -748,20 +754,53 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
                       color_readback_ic_range=(1, 2), color_readback_ic_per_piece=0)
     with pytest.raises(ValueError, match="color_readback_ic_range"):
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_ic_range=(5, 2))
+    with pytest.raises(ValueError, match="color_readback_ic_rounding"):
+        DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_ic_rounding="half")   # type: ignore[arg-type]
+    for rule in (dict(color_readback_ic_table=((36, 18),)), dict(color_readback_ic_otherwise=14),
+                 dict(color_readback_ic_table=((36, 18), (36, 9)), color_readback_ic_otherwise=14),
+                 dict(color_readback_ic_table=((36, 18),), color_readback_ic_pair_cap=15,
+                      color_readback_ic_otherwise=14),
+                 dict(color_readback_ic_table=(36, 18), color_readback_ic_otherwise=14),   # flat: no entries
+                 dict(color_readback_ic_pair_cap=15, color_readback_ic_otherwise=30)):   # no pair reader
+        with pytest.raises(ValueError, match="color_readback_ic_table"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
+        DeviceProfile(skus=("HX",), capabilities=frozenset(), color_writes_live_ic=True)
+    for per_unit in (-1, True):   # the aa 0f string count's pieces per string: 0 (no read) or more
+        with pytest.raises(ValueError, match="light_num_per_unit"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), light_num_per_unit=per_unit)
+    # The walk is the live read's, and the writes keep the static pieces.
+    for walk in (dict(color_readback_ic_walk_only=True),
+                 dict(color_readback_ic_walk_only=True, color_readback_live_ic=True,
+                      color_writes_live_ic=True)):
+        with pytest.raises(ValueError, match="color_readback_ic_walk_only"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), **walk)   # type: ignore[arg-type]
+    # Its count is the status read's TLV 0xA1, requested and read as segment_info (the default does neither).
+    for status in (dict(readback="polled"), dict(readback="status"),
+                   dict(readback="status", status_read=(0xA1,))):
+        with pytest.raises(ValueError, match="status_segment_count"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), status_segment_count=True,
+                          **status)   # type: ignore[arg-type]
+
+
+def _ic(count: int) -> parse.IcCount:
+    ic = parse.parse_ic_count(_frame(0xAA, 0x40, (count >> 8) & 0xFF, count & 0xFF, 0x05))
+    assert ic is not None
+    return ic
 
 
 def test_live_ic_without_a_clamp_uses_the_reported_count() -> None:
     profile = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True,
                             color_readback_ic_per_piece=5)
     d = Device(profile, ble_device("AA:BB:CC:DD:EE:3C", "HX"))
-    assert _readback.live_ic_pieces(d, 23) == 5          # ceil(23 / 5), no clamp
-    assert _readback.live_ic_pieces(d, -1) == 0          # a negative count (aa 40 ff ff) is no pieces
+    assert _readback.live_ic_pieces(d, _ic(23)) == 5     # ceil(23 / 5), no clamp
+    assert _readback.live_ic_pieces(d, _ic(-1)) == 0     # a negative count (aa 40 ff ff) is no pieces
     # The app never stores a count of 0x1000 or more: the spec's ic_count_checked is None there.
-    ic = parse.parse_ic_count(_frame(0xAA, 0x40, 0x10, 0x00, 0x05))
-    assert ic is not None and ic.ic_count == 0x1000 and ic.ic_count_checked is None
+    ic = _ic(0x1000)
+    assert ic.ic_count == 0x1000 and ic.ic_count_checked is None and _readback.live_ic_pieces(d, ic) is None
     h6641 = make_device(ble_device("AA:BB:CC:DD:EE:3D", "H6641"), "H6641")
     assert h6641 is not None
-    assert _readback.live_ic_pieces(h6641, 23) == 9      # clamped to 41, ceil(41 / 5)
+    assert _readback.live_ic_pieces(h6641, _ic(23)) == 9   # clamped to 41, ceil(41 / 5)
 
 
 # ── WP3-081: a secret set on a live session is sent before the next command ───────────────
@@ -862,14 +901,159 @@ def test_whole_device_colour_builder_error_names_the_sku(monkeypatch: pytest.Mon
 
 
 # ── WP3-052: an IC count the app can't parse is a failed IC read ──────────────────────────
-@pytest.mark.parametrize("ic", [0x1000, 0x7FFF])
-def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
+# h6609 260's readback_only table (H70c4Support.b) on H6641's walk: the walk alone, the strip H6641's 14.
+_WALK_ONLY = dict(color_writes_live_ic=False, color_readback_ic_walk_only=True, color_readback_ic_range=None,
+                  color_readback_ic_table=((1000, 20),), color_readback_ic_otherwise=10)
+
+
+@pytest.mark.parametrize(("ic", "rule", "groups", "kept"), [
+    (0x1000, {}, 0, 0),
+    (0x7FFF, {}, 0, 0),
+    (0x1000, dict(color_writes_live_ic=False), 0, 0),   # a 1.6.1 live-IC profile: no count, no walk
+    (0x1000, _WALK_ONLY, 4, 14),   # no count: the static pieces, as the screen walks its stored IC
+    (1000, _WALK_ONLY, 5, 0),      # IC 1000: 20 pieces walked, none applied (updateColor: not the strip's 14)
+])
+def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(
+    ic: int, rule: dict[str, Any], groups: int, kept: int,
+) -> None:
     # ReadIcController.Companion.a: a signed count >= 0x1000 takes the byte-swap branch, which reads
     # past its 2-byte array, so the app never stores it (VM4Light.D5 does not run).
     d = _dev("H6641", {0x40: [_frame(0xAA, 0x40, ic >> 8, ic & 0xFF, 3)],
-                       0xA5: [_frame(0xAA, 0xA5, 1, *([50, 1, 2, 3] * 4))]})
+                       0xA5: [_frame(0xAA, 0xA5, 1, *([50, 1, 2, 3] * 4))]}, **rule)
     run(d._read_mechanism_a_direct())
-    assert [q[1] for q in _queried(d)] == [0x40] and d.state.segments == []
+    assert [q[1] for q in _queried(d)] == [0x40, *[0xA5] * groups]
+    assert [s.index for s in d.state.segments] == list(range(kept))
+
+
+def _tlv(tag: int, *value: int) -> bytes:
+    return bytes([tag, len(value), *value])
+
+
+def _status(ic: int | None, groups: int, *extra: bytes) -> list[bytes]:
+    """A status burst: power on, brightness, power memory, a TLV 0x40 of ``ic`` (None: none), ``groups`` TLV
+    0xA5 colour groups of 4 records from group 1, then ``extra`` TLVs."""
+    body = _tlv(0x01, 1) + _tlv(0x04, 80) + _tlv(0x41, 2, 0)
+    body += b"" if ic is None else _tlv(0x40, ic >> 8, ic & 0xFF, 0)
+    body += b"".join(_tlv(0xA5, g, *([50, g, 2, 3] * 4)) for g in range(1, groups + 1))
+    return status_burst(body + b"".join(extra))
+
+
+_A1 = 0xA1   # the H707A status read's segment-info TLV (form_a1 segment_info): [count][IC per segment]
+
+
+def _read_at(d: Device) -> float | None:
+    """The stamp of the device read that set the Device's segment count (the public name, in one place)."""
+    return d.segment_count_read_at
+
+
+@pytest.mark.parametrize(("sku", "replies", "count", "asked", "poll"), [
+    # aa 41 (H6062's sectionNum) at its profile's 33: only the stamp tells the read from the default
+    ("H6062", {0x41: [_frame(0xAA, 0x41, 0x00, 0x38, 33)]}, 33, [0x41], False),
+    # ac a1 (goodsType 180's special-info read, behind allow_modelled): six segments
+    ("H706A", {0xA1: [bytes.fromhex("ac00010007a10b060a0a0a0a0a0a000000000006")]}, 6, [0xA1], False),
+    # aa 40 on H6641: IC 70 is its profile's 14 pieces
+    ("H6641", _IC_70, 14, [0x40], False),
+    ("H7067", None, None, [0x40], False),                                             # no aa 40 reply
+    ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0x00, 0x00)]}, None, [0x40], False),   # IC 0: no pieces
+    # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+    ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0xC8, 0x00)]}, 112, [0x40], False),
+    # A status row's IC: H3401's comes with its status read's TLV 0x40 (the app's connect read), H702A's from
+    # the aa 40 read that starts that read.
+    ("H3401", {0x03: _status(None, 2)}, None, [0x03], False),
+    ("H3401", {0x03: _status(20, 5)}, 20, [0x03], False),
+    ("H702A", {0x40: [_frame(0xAA, 0x40, 0x00, 30, 0x00)]}, 30, [0x40], False),
+    # H3010: ColorPieceConfig.b's max(15, IC) pieces, its colour one 0xA3 unit (ColorModeControllerConfig.j).
+    ("H3010", {0x40: [_frame(0xAA, 0x40, 0x00, 8, 0x00)]}, 15, [0x40], False),
+    # aa 0f (NewDetailVM.u5): 2 strings x 25 bulbs on H7041; no reply, or a negative count (a Java byte), is
+    # none; a count of 0 is the app's empty pick, a zero mask.
+    ("H7041", {0x0F: [_frame(0xAA, 0x0F, 2)]}, 50, [0x0F], False),
+    ("H7041", None, None, [0x0F], False),
+    ("H7041", {0x0F: [_frame(0xAA, 0x0F, 0x80)]}, None, [0x0F], False),
+    ("H7041", {0x0F: [_frame(0xAA, 0x0F, 0)]}, 0, [0x0F], False),
+    # H707C cut to 8 segments: the status read's TLV 0xA1 count (H707AInfo4Detail.G0), not its factory 12,
+    # before the write or from the poll (no device-info reads: device_info_reads none)
+    ("H707C", {0x03: status_burst(bytes([_A1, 4, 8, 54, 54, 36]))}, 8, [0x03], False),
+    ("H707C", {0x03: status_burst(bytes([_A1, 4, 8, 54, 54, 36]))}, 8, [0x03], True),
+    ("H707C", {0x03: status_burst(bytes([_A1, 1, 0]))}, None, [0x03], False),   # a count of 0: none
+    # no TLV 0xA1: TLV 0x40's segment byte, its IC (108) new to the Device (the lambda's 0x40 branch -> n6)
+    ("H707C", {0x03: status_burst(bytes([0x40, 3, 0x00, 0x6C, 5]))}, 5, [0x03], False),
+])
+def test_a_device_counted_write_takes_its_count_or_sends_nothing(
+    sku: str, replies: Replies | None, count: int | None, asked: list[int], poll: bool,
+) -> None:
+    # color_writes_live_ic / light_num_per_unit / status_segment_count: before the first poll a masked write
+    # reads the device's count (its IC, whose pieces size the strip, ColorPieceConfig.c; the aa 0f string
+    # count; or the 0xAC status read's TLV 0xA1), and without a usable count nothing is sent, as on H6062's
+    # aa 41.
+    # The read stamp: set only once a usable count came back, even one equal to profile.segments.
+    d = _dev(sku, replies, allow_modelled=sku == "H706A")
+    assert _read_at(d) is None and d.segment_count == d.profile.segments
+    if poll:
+        run(d.update())
+    if count is None:
+        with pytest.raises(GoveeBleError, match="not sending a colour frame"):
+            run(d.set_rgb((1, 2, 3)))
+        assert _sent(d) == [] and [q[1] for q in _queried(d)] == asked
+        assert _read_at(d) is None and d.segment_count == d.profile.segments
+    else:
+        run(d.set_rgb((1, 2, 3)))
+        assert d.segment_count == count and [q[1] for q in _queried(d)] == asked
+        assert _read_at(d) is not None
+        # One send_many: the transport sends an 0xA3 run and the write after it as one unit.
+        d._conn.send_many.assert_awaited_once_with(  # type: ignore[attr-defined]
+            build.color_rgb_frames(1, 2, 3, d.profile.color_scheme, count))
+
+
+def test_the_read_stamp_follows_the_count_a_read_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    # H7041's aa 0f (2 strings x 25 bulbs): each good read stamps its time, a re-read of the same count too; a
+    # failed one keeps the count and the stamp; a negative count drops both; a caller's count
+    # (set_segment_count, either form) has none.
+    now = [0.0]
+    monkeypatch.setattr(device_mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    reply: list[bytes] = []
+    d = _dev("H7041", {0x0F: lambda _f: reply})
+    assert (d.segment_count, _read_at(d)) == (50, None)
+    for now[0], strings, count, stamp in [(10.0, 1, 25, 10.0), (20.0, None, 25, 10.0), (30.0, 1, 25, 30.0),
+                                          (40.0, 0x80, 50, None), (50.0, 2, 50, 50.0)]:
+        reply[:] = [] if strings is None else [_frame(0xAA, 0x0F, strings)]
+        run(d._read_light_num())
+        assert (d.segment_count, _read_at(d)) == (count, stamp)
+    d.set_segment_count(5)
+    assert (d.segment_count, _read_at(d)) == (5, None)
+    now[0], reply[:] = 60.0, [_frame(0xAA, 0x0F, 1)]
+    run(d._read_light_num())
+    assert (d.segment_count, _read_at(d)) == (25, 60.0)
+    d.set_segment_count(None)
+    assert (d.segment_count, _read_at(d)) == (50, None)
+
+
+@pytest.mark.parametrize(("sku", "bursts", "aa40", "reads", "count", "pieces"), [
+    # H3401 (Support.b(394, IC) = IC): each burst's TLV 0x40 leads its 0xA5 groups and places them, over 20
+    # pieces (not the 56 before the first read), then over 4, which drops the read-back past them.
+    ("H3401", [_status(20, 5), _status(4, 2)], None, [0x03, 0x03], 4, 4),
+    # A group the app can't place (0) fails the read, but the TLV 0x40 ahead of it is stored.
+    ("H3401", [_status(20, 0, _tlv(0xA5, 0, *([1] * 16)))], None, [0x03, 0x03], 20, 0),
+    # H3510: IC 10 writes ColorPieceConfig.b's 4 pieces, and the read-back takes the two groups whole within
+    # the 10 pieces (getColorPieceSize(349, IC) = IC); the third is dropped, failing nothing.
+    ("H3510", [_status(10, 3)], None, [0x03], 4, 8),
+    # An IC count of 0 sizes nothing: no count yet, and the groups go over the count before the first read.
+    ("H3401", [_status(0, 1)], None, [0x03], None, 4),
+    # H702A: aa 40, the status read, aa 40 again; without an answer to the first, the app sends no 0xAC read.
+    ("H702A", [_status(None, 8)], 30, [0x40, 0x03, 0x40], 30, 30),
+    ("H702A", [_status(None, 8)], None, [0x40], None, 0),
+])
+def test_a_live_ic_status_row_sizes_its_pieces_by_its_ic_read(sku: str, bursts: list[list[bytes]],
+                                                               aa40: int | None, reads: list[int],
+                                                               count: int | None, pieces: int) -> None:
+    queue = list(bursts)
+    replies: Replies = {0x03: lambda _f: queue.pop(0) if len(queue) > 1 else queue[0]}
+    if aa40 is not None:
+        replies[0x40] = [_frame(0xAA, 0x40, 0x00, aa40, 0x00)]
+    d = _dev(sku, replies)
+    for _poll in bursts:
+        run(d.update())
+    assert [q[1] for q in _queried(d) if q[1] in (0x03, 0x40)] == reads
+    assert d._segment_count == count and len(d.state.segments) == pieces
 
 
 # ── scene upload + activation are not split by a concurrent scene write ───────────────────

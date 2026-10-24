@@ -163,7 +163,7 @@ def test_h6061_rgb_and_color_temp() -> None:
         mask, width = mask_of(panels)
         assert b.color_rgb_frames(*rgb, "h6061", panels) == [
             C.build_op15_color_v5(*rgb, mask, mask_bytes=width)]
-        mask, width = mask_of(b.H6061_MAX_PANELS if panels == 1 else panels)   # CCT: one panel written as 23
+        mask, width = mask_of(b.H6061_MAX_PANELS if panels == 1 else panels)   # CCT: one panel written as 20
         for kelvin in range(2000, 9001, 500):
             assert b.color_temp(kelvin, "h6061", panels) == C.build_op15_color_v5(
                 *tint_for_kelvin(kelvin), mask, kelvin=kelvin, mask_bytes=width)
@@ -194,11 +194,11 @@ def test_rgb_pick_as_kelvin_every_tint(kelvin_range: tuple[int, int]) -> None:
 
 def test_rgb_pick_as_kelvin_h6061_default_range() -> None:
     for rgb, kelvin in _tints():
-        frames = b.color_rgb_frames(*rgb, "h6061", 23)
+        frames = b.color_rgb_frames(*rgb, "h6061", 20)
         if 2000 <= kelvin <= 9000:   # KelvinConfig: no entry for goodsType 51 -> version 0
-            assert frames == [C.build_op15_color_v5(*rgb, (1 << 23) - 1, kelvin=kelvin, mask_bytes=3)]
+            assert frames == [C.build_op15_color_v5(*rgb, (1 << 20) - 1, kelvin=kelvin, mask_bytes=3)]
         else:
-            assert frames == [C.build_op15_color_v5(*rgb, (1 << 23) - 1, mask_bytes=3)]
+            assert frames == [C.build_op15_color_v5(*rgb, (1 << 20) - 1, mask_bytes=3)]
 
 
 # ── colour: segments ─────────────────────────────────────────────────────────

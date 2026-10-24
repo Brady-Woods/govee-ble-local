@@ -15,19 +15,19 @@ from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
 
 ALL_SCHEMES: tuple[b.ColorScheme, ...] = (
-    "h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02", "kelvin_v9")
+    "h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02", "kelvin_v9", "h3010")
 
 
 # ── a scheme that can't express the request: GoveeBleNotSupported, not a bare ValueError ──
 @pytest.mark.parametrize(("call", "match"), [
     (lambda: b.color_temp(4000, "h61a8", 15), "h61a8"),
-    (lambda: b.segment_rgb(1, 1, 2, 3, "h6061", 23), "whole-device only"),
+    (lambda: b.segment_rgb(1, 1, 2, 3, "h6061", 20), "whole-device only"),
     (lambda: b.segment_color_temp(1, 4000, "h61a8", 15), "h61a8"),
     (lambda: b.segment_color_temp(1, 4000, "h6006"), "h6006"),
     (lambda: b.segment_color_temp(1, 4000, "h6188"), "h6188"),
-    (lambda: b.segment_color_temp(1, 4000, "h6061", 23), "whole-device only"),
+    (lambda: b.segment_color_temp(1, 4000, "h6061", 20), "whole-device only"),
     (lambda: b.segment_brightness(1, 50, "h61a8", 15), "h61a8"),
-    (lambda: b.segment_brightness(1, 50, "h6061", 23), "whole-device only"),
+    (lambda: b.segment_brightness(1, 50, "h6061", 20), "whole-device only"),
 ])
 def test_scheme_limits_raise_not_supported(call: Callable[[], bytes], match: str) -> None:
     with pytest.raises(GoveeBleNotSupported, match=match) as info:
@@ -71,10 +71,11 @@ def test_unknown_scheme_is_refused_not_sent_as_h60a6() -> None:
 
 # ── every builder x every scheme: its own family's frame, or GoveeBleNotSupported ──
 # The colour sub-mode each scheme's frames use (33 05 <sub> ...); nothing may fall through to another's.
+# h3010's unit is 0xA3 packets closed by its 33 05 15 frame.
 _FAMILY: dict[b.ColorScheme, int] = {
     "h60a6": b.SUB_COLOR_15, "h6061": b.SUB_COLOR_15, "h61a8": b.SUB_COLOR_0B,
     "h6006": b.SUB_COLOR_0D, "h6188": b.SUB_COLOR_0D, "legacy_02": b.SUB_COLOR_02,
-    "kelvin_v9": b.SUB_COLOR_15,
+    "kelvin_v9": b.SUB_COLOR_15, "h3010": b.SUB_COLOR_15,
 }
 _TINT_2700 = (0xFF, 0xAE, 0x54)   # a Kelvin tint colour: the CCT-pick path on every scheme with CCT
 _RGB = frozenset(ALL_SCHEMES) - {"kelvin_v9"}   # colour instruction 9 writes a Kelvin only (Bytes.D)
@@ -82,8 +83,9 @@ _RGB = frozenset(ALL_SCHEMES) - {"kelvin_v9"}   # colour instruction 9 writes a 
 _BUILDERS: dict[str, tuple[Callable[[b.ColorScheme], bytes | list[bytes]], frozenset[str]]] = {
     "color_rgb_frames": (lambda s: b.color_rgb_frames(1, 2, 3, s), _RGB),
     "color_rgb_frames tint pick": (lambda s: b.color_rgb_frames(*_TINT_2700, s, None, (2000, 9000)), _RGB),
-    "color_rgb": (lambda s: b.color_rgb(1, 2, 3, s), _RGB),
-    "color_temp": (lambda s: b.color_temp(4000, s), frozenset(ALL_SCHEMES) - {"h61a8"}),
+    "color_rgb": (lambda s: b.color_rgb(1, 2, 3, s), _RGB - {"h3010"}),
+    "color_temp": (lambda s: b.color_temp(4000, s), frozenset(ALL_SCHEMES) - {"h61a8", "h3010"}),
+    "color_temp_frames": (lambda s: b.color_temp_frames(4000, s), frozenset(ALL_SCHEMES) - {"h61a8"}),
     "segment_rgb": (lambda s: b.segment_rgb(1, 1, 2, 3, s), frozenset({"h60a6", "h61a8"})),
     "segment_rgb tint pick": (lambda s: b.segment_rgb(1, *_TINT_2700, s, 13, (2000, 9000)),
                               frozenset({"h60a6", "h61a8"})),
@@ -109,8 +111,10 @@ def test_every_builder_sends_its_own_family_or_refuses(builder: str, scheme: b.C
     out = call(scheme)
     frames = out if isinstance(out, list) else [out]
     assert frames
-    for f in frames:
-        assert f[:3] == bytes([b.PRO_WRITE, b.CMD_MODE, _FAMILY[scheme]]), (builder, scheme, f.hex())
+    for f in frames[:-1] if scheme == "h3010" else frames:
+        assert f[0] == b.PRO_MULTI_A3 if scheme == "h3010" else f[:3] == bytes(
+            [b.PRO_WRITE, b.CMD_MODE, _FAMILY[scheme]]), (builder, scheme, f.hex())
+    assert frames[-1][:3] == bytes([b.PRO_WRITE, b.CMD_MODE, _FAMILY[scheme]]), (builder, scheme)
 
 
 # ── brightness: a non-int is GoveeBleInvalidValue, not a TypeError from bytes() ──
@@ -128,12 +132,12 @@ def test_brightness_ints_still_clamp() -> None:
 
 
 # ── segment-count defaults: per scheme, never another SKU's count ────────────
-def test_h6061_default_is_the_apps_23_panels() -> None:
-    # Used to be H60A6's 13: a 13-panel mask ff 1f 00 the app never sends.
-    assert b.color_temp(4000, "h6061") == b.color_temp(4000, "h6061", 23)
-    assert b.color_temp(4000, "h6061")[9:12] == bytes([0xFF, 0xFF, 0x7F])
-    assert b.color_rgb_frames(1, 2, 3, "h6061") == b.color_rgb_frames(1, 2, 3, "h6061", 23)
-    assert b.color_rgb_frames(1, 2, 3, "h6061")[0][9:12] == bytes([0xFF, 0xFF, 0x7F])
+def test_h6061_default_is_the_apps_20_panels() -> None:
+    # Used to be H60A6's 13: a 13-panel mask ff 1f 00 the app never sends. 20: the layout editor's cap.
+    assert b.color_temp(4000, "h6061") == b.color_temp(4000, "h6061", 20)
+    assert b.color_temp(4000, "h6061")[9:12] == bytes([0xFF, 0xFF, 0x0F])
+    assert b.color_rgb_frames(1, 2, 3, "h6061") == b.color_rgb_frames(1, 2, 3, "h6061", 20)
+    assert b.color_rgb_frames(1, 2, 3, "h6061")[0][9:12] == bytes([0xFF, 0xFF, 0x0F])
 
 
 def test_h61a8_default_is_its_15_segments() -> None:

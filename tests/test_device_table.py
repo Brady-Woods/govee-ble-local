@@ -21,7 +21,8 @@ from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
 from govee_ble_local.devices.profile import (
-    PROFILES, DeviceProfile, RelayPower, SessionMode, profile_for, wire_profile)
+    PROFILES, ColorPage, DeviceProfile, IcRounding, KelvinCompare, RelayPower, SessionMode, profile_for,
+    wire_profile)
 from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
@@ -90,6 +91,10 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     ("H6641", "scene_versions"): (frozenset({0, 1, 2, 3, 10}), frozenset({0, 1, 2, 3})),
     # The screen reads aa a3 at connect and writes 33 a3, which an H6641 answers and acks (bench, 2026-10-18).
     ("H6641", "gradual"): (False, True),
+    # 1.9.0: the live piece count sizes the writes (decision 2; ColorPieceConfig.c, ColorMode.V), and the
+    # count before the first aa 40 read is the most it gives, ceil(70 / 5) = 14 (H61D3Support.s / e).
+    ("H6641", "color_writes_live_ic"): (False, True),
+    ("H6641", "segments"): (16, 14),
     # The spec's name for the bars' 0x15 decode (one Kelvin per bar); the decode itself is unchanged.
     ("H6047", "mode_color_parse"): ("kelvin_15", "kelvin_pair_15"),
     # 1.6.0: each row's keep-alive read (devices.yaml clientRow heartbeat); master sent none. aa 00 on the
@@ -109,6 +114,16 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # 1.7.0: the Part-tab Kelvin of goodsTypes 303 / 119 widens every pick to a whole zone, so none goes to
     # part of one (the user's decision 24).
     **{(sku, "segment_color_temp"): (True, False) for sku in ("H60A6", "H6047")},
+    # 1.9.0: a full layout is the layout editor's cap, Constants.o(0) = 20 hexagons (decision D1 (a)), not the
+    # read-back default with no layout, Support.getBulbStringMaxNum(51) = 23.
+    ("H6061", "segments"): (23, 20),
+    # 1.9.0: the stock colour page (DelegateColorV2.W1) shows a one-colour report that is a Kelvin tint in
+    # range as that colour temperature, whatever the decode (decision 27): a read-side fold, no frame change.
+    **{(sku, "color_page"): (None, "stock") for sku in (
+        "H60A6", "H6004", "H6006", "H6008", "H6052", "H6188", "H6061")},
+    # The cubelight screen's connect compose ends at a group that goes unanswered
+    # (AbsComposeControllerWithOpResult.onOvertime), so the poll's walk stops there.
+    ("H6061", "color_readback_stop_at_miss"): (False, True),
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
@@ -141,6 +156,12 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert built == _resolve.SEGMENT_BRIGHTNESS_SCHEMES
     assert set(_resolve.WHITE_TYPES) == set(get_args(WhiteType))
     assert set(_resolve.SESSIONS) == set(get_args(SessionMode))
+    assert set(_resolve.IC_ROUNDINGS) == set(get_args(IcRounding))
+    assert set(_resolve.KELVIN_COMPARES) == set(get_args(KelvinCompare))
+    assert set(_resolve.COLOR_PAGES) == set(get_args(ColorPage))
+    # The screens without a colour page (bulblightv3 328's illumination-only list, h6071's bundled [10, 13]);
+    # every other admitted row with color_page is stock, whose fold the Kelvin-tint read test pins per decode.
+    assert {sku for p in PROFILES if p.color_page == "none" for sku in p.skus} == {"H8015", "H6071", "H6075"}
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -320,10 +341,11 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "need a base kelvin_range (2000, 9000), one per version"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(min_hard_version="3.8.01"),
      "Kelvin firmware gate '3.8.01' is not the app's a.bb.cc form"),
-    ("h60ax", "235", lambda f: f["client_profile"]["by_goods_type"].update({"235": {
-        **_row(f, "303"), "models": ["HX235"],
-        "by_firmware": [{"min_hard_version": "1.04.03", "kelvin_range": [2700, 6500]}]}}),
-     "whose gate the app compares numerically (KelvinConfig.Config.Y2"),
+    ("h60ax", "235", lambda f: _row(f, "235")["by_firmware"].append(
+        {"min_hard_version": "1.05.00", "kelvin_range": [2700, 6500]}),
+     "Kelvin firmware branches on compares ['numeric', 'string']"),
+    ("dreamcolorlightv1", "136", lambda f: _row(f, "136")["by_firmware"][0].update(compare="numeric"),
+     "firmware compare on ['scene_versions']"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"].update(mode_color_parse="kelvin_15"),
      "pact branch 1,1 on ['mode_color_parse']"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"].update({"9,9": {"status_read": _STATUS_PAIR}}),
@@ -422,11 +444,35 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h61d3", "247", lambda f: _row(f, "247")["connect_reads"].remove("ic_num"),
      "an ic_num read and ic_pieces go together"),
     ("h61d3", "247", lambda f: _row(f, "247")["ic_pieces"].update(min_ic=80), "ic_pieces"),
+    ("striplight", "41", lambda f: _row(f, "41")["connect_reads"].append("special_info"),
+     "the special_info segment-count read on a polled row with segments only, without the aa 41"),
+    ("h60ax", "303", lambda f: _row(f, "303").update(kelvin_readback="pieces"),
+     "kelvin_readback 'pieces' (one of ['pieces'], with color_temp and the direct colour read-back"),
+    ("h7020", "316", lambda f: _row(f, "316").pop("ic_pieces"), "ic_pieces on a status row: an object form"),
+    ("h7020", "316", lambda f: _row(f, "316").update(post_status_reads=["cmd_41"]),
+     "post_status_reads ['cmd_41']"),
+    ("h7057", "349", lambda f: _wire(f, "349")["forms"].update(f_40="ic_pair"),
+     "ic_pieces from the status read's TLV 0x40 with f_40 'ic_pair'"),
+    ("h7057", "349", lambda f: _row(f, "349").update(ic_pieces={"pair_max": 15, "otherwise": 30}),
+     "pair_max without wire f_40 ic_pair on an aa 40 read"),
+    ("h7057", "349", lambda f: _row(f, "349").update(readback_pieces="pieces"), "readback_pieces 'pieces'"),
+    ("h7020", "53", lambda f: _row(f, "53").pop("light_num_pieces"),
+     "an aa 0f light_num read and light_num_pieces go together"),
+    ("h7020", "296", lambda f: _row(f, "296").update(connect_reads=["light_num"],
+                                                     light_num_pieces={"per_unit": 15}),
+     "an aa 0f light_num read is served on a polled light row only"),
+    ("h7020", "53", lambda f: _row(f, "53").update(connect_reads=[*_row(f, "53")["connect_reads"], "ic_num"],
+                                                   ic_pieces={"min_ic": 1, "max_ic": 50, "ic_per_piece": 1}),
+     "light_num_pieces with another live piece count"),
+    ("h7020", "53", lambda f: _row(f, "53")["light_num_pieces"].update(per_unit=0),
+     "light_num_pieces per_unit 0"),
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),
+    ("h707a", "326", lambda f: f["client_profile"]["wire"]["forms"].pop("f_a1"),
+     "a requested cmd_a1 and wire f_a1 segment_info go together"),
     ("bulblightv3", "342", lambda f: _row(f, "348")["models"].append("H14A1"),
-     "by_model connect_writes on a SKU that rows ['342', '348'] list"),
+     "by_model ['connect_writes'] on a SKU that rows ['342', '348'] list"),
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),
@@ -446,6 +492,16 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "heartbeat power where power_live ['heartbeat_aa36'] take power from the reply to cmd_36"),
     ("h5080", "50", lambda f: _row(f, "50").update(heartbeat="heartbeat"),
      "where power_live [] and the relay take power from the reply to power"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat_power=True),
+     "heartbeat_power is served only on an unzoned status row"),
+    ("h7020", "296", lambda f: _row(f, "296").update(heartbeat_power=False),   # every such row says it
+     "no heartbeat_power on an unzoned status row whose power_live has heartbeat_aa01"),
+    # the keep-alive re-read (J3 -> Compose4Off2On): with heartbeat_power, its pieces and the wire group size
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat_reread={"pieces": 15}),
+     "heartbeat_reread without heartbeat_power"),
+    ("rgbiclight", "351", lambda f: _row(f, "351").update(heartbeat_reread={"pieces": 0}),
+     "heartbeat_reread pieces 0 (1 or more"),
+    ("h6069", "284", lambda f: _wire(f).pop("group"), "heartbeat_reread needs the wire group num_per_group"),
     # the power write (h6057's light switch, 33 30, with its aa 34 light-flag read-back)
     ("h6057", "104", lambda f: _row(f, "104").update(power_write="main"),
      "power_write 'main' (one of ['light_switch'], or absent)"),
@@ -513,6 +569,8 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
         return {sku for group, _fields, _routes in _resolve.profiles(cut, table, levels) for sku in group}
 
     assert "H6052" not in skus(_resolve.ADMITTED) and "H6052" in skus(_resolve.MODELLED)
+    # A SKU's by_model support replaces its row's for that SKU alone (h6609 260's IC-gated read-back).
+    assert "H70C9" in skus(_resolve.ADMITTED) and "H70C4" in skus(_resolve.MODELLED) - skus(_resolve.ADMITTED)
     # A SKU's by_model connect_writes replaces its row's for that SKU alone (bulblight Support.c's split).
     split = edited("bulblightv3", lambda f: f["client_profile"]["by_model"].update(
         H6006={"connect_writes": ["light_effect_stop"]}))
@@ -520,6 +578,10 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
     stops = {sku: fields["light_effect_stop"] for group, fields, _routes in _resolve.profiles(cut, table)
              for sku in group}
     assert stops["H6006"] and not stops["H6008"]
+    # So do its connect_reads and ic_pieces: rgbiclight E1's aa 40 read for H61A0 alone at 71.
+    walks = {sku: profile_for(sku) for sku in ("H61A0", "H619B")}
+    assert {sku: p is not None and p.color_readback_ic_sections for sku, p in walks.items()} == {
+        "H61A0": True, "H619B": False}
     # The segment-brightness flag calls for segments only where the row's scheme has that frame (h60a6's
     # 15 02, refused above without them): on an h6006 row it binds nothing, as on H6071 / H6075 (no frame).
     gen.project(edited("bulblightv3", lambda f: _row(f, "342").update(

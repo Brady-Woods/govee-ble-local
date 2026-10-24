@@ -55,9 +55,16 @@ the row lacks fails the build: nothing defaults silently.
   ``profile.profile_for`` takes it only with one. So does each route of a ``pact_required`` row: the app also
   accepts the row's goodsType at pacts that run a path the row doesn't serve (straightfloorlamp 69's (1,1),
   the h70b3 rows' (1,1), h70b6 329's (1,2) / (1,3) and pact_tvlightv2 24's (1,1)), so a unit advertising no
-  pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU that a ``modelled`` row and an
-  admitted row both list raises too: the spec's routing (``ble_rows``) counts both wherever both accept the
-  pact, and the opt-in must leave the admitted routes as they are.
+  pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU's level is its row's, or its
+  ``by_model`` ``support`` (:func:`sku_support`), on a SKU one row of the family lists, where its own fact is
+  inferred and the row's other SKUs' are traced (h6609 260: five SKUs' IC-gated read-back). A pact branch's
+  ``support`` (:func:`pact_support`) is the row's level at that pact alone, where the screen's per-unit gates
+  resolve to the branch the row states only at it (dreamcolorlightv2 21 at (2,1)): the SKU routes at each pact
+  at its level, and without a pact at the row's own level, so a route a branch alone admits needs the pact
+  (``Route.needs_pact``). Such a row lists its pacts (not ``any``), and its SKUs have no ``by_model``
+  ``support``. A SKU that a ``modelled`` row and an admitted row both list raises too: the spec's routing
+  (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the admitted routes as
+  they are; one row's pact branches split its pacts, which no two routes share.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
   (:data:`PACT_FALLBACK_SKUS`, those 18) at a pact no row accepts as it routes a unit advertising no pact, to
@@ -113,7 +120,12 @@ the row lacks fails the build: nothing defaults silently.
   slot is ``ff ff ff``); the colour page's ``color_temperature`` flag then doesn't decide ``color_temp``
   (``color_functions``). ``color_temp_control: whole_device`` (the colour page's Kelvin pick always writes
   every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 / 246) needs ``color_temp``. Either value
-  becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of the device.
+  becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of the device. A row's ``kelvin_readback:
+  pieces`` (the colour-temperature state read from the read-back's pieces, goodsType 180's ``VM4Light.g5``)
+  becomes ``DeviceProfile.kelvin_from_pieces``; it needs ``color_temp`` and the direct colour read-back on a
+  polled row, over the static or device-reported pieces (not an IC-sized walk). ``color_group_stop_at_miss``
+  (row or family; the screen's connect compose ends at a group that goes unanswered) becomes
+  ``DeviceProfile.color_readback_stop_at_miss``; it needs the direct colour read-back on a polled row.
   An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as
   every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
   (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
@@ -125,13 +137,20 @@ the row lacks fails the build: nothing defaults silently.
   (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the status stream
   reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as colour groups (under
   ``f_a5: color_group``, a requested ``color_group`` or any 0xA5 the bare read's reply carries, as the
-  h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
+  h70dx screen parses each, ``VM4H70DX.g5``), or the one-record form under ``f_a5: single_record`` (one
+  ``[brightness, r, g, b]`` record at bytes 1-4, the H703A screen's
+  ``$afterConnectedSingleReadDeviceInfo$1.n`` over ``SubMode4Color.l``: a requested ``color_group`` over one
+  piece, and never a direct read; any other 0xA5 is skipped), and the TLV 0x05's mode decode
   (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power`` (at any pact). A row's pact branches that only drop
   ``color_group`` become ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it:
   H60A6's); otherwise each branch with another read becomes that pact's exact read
   (``DeviceProfile.status_read_by_pact``, :func:`_status_branches`), which a SKU of the pact fallback (below)
-  can't take, and the forms and the colour-group decode serve every read. A polled row
+  can't take, and the forms and the colour-group decode serve every read. A requested ``cmd_a1`` and the wire
+  ``f_a1: segment_info`` go together: that TLV's count is the device's segment count
+  (``DeviceProfile.status_segment_count``: the H707A screen's colour page, ``H707AInfo4Detail.G0``; a reply
+  without it takes TLV 0x40's segment byte, read under ``f_40: ic_pair``, where its IC changed), and the
+  wire ``num_segments`` is the count before the first read. A polled row
   reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read's
   light flag (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with
   no aa 01 to take a ``heartbeat_aa01`` power from), which goes with ``power_write: light_switch``: the power
@@ -144,10 +163,39 @@ the row lacks fails the build: nothing defaults silently.
   gradual control) is made on every poll too and its
   reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
-  ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
-  (H6641), or, with ``ic_pieces: sections``, its two section bytes do
-  (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every poll and
-  discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: an object form's rule over the IC
+  count sizes the read-back's pieces (``DeviceProfile.color_readback_live_ic``: the count clamped and divided,
+  rounding up, or down under ``rounding: floor``, H6641 and the h705a rows, an IC of 0 no count under
+  ``skip_zero``, h705a 184; an IC table, H6609; or two strips' counts capped and summed, H1A45:
+  ``_readback.live_ic_pieces``; on a row whose wire ``f_40`` is ``ic_pair`` the screen reads the reply with
+  the IC-pair reader, ``DeviceProfile.color_readback_ic_pair_reader``, no count where it throws, which the
+  pair rule needs; a SKU's ``by_model`` ``ic_pieces`` and ``connect_reads`` replace its row's, on a SKU one
+  row lists, where the screen sizes the pieces or adds the aa 40 read by SKU: h6609 ``H70c4Support.b`` at
+  260, rgbiclight ``ControllerStrategyConfig.E1``'s ``supportBindWithIcNum`` / ``supportIcFresh`` at 71 /
+  123), and, but under a table's ``readback_only`` (``DeviceProfile.color_readback_ic_walk_only``: the walk
+  alone; the writes keep the static pieces, a read with no count walks them, ``_readback.walk_pieces``, and
+  a walk of other than the strip's pieces is not applied), the writes (``color_writes_live_ic``:
+  each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
+  screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
+  count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
+  alone (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every
+  poll and discarded (``DeviceProfile.ic_num_read_only``: the pieces are the static count, or the
+  ``special_info`` read's). A status row takes an object form with one IC source: the status read's TLV 0x40
+  (a requested ``ic_num``, read as its wire ``f_40`` ``one_count`` / ``one_count_u16`` says; a TLV 0x40 ahead
+  of the 0xA5 TLVs sizes the same burst's colour groups, as the screen's lambda stores the count before it
+  reads them), or aa 40 reads around the status read (``connect_reads`` / ``post_status_reads`` ``ic_num``,
+  ``DeviceProfile.ic_reads_around_status``: the h7020 4702ABC connect). Its pieces size the writes and the
+  status read's colour groups, or with ``readback_pieces: ic_count`` the groups are placed over the IC count
+  itself (``DeviceProfile.color_readback_ic_raw``: ``Support.getColorPieceSize(gt, IC)``). A ``special_info``
+  read (the 0xAC special-info read ``ac a1``, whose segment IC record gives the device's segment count, the
+  goodsType 180 screen's: ``DeviceProfile.special_info_read``) sizes the masks and the walk as the aa 41
+  section count does, so it goes on a polled row with ``segments``, never with that read or an IC-sized
+  read-back. A ``light_num`` read (aa 0f, the string count) goes with ``light_num_pieces``, on a polled light
+  row only (the h7020 bulb-string screens' connect, ``NewDetailVM.s5``) and as the row's one live count (no
+  ``ic_pieces`` object form, no aa 41 section count, no ``special_info`` read): the count times ``per_unit``
+  is the screen's stored IC (``NewDetailVM.u5``), so it sizes the writes and the direct read-back as an
+  object form's pieces do (``DeviceProfile.light_num_per_unit``), and the wire ``num_segments`` is the count
+  before the first read. Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -161,18 +209,34 @@ the row lacks fails the build: nothing defaults silently.
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
   splits them by SKU within one goodsType (bulblight ``Support.c`` at 342), on a SKU one row of the family
-  lists (a ``by_model`` entry is family-wide). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
+  lists (a ``by_model`` entry is family-wide; ``connect_reads``, ``connect_writes``, ``ic_pieces`` and
+  ``support`` on another SKU raise). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
   of a scene apply, H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
   default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
   ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
   ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
-  ``push_30``-only row may send any. The library folds no keep-alive reply or ee 30 push into state: the
-  poll's own power read stands in for them, aa 01 on a polled row and the status read's TLV 0x01 on a
-  status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
-  ``push_30`` with its wire ``f_ee_30``.
-- The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
+  ``push_30``-only row may send any. A status row that says ``heartbeat_power`` (served only with
+  ``heartbeat_aa01``, heartbeat ``power`` and no zones: the reply is the one switch; and every such row must
+  say it) follows the screen: the
+  status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
+  ``DeviceProfile.heartbeat_power``): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020
+  296, h7076 313, h3700 383 (the user's decision 17), h7020 316 / 318 / 337 / 391 / 411 (decision 26) and
+  h61d3 263. Such a row's ``heartbeat_reread`` (only with ``heartbeat_power``, and with the wire group's
+  ``num_per_group``, the re-read's group size: it becomes ``DeviceProfile.color_readback_per_batch``) is the
+  screen's re-read on a power change (``J3`` -> ``Compose4Off2On``: aa 05, then the screen's aa a5 groups over
+  its ``pieces``, ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. On such
+  a row the ee pushes its screen follows go through the reply's hook: the ee 20 brightness where the row says
+  ``brightness_live: [push_20]`` (only with ``heartbeat_power``; ``DeviceProfile.push_brightness``), or
+  ``[push_20_min_1]`` where the screen's setter raises it to at least 1
+  (``DeviceProfile.push_brightness_min``), and the ee 30 switch where its ``power_live`` has ``push_30``, read
+  by the wire ``f_ee_30`` (``DeviceProfile.push_power``), whose change starts the re-read where
+  ``heartbeat_reread`` says ``push_on`` (``DeviceProfile.heartbeat_reread_on_push``). The library folds no
+  other keep-alive reply and no other push into state: the poll's own read stands in for them, aa 01 on a
+  polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on either), the aa 36 bar read
+  for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``. - The session
+  (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
   nothing on connect, holds no link (``heartbeat: none``: ``DeviceProfile.heartbeat`` None) and carries only
@@ -204,16 +268,18 @@ the row lacks fails the build: nothing defaults silently.
   (0x0d), on/off-only zones and no segments. A branch on any other fact raises.
 - Firmware branches resolve after the device-info read (D6): a ``kelvin_range`` item gated on the hardware
   version alone becomes ``kelvin_by_hardware``, and one gated on the soft version alone
-  ``kelvin_by_software`` (both compared as a string, as ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2`` do), so
-  the gate must be in the app's ``a.bb.cc`` form, two-digit fields, for the string compare to order it. A
-  goodsType whose KelvinConfig function compares its version numerically (:data:`_NUMERIC_KELVIN_GATES`:
-  235's ``Config.Y2``, ``BleUtils.isHigherVersion``) raises. They are the row's, or the SKU's ``by_model``
-  ones over its own ``kelvin_range`` (bulblightv3 H14A1), never both, and on one version. A ``by_model``
-  range under the row's own (which wins) raises. A ``scene_versions`` item gated on the soft and / or hard
-  version becomes ``scene_versions_by_firmware`` (the dreamcolorlightv1 rows' part-brightness gates,
-  Support.getSupportScenesOpSet). Before the read, each version not yet read meets its own gates, so the
-  newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
-  Any other firmware fact or gate raises.
+  ``kelvin_by_software``, compared as the item's ``compare`` says (``DeviceProfile.kelvin_version_compare``,
+  :data:`KELVIN_COMPARES`). ``string``, the default, is ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2``'s
+  ``compareTo``, so its gate must be in the app's ``a.bb.cc`` form, two-digit fields, for the string compare
+  to order it. ``numeric`` is ``Config.Y2``'s ``BleUtils.isHigherVersion`` (:func:`parse_version` of each,
+  at least the gate's: h60ax 235). A row's items are on one compare, and ``compare`` on any other item raises.
+  They are the row's, or the SKU's ``by_model`` ones over its own ``kelvin_range`` (bulblightv3 H14A1), never
+  both, and on one version. A ``by_model`` range under the row's own (which wins) raises. A
+  ``scene_versions`` item gated on the soft and / or hard version becomes ``scene_versions_by_firmware`` (the
+  dreamcolorlightv1 rows' part-brightness gates, Support.getSupportScenesOpSet), compared as
+  :func:`parse_version` (``BleUtil.parseVersion``). Every gate is a version that parses above 0. Before the
+  read, each version not yet read meets its own gates, so the newest firmware's set applies, as 1.x assumed,
+  and the Kelvin range is the one valid on every revision. Any other firmware fact or gate raises.
 - Light power read-back: a polled light's aa 01 reply is on at a byte of 1 (``ControllerSwitch.Companion.c``),
   or at any non-zero byte where the row's wire ``power`` says ``light_nonzero`` (the connect read's own
   decoder: the legacy ``SwitchController``, the H70BX connect read) or ``light_heartbeat_nonzero`` (the aa 01
@@ -232,15 +298,19 @@ the row lacks fails the build: nothing defaults silently.
   implements; it is never read as a control-time lock (D9: rows carry ``account_lock``).
 - The account lock (``account_lock``, ``DeviceProfile.requires_secret``): the 0xB2 check with a set secret.
   A row whose screen sends it on every connect, an empty one when the account holds no secret
-  (``Controller4Secret.Companion.a("")``: h6071 57 / 67), says ``empty_secret_check``, only with
-  ``account_lock`` (``DeviceProfile.empty_secret_check``). Hollowlamp 59's screen sends it too; that row
-  is ``modelled`` and its ``doc`` names the gap.
+  (``Controller4Secret.Companion.a("")``: hollowlamp 59, h6071 57 / 67), says ``empty_secret_check``, only
+  with ``account_lock`` (``DeviceProfile.empty_secret_check``).
+- The colour page (``color_page``, ``DeviceProfile.color_page``): how the screen shows a reported colour. A
+  row with ``color_temp`` whose mode decode reports a colour (:data:`COLOR_REPORT_DECODES`, in
+  ``mode_color_parse`` or ``mode_color_parse_status``) must say it, and no other row may: ``stock`` (the
+  DelegateColorV2 that ``DelegateCurMode.createView`` builds, which shows a one-colour report that is a Kelvin
+  tint in range as that colour temperature) or ``none`` (the screen shows no colour page).
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from typing import Any, Final, NamedTuple, NoReturn, Required, TypedDict, cast
+from typing import Any, Final, NamedTuple, NoReturn, NotRequired, Required, TypedDict, cast
 
 
 # ── the projected devices.yaml (devices.schema.json definitions) ────────────────────────────────────
@@ -252,14 +322,48 @@ class ZoneRow(TypedDict):
 
 
 class IcPieces(TypedDict):
-    """``clientRow.ic_pieces``."""
+    """``clientRow.ic_pieces``: the IC count clamped and divided."""
     min_ic: int
     max_ic: int
     ic_per_piece: int
+    rounding: NotRequired[str]
+    skip_zero: NotRequired[bool]
+
+
+class IcEntry(TypedDict):
+    """``clientRow.ic_pieces.table`` item."""
+    ic: int
+    pieces: int
+
+
+class IcTable(TypedDict):
+    """``clientRow.ic_pieces``: pieces by the IC count's value."""
+    table: tuple[IcEntry, ...]
+    otherwise: int
+    readback_only: NotRequired[bool]
+
+
+class IcPair(TypedDict):
+    """``clientRow.ic_pieces``: two strips' IC counts, each capped and summed."""
+    pair_max: int
+    otherwise: int
+
+
+class HeartbeatReread(TypedDict):
+    """``clientRow.heartbeat_reread``: the pieces the screen's keep-alive re-read walks, and whether an ee 30
+    push that turns the switch on starts it too."""
+    pieces: int
+    push_on: NotRequired[bool]
+
+
+class LightNumPieces(TypedDict):
+    """``clientRow.light_num_pieces``: the aa 0f string count times the pieces per unit."""
+    per_unit: int
 
 
 class Branch(TypedDict, total=False):
     """``clientBranch``: a pact branch of a row."""
+    support: str
     mode_color_parse: str
     mode_color_parse_status: str
     status_read: tuple[str, ...]
@@ -277,6 +381,7 @@ class FirmwareBranch(TypedDict, total=False):
     min_soft_version: str
     min_hard_version: str
     min_wifi_soft_version: str
+    compare: str
     mode_color_parse: str
     scene_versions: tuple[int, ...]
     kelvin_range: tuple[int, ...]
@@ -297,10 +402,15 @@ class Row(TypedDict, total=False):
     power_read: str
     power_write: str
     power_live: tuple[str, ...]
+    brightness_live: tuple[str, ...]
+    color_group_stop_at_miss: bool
     heartbeat: str
     heartbeat_timing: str
+    heartbeat_power: bool
+    heartbeat_reread: HeartbeatReread
     mode_color_parse: str
     mode_color_parse_status: str
+    color_page: str
     relay_power: str
     relay_on_mask: int
     advert_on_mask: int
@@ -319,12 +429,16 @@ class Row(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     mode_reports_kelvin: bool
+    kelvin_readback: str
     status_read: tuple[str, ...]
     device_info_reads: str
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
     power_resync: bool
-    ic_pieces: IcPieces | str
+    ic_pieces: IcPieces | IcTable | IcPair | str
+    post_status_reads: tuple[str, ...]
+    readback_pieces: str
+    light_num_pieces: LightNumPieces
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -336,7 +450,10 @@ class ClientModel(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     scene_power_on: bool
+    connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
+    ic_pieces: IcPieces | IcTable | IcPair | str
+    support: str
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -408,6 +525,8 @@ class ClientProfile(TypedDict, total=False):
     color_scheme: str
     power_read: str
     power_live: tuple[str, ...]
+    brightness_live: tuple[str, ...]
+    color_group_stop_at_miss: bool
     mode_color_parse: str
     mode_color_parse_status: str
     relay_power: str
@@ -469,7 +588,7 @@ MODELLED: Final = frozenset({"modelled"})   # admitted only on the caller's opt-
 LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
 COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02",
-                         "kelvin_v9")   # wire.build.ColorScheme
+                         "kelvin_v9", "h3010")   # wire.build.ColorScheme
 # The h60a6 colour-temperature slot types (clientRow white_type; wire.build.WhiteType), and the default a row
 # without one takes (Bytes.r's ff ff ff, every row before 1.8.0).
 WHITE_TYPES: Final = ("rgb_black", "rgb_white", "rgb_self_tem_color")
@@ -481,6 +600,20 @@ _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188", "kelvin_v9"})
 # clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's
 # Kelvin over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
+# clientRow kelvin_readback: where the read-back's colour temperature comes from where not the mode report's
+# Kelvin (absent). pieces gives DeviceProfile.kelvin_from_pieces.
+KELVIN_READBACKS: Final = ("pieces",)
+# clientRow color_page: the colour page the screen's DelegateCurMode builds (devices.profile.ColorPage).
+# stock = DelegateColorV2, whose W1 shows a one-colour report that is a Kelvin tint in range as its colour
+# temperature; none = no colour page shown. Required with color_temp where the decode reports a colour.
+COLOR_PAGES: Final = ("stock", "none")
+# The mode_color_decode kinds whose report carries a colour (wire.parse.mode_color: an rgb_kelvin_tint,
+# rgb_kelvin or rgb_only layout, or H7061's two heads): the reports a colour page shows (clientRow
+# color_page).
+COLOR_REPORT_DECODES: Final = frozenset({
+    "rgb_kelvin_tint", "rgb_kelvin_tint_positive", "rgb_kelvin_0d", "rgb_kelvin_0d_nocct", "rgb",
+    "bri_rgb_pair"})
+
 # clientRow power_write: the whole-device power write where it isn't the 33 01 main switch (absent):
 # light_switch = the H6057 light switch, 33 30 <1 / 0> (DeviceProfile.light_switch_power).
 POWER_WRITES: Final = ("light_switch",)
@@ -506,6 +639,8 @@ _LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
 #  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask;
 #  - kelvin_v9 (15 04 <K>, Bytes.D): a Kelvin only, so no RGB frame (Config.J[9] = hu turns a pick into a
 #    Kelvin) and no mask.
+#  - h3010 (the 0xA3 colour unit): whole-device only; goodsType 411's Part tab (ColorModeH3010) is sized from
+#    the account's segment count and its strip path (ColorModeControllerConfig.k) is untraced.
 SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h61a8": frozenset({"color_temp"}),
     "h6006": frozenset({"segments"}),
@@ -513,6 +648,7 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h6061": frozenset({"segments"}),
     "legacy_02": frozenset({"segments"}),
     "kelvin_v9": frozenset({"rgb", "segments"}),
+    "h3010": frozenset({"segments"}),
 }
 # The colour schemes with a segment-brightness frame (wire.build.segment_brightness: 33 05 15 02, Bytes.G),
 # the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for
@@ -532,10 +668,12 @@ _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h
 # GATT read, on a per_command row only).
 _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled", "advert": "none"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
-# row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
-_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
-_GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
-_READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
+# row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups or
+# as the one record (single_record).
+_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a1", "f_a3")
+_GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces", "whole_groups"})   # group_count_rule
+_READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41",
+                           "special_info", "light_num"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
 # The facts of a pact branch that give its pact a route and profile of its own (module doc, pact_routes): the
 # ones a profile is built from, where Device applies _PACT_FACTS at run time.
@@ -552,23 +690,41 @@ PACT_FALLBACK_SKUS: Final = frozenset({
     "H60A6", "H6047", "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061",
     "H5080", "H5083", "H5085", "H5082", "H5089", "H5160", "H5161"})
 _LAYERED: Final = ("scene_versions", "kelvin_range", "brightness_range")
-# Kelvin firmware gates the app compares numerically, where the library compares a gate as a string (as the
-# other KelvinConfig functions do): goodsType -> that function. A Kelvin firmware branch on one raises.
-_NUMERIC_KELVIN_GATES: Final[Mapping[int, str]] = {
-    235: "KelvinConfig.Config.Y2 (BleUtils.isHigherVersion)"}
+# clientFirmware compare, a Kelvin item's (DeviceProfile.kelvin_version_compare; module doc): "string", the
+# default, is KelvinConfig.Config.z2 / Z2 / X2's compareTo; "numeric" is Config.Y2's isHigherVersion.
+KELVIN_COMPARES: Final = ("string", "numeric")
 # A string-compared gate's form: the app's version strings, with two-digit minor fields ("3.08.01").
 _STRING_GATE: Final = re.compile(r"\d+\.\d{2}\.\d{2}")
 _PERCENT: Final = (1, 100)
 _BLOCKS: Final = ("forms", "counts", "group", "power", "mode", "mode_status")
+# Integer.parseInt's form: an optional sign, then decimal digits (Character.digit, radix 10).
+_JAVA_INT: Final = re.compile(r"[+-]?\d+")
 
 
-def version(text: str | None) -> tuple[int, ...] | None:
-    """A firmware version (``1.06.00``) as a tuple compared field by field (``govee_reference._version``);
-    None for an unread or unparsable one."""
+def parse_version(text: str | None) -> int:
+    """A firmware version as the app's numeric compares parse it: the text with its dots removed, as one int
+    (``1.06.00`` is 10600, ``1.6.0`` 160), 0 when it is empty or ``Integer.parseInt`` refuses it (no digits,
+    another character, past the 32-bit range); as ``govee_reference._parse_version``. That is
+    ``BleUtil.parseVersion`` (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121;
+    ``UtilSku.parseVersion`` and ``NumberUtil.parseVersion`` are the same) and ``BleUtils.q0``
+    (base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074), the one function under both."""
+    digits = (text or "").replace(".", "")
+    if not _JAVA_INT.fullmatch(digits):
+        return 0
     try:
-        return tuple(int(f) for f in text.split(".")) if text else None
-    except ValueError:
-        return None
+        value = int(digits)
+    except ValueError:   # more digits than int() takes from a str (sys.get_int_max_str_digits)
+        return 0
+    return value if -(2**31) <= value < 2**31 else 0
+
+
+def version_key(text: str, compare: str) -> tuple[int, str]:
+    """A version's order under ``compare``: a device version meets a gate when its key is at least the
+    gate's. ``"numeric"``: :func:`parse_version` (``BleUtils.isHigherVersion`` -> ``Q``,
+    base-classes10/com/govee/base2kt/utils/BleUtils.java:327-335, ``q0(device) >= q0(gate)``, inclusive
+    through ``isHigherVersion$default``, :74-79; and ``BleUtil.parseVersion``'s gates). ``"string"``: the text
+    itself (``KelvinConfig.Config.z2`` / ``Z2`` / ``X2``'s ``compareTo``, :data:`KELVIN_COMPARES`)."""
+    return (parse_version(text), "") if compare == "numeric" else (0, text)
 
 
 def _is_int(value: object) -> bool:
@@ -601,9 +757,10 @@ def _layer(*layers: Mapping[str, Any]) -> dict[str, Any]:
 def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
     """``{SKU upper-cased: (family, goodsType, SKU)}`` for each SKU that exactly one BLE row with support
     lists, when that row is admitted: the SKUs routed with neither the pact nor the goodsType. SpecError for
-    a row with support (any level) that is no BLE route or is ``pact_required`` with ``pacts: any``, for a
-    SKU that a ``modelled`` row and an admitted row both list (the spec's ``ble_rows`` counts both wherever
-    both accept the pact, so the opt-in would no longer be additive), for a routed SKU that an
+    a row with support (any level) that is no BLE route, is ``pact_required`` with ``pacts: any`` or has a
+    pact branch's support it can't route (:func:`pact_support`), for a SKU that a ``modelled`` row and an
+    admitted row both list (the spec's ``ble_rows`` counts both wherever both accept the pact, so the opt-in
+    would no longer be additive), for a routed SKU that an
     ``assigned_goods_type`` item in any family names (matched as the routes are, case-insensitively) unless
     the item's condition tests the pact alone, and for a row that disagrees with a pact-conditioned item
     (:func:`_reassignments`). The generator runs it over the whole document."""
@@ -621,8 +778,9 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
             if row.get("pact_required") and isinstance(row.get("pacts"), str):
                 raise SpecError(f"{fam['id']} goodsType {gt}: pact_required on a row whose pacts are 'any' "
                                 "(no pact to require)")
-            admitted = row["support"] in ADMITTED
+            pact_support(fam, gt, row)   # its pact branches' support routes (SpecError where it can't)
             for sku in row.get("models") or ():
+                admitted = sku_support(fam, row, sku) in ADMITTED
                 hits = listed.setdefault(sku.upper(), [])
                 other = next((h for h in hits if h[3] != admitted), None)
                 if other is not None:
@@ -825,6 +983,30 @@ def _is_route(fam: Family, row: Row) -> bool:
         row.get("connectivity") or fam.get("connectivity") or ())
 
 
+def sku_support(fam: Family, row: Row, sku: str) -> str:
+    """The support level of ``sku`` on ``row`` of ``fam``, a SKU the row lists: its ``by_model`` ``support``
+    where it has one (a SKU whose own fact is inferred where the row's others are traced: h6609 260's
+    IC-gated read-back), else the row's ("" for none)."""
+    model = ((fam.get("client_profile") or {}).get("by_model") or {}).get(sku) or {}
+    return model.get("support", row.get("support", ""))
+
+
+def pact_support(fam: Family, gt: str, row: Row) -> dict[str, str]:
+    """``{pact key: support level}`` for each of ``row``'s pact branches that has its own ``support``, the
+    row's level at that pact (module doc). SpecError where the row's pacts are ``any`` (no pact to route a
+    branch at), or where a SKU of the row has a ``by_model`` ``support`` too."""
+    levels = {key: branch["support"] for key, branch in (row.get("by_pact") or {}).items()
+              if "support" in branch}
+    if levels:
+        where = f"{fam['id']} goodsType {gt}"
+        if isinstance(row.get("pacts"), str):
+            raise SpecError(f"{where}: a pact branch's support on a row whose pacts are 'any'")
+        models = (fam.get("client_profile") or {}).get("by_model") or {}
+        if any("support" in (models.get(sku) or {}) for sku in row.get("models") or ()):
+            raise SpecError(f"{where}: a pact branch's support beside a by_model support")
+    return levels
+
+
 def catalogue_support(level: str) -> str:
     """The support level of a SKU only the catalogue snapshot routes to a row at ``level``: the row's, capped
     at ``app_traced``."""
@@ -899,20 +1081,37 @@ def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalo
     return Catalogue({k: tuple(v) for k, v in added.items()}, frozenset(unrouted), tuple(review))
 
 
-def _members(families: Sequence[Family], admitted: Collection[str]) -> Iterator[tuple[Family, str, Row, str]]:
-    """``(family, goodsType, row, SKU)`` for each SKU a BLE row routes at a support level in ``admitted``, in
-    devices.yaml order: the row's models at its own level, then its catalogue routes at
-    :func:`catalogue_support`."""
+def _members(families: Sequence[Family], admitted: Collection[str]
+             ) -> Iterator[tuple[Family, str, Row, str, frozenset[tuple[int, int]] | None, bool]]:
+    """``(family, goodsType, row, SKU, accepted, pact-less)`` for each SKU a BLE row routes at a support level
+    in ``admitted``, in devices.yaml order: the row's models at their level, then its catalogue routes at
+    :func:`catalogue_support`. ``accepted`` is the row's pacts at a level in ``admitted`` (a pact branch's
+    ``support`` replacing the level at its pact, :func:`pact_support`; None for ``pacts: any``), never empty;
+    ``pact-less``, whether the SKU's own level is in ``admitted``, so that the route serves no pact."""
     for fam in families:
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
-            level, route = row.get("support", ""), _is_route(fam, row)
-            own = (row.get("models") or ()) if route and level in admitted else ()
-            via = ((row.get("catalogue_models") or ())
-                   if route and catalogue_support(level) in admitted else ())
-            yield from ((fam, gt, row, sku) for sku in (*own, *via))
+            if not _is_route(fam, row):
+                continue
+            branches = pact_support(fam, gt, row)
+            pacts = row.get("pacts", "any")   # every route has pacts (_is_route); 'any' tests none
+            cap = catalogue_support
+            for sku, via in (*((sku, False) for sku in row.get("models") or ()),
+                             *((sku, True) for sku in row.get("catalogue_models") or ())):
+                level = cap(row.get("support", "")) if via else sku_support(fam, row, sku)
+                own = level in admitted
+                if isinstance(pacts, str):
+                    if own:
+                        yield fam, gt, row, sku, None, True
+                    continue
+                at = frozenset(_pact(p) for p in pacts
+                               if (cap(branches[p]) if via and p in branches else branches.get(p, level))
+                               in admitted)
+                if at:
+                    yield fam, gt, row, sku, at, own
 
 
-def profiles(families: Sequence[Family], parse_names: Collection[str], admitted: Collection[str] = ADMITTED,
+def profiles(families: Sequence[Family], parse_names: Mapping[str, ModeColorStrategy],
+             admitted: Collection[str] = ADMITTED,
              catalogued: Collection[str] | None = None
              ) -> list[tuple[tuple[str, ...], dict[str, Any], tuple[Route, ...]]]:
     """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes at a
@@ -920,21 +1119,25 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes
     (``Route.needs_pact`` on a route at a pact-conditioned item's target goodsType, :func:`pact_gates`, on
     each route of a SKU a pairing item with a pact names, :func:`bind_skus`, on a ``pact_required`` row's
-    routes and on a pact route). A row's pact routes (:func:`pact_routes`) are routes of their own, each at
-    its one pact and with its own fields, and the row's route takes its other pacts. ``parse_names`` are the
-    mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case) with a bundled scene catalog,
+    routes, on a route that only a pact branch's ``support`` admits, :func:`pact_support`, and on a pact
+    route). A row's pact routes (:func:`pact_routes`) are routes of their own, each at its one pact and with
+    its own fields, and the row's route takes its other pacts. ``parse_names`` is the mode_color_parse table
+    (name -> its sub-modes' decodes); ``catalogued`` are the SKUs (upper-case) with a bundled scene catalog,
     the only ones offered scenes (None: no cut). SpecError on a fact missing or not served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
     gates, paired = pact_gates(families), bind_skus(families)
-    for fam, gt, row, sku in _members(families, admitted):
-        pacts = row.get("pacts", "any")   # every route has pacts (_members); 'any' tests none
-        accepted = None if isinstance(pacts, str) else frozenset(_pact(p) for p in pacts)
-        needs_pact = (bool(row.get("pact_required"))   # never with pacts 'any' (routes)
+    for fam, gt, row, sku, accepted, pactless in _members(families, admitted):
+        needs_pact = (not pactless   # a route only a pact branch's support admits (pact_support)
+                      or bool(row.get("pact_required"))   # never with pacts 'any' (routes)
                       or sku.upper() in paired or int(gt) in gates.get(sku.upper(), {}))
         own = pact_routes(row)   # only on a row with listed pacts (_fields refuses any other)
+        # The row's route takes its admitted pacts but its pact routes' (and a pact-less advert where its own
+        # level is admitted); a pact route is taken at its pact where that pact's level is admitted.
+        rest = None if accepted is None else accepted - {_pact(key) for key in own}
         variants: list[tuple[str | None, frozenset[tuple[int, int]] | None, bool]] = [
-            (None, None if accepted is None else accepted - {_pact(key) for key in own}, needs_pact),
-            *((key, frozenset({_pact(key)}), True) for key in own)]
+            *([(None, rest, needs_pact)] if rest is None or rest or not needs_pact else []),
+            *((key, frozenset({_pact(key)}), True) for key in own
+              if accepted is None or _pact(key) in accepted)]
         for key, accepts, needs in variants:
             fields = _fields(fam, gt, sku, parse_names, catalogued, key)
             skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
@@ -942,6 +1145,11 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
                 skus.append(sku)
             members.append(Route(sku, int(gt), accepts, needs))
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
+
+
+# The by_model facts that replace a row's for the SKU (clientModel), on the one row of its family that lists
+# it.
+_ROW_OVERRIDES: Final = ("connect_reads", "connect_writes", "ic_pieces", "support")
 
 
 def pact_routes(row: Row) -> tuple[str, ...]:
@@ -963,7 +1171,7 @@ def _pact_row(row: Row, key: str) -> Row:
     return cast(Row, out)
 
 
-def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
+def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorStrategy],
             catalogued: Collection[str] | None = None, pact: str | None = None) -> dict[str, Any]:
     """One routed SKU's DeviceProfile field values (see the module doc for the rules): its row's, or with
     ``pact`` that pact route's (:func:`pact_routes`)."""
@@ -986,9 +1194,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     w = _wire(fam, gt, sku, fail, split, pact)
     forms, counts, group, power = w["forms"], w["counts"], w["group"], w["power"]
     relay = forms.get("f_01") == "relays"
-    if model.get("by_pact") or any(k != "kelvin_range" and not k.startswith("min_")
+    if model.get("by_pact") or any(k not in ("kelvin_range", "compare") and not k.startswith("min_")
                                    for item in model.get("by_firmware") or () for k in item):
         fail("by_model pact / firmware branches are not served (but a firmware kelvin_range)")
+    per_row = sorted(k for k in _ROW_OVERRIDES if k in model)
+    if per_row:   # the SKU's own, on the one row of the family that lists it
+        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
+                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
+        if len(listing) != 1:
+            fail(f"by_model {per_row} on a SKU that rows {listing} list (the screen splits them by SKU "
+                 "within one goodsType: one row must list it)")
     if fam.get("encryption") not in _CIPHERS:
         fail(f"encryption {fam.get('encryption')!r} is not a cipher the library implements")
 
@@ -1005,14 +1220,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     row_kelvin, scenes_by_firmware = _firmware(row, fail)
     model_kelvin, _no_scenes = _firmware(model, fail)
     kelvin_fw = row_kelvin or model_kelvin
-    if kelvin_fw and int(gt) in _NUMERIC_KELVIN_GATES:
-        fail(f"a Kelvin firmware branch on goodsType {gt}, whose gate the app compares numerically "
-             f"({_NUMERIC_KELVIN_GATES[int(gt)]}), where the library compares it as a string")
     if ((row_kelvin and model_kelvin) or (model_kelvin and "kelvin_range" not in mine)
             or len({gate for gate, *_entry in kelvin_fw}) > 1):
         fail("Kelvin firmware branches must be the row's, or the SKU's by_model ones over its own "
              "kelvin_range, on one version")
-    kelvin_by_version = [(at, lo, hi) for _gate, at, lo, hi in kelvin_fw]
+    compares = sorted({compare for *_entry, compare in kelvin_fw})
+    if len(compares) > 1:
+        fail(f"Kelvin firmware branches on compares {compares} (a row's items are on one compare)")
+    kelvin_compare = compares[0] if compares else "string"
+    kelvin_by_version = sorted(((at, lo, hi) for _gate, at, lo, hi, _compare in kelvin_fw),
+                               key=lambda entry: version_key(entry[0], kelvin_compare), reverse=True)
     by_soft = any(gate == "min_soft_version" for gate, *_entry in kelvin_fw)
 
     status_read = row.get("status_read")
@@ -1023,7 +1240,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"pact branches {stray} are not among the row's pacts {list(listed_pacts or ())} (no device at "
              "them reaches the row)")
     for key, branch in by_pact.items():
-        facts = set(branch) - _PACT_ROUTE_FACTS   # those make the pact a route (pact_routes)
+        # A fact a profile is built from makes the pact a route (pact_routes); a support level routes it
+        # (_members): neither is a run-time fact.
+        facts = set(branch) - _PACT_ROUTE_FACTS - {"support"}
         if facts - _PACT_FACTS:
             fail(f"pact branch {key} on {sorted(facts - _PACT_FACTS)} is not served")
     scenes_by_pact = tuple(sorted((_pact(key), _scene_set(branch["scene_versions"], fail))
@@ -1119,7 +1338,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
              "is a Kelvin tint colour in the range as colour temperature (KelvinConfig.i)")
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
               if layered.get("kelvin_range") is not None and not relay else None)
-    _check_kelvin_by_firmware(kelvin, kelvin_by_version, fail)
+    _check_kelvin_by_firmware(kelvin, kelvin_by_version, kelvin_compare, fail)
     kelvin_by_pact = tuple(sorted(
         [(_pact(key), *_kelvin(branch["kelvin_range"], f"pact {key} kelvin_range", fail))
          for key, branch in by_pact.items() if "kelvin_range" in branch], key=lambda e: e[0]))
@@ -1167,7 +1386,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"device_info_reads {info_reads!r} on a {readback} row (each status row names it, no other)")
     if info_reads is not None and info_reads not in _DEVICE_INFO_READS:
         fail(f"device_info_reads {info_reads!r} (one of {list(_DEVICE_INFO_READS)})")
-    reads = set(need(row.get("connect_reads"), "connect_reads"))
+    reads = set(need(model.get("connect_reads", row.get("connect_reads")), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
     if ("brightness" in reads) != (readback == "polled" and "brightness" in caps):
@@ -1184,12 +1403,26 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             forms.get("f_a5", ""), "")
         if not color_readback:
             fail(f"colour read-back with f_a5 {forms.get('f_a5')!r}")
+    # The screen's connect compose ends at a group that goes unanswered
+    # (DeviceProfile.color_readback_stop_at_miss).
+    stop_at_miss = bool(row.get("color_group_stop_at_miss", cp.get("color_group_stop_at_miss", False)))
+    if stop_at_miss and (color_readback != "mechanism_a_direct" or readback != "polled"):
+        fail("color_group_stop_at_miss without the direct colour read-back on a polled row (it ends the "
+             "poll's aa a5 walk)")
     # The status read takes colour groups from TLV 0xA5 where it requests them, or on the bare read (whose
     # screen parses each 0xA5 that arrives, VM4H70DX.g5), and the row reads them so.
     status_groups = (any("color_group" in read or not read for read in status_reads)
                      and forms.get("f_a5") == "color_group")
     if (color_readback or status_groups) and cp.get("has_brightness") is not True:
         fail("a colour-group read without has_brightness true (the library reads [brightness, r, g, b])")
+    # The one-record TLV 0xA5 (H703A / H703B): the status read's, and SubMode4Color.l takes it at one piece
+    # only.
+    single_record = forms.get("f_a5") == "single_record"
+    if single_record and (status_read is None or "color_group" not in status_read):
+        fail("f_a5 single_record without color_group in the status read (it is the status TLV 0xA5's form)")
+    if single_record and counts.get("num_segments") != 1:
+        fail(f"f_a5 single_record over wire counts num_segments {counts.get('num_segments')!r} "
+             "(SubMode4Color.l takes its one record at one piece only)")
     # Either read walks the row's group size (Controller4ColorInfoByGroup takes it from its caller), and the
     # status read counts each group's records by the row's rule.
     per_group = group.get("num_per_group")
@@ -1199,18 +1432,72 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if status_groups and group.get("rule") not in _GROUP_RULES:
         fail(f"wire group rule {group.get('rule')!r} (the status read counts its colour groups' records by "
              "it)")
-    ic = row.get("ic_pieces")
-    if ("ic_num" in reads) != (ic is not None) or (ic is not None and color_readback != "mechanism_a_direct"):
-        fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
-    sized = None if ic is None or isinstance(ic, str) else ic   # the IC count sizes the pieces (H6641)
+    ic = model.get("ic_pieces", row.get("ic_pieces"))   # the SKU's rule where its screen sizes it by SKU
+    post = row.get("post_status_reads")
+    if post is not None and (status_read is None or set(post) != {"ic_num"}):
+        fail(f"post_status_reads {list(post)} (an aa 40 read after a status read, ic_num, is served)")
+    around = ("ic_num" in reads, "ic_num" in (post or ()))   # the aa 40 reads around the status read
+    tlv_ic = status_read is not None and "ic_num" in status_read and ic is not None
+    if status_read is None:
+        if ("ic_num" in reads) != (ic is not None) or (
+                ic is not None and color_readback != "mechanism_a_direct"):
+            fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
+    elif any(around) != (ic is not None and not tlv_ic) or isinstance(ic, str) or (tlv_ic and any(around)):
+        fail("ic_pieces on a status row: an object form with one IC source, the status read's TLV 0x40 "
+             "(status_read ic_num) or aa 40 reads around it (connect_reads / post_status_reads ic_num), "
+             "which need it")
+    if tlv_ic and forms.get("f_40") not in ("one_count", "one_count_u16"):
+        fail(f"ic_pieces from the status read's TLV 0x40 with f_40 {forms.get('f_40')!r} (one_count or "
+             "one_count_u16: the one-count readers)")
     if isinstance(ic, str) and ic not in ("fixed", "sections"):
-        fail(f"ic_pieces {ic!r} (fixed, sections, or the IC sizing)")
-    if sized is not None and not (0 <= sized["min_ic"] <= sized["max_ic"] and sized["ic_per_piece"] >= 1):
-        fail(f"ic_pieces {dict(sized)} (min_ic <= max_ic, ic_per_piece >= 1)")
-    live_ic = sized is not None
+        fail(f"ic_pieces {ic!r} (fixed, sections, or an IC rule)")
+    # An object form: a rule over the live IC count (H6641's clamp and divisor, the h705a floor, H6609's
+    # table, H1A45's pair).
+    ic_rule = {} if ic is None or isinstance(ic, str) else _ic_rule(ic, fail)
+    live_ic = bool(ic_rule)
+    if live_ic and not tlv_ic and forms.get("f_40") == "ic_pair":   # ControllerIcNum.e reads the aa 40 reply
+        ic_rule["color_readback_ic_pair_reader"] = True
+    elif "color_readback_ic_pair_cap" in ic_rule:
+        fail("ic_pieces pair_max without wire f_40 ic_pair on an aa 40 read (the pair is the IC-pair "
+             "reader's)")
+    readback_ic = row.get("readback_pieces")
+    if readback_ic is not None and (readback_ic != "ic_count" or not status_groups or not live_ic):
+        fail(f"readback_pieces {readback_ic!r} (ic_count, on a status row with an ic_pieces object form that "
+             "reads colour groups)")
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
+    special_info = "special_info" in reads
+    if special_info and (section_count or readback != "polled" or "segments" not in row_caps
+                         or isinstance(ic, dict) or ic == "sections"):
+        fail("the special_info segment-count read on a polled row with segments only, without the aa 41 "
+             "section count or an IC-sized read-back (one source sizes the masks and the walk)")
+    piece_kelvin = row.get("kelvin_readback")
+    # The fold counts the static or device-reported pieces (an IC-sized walk counts others) and takes the
+    # mode from the same poll's aa 05 report (_fold.apply_piece_kelvin).
+    if piece_kelvin is not None and (piece_kelvin not in KELVIN_READBACKS or "color_temp" not in caps
+                                     or color_readback != "mechanism_a_direct" or readback != "polled"
+                                     or live_ic or ic == "sections"):
+        fail(f"kelvin_readback {piece_kelvin!r} (one of {list(KELVIN_READBACKS)}, with color_temp and the "
+             "direct colour read-back whose pieces it reads, on a polled row whose walk is not IC-sized)")
+    # The aa 0f string count times the pieces per unit (h7020 NewDetailVM.u5): the row's one live count.
+    light_num = row.get("light_num_pieces")
+    if ("light_num" in reads) != (light_num is not None):
+        fail("an aa 0f light_num read and light_num_pieces go together")
+    per_unit = 0 if light_num is None else light_num["per_unit"]
+    if light_num is not None:
+        if readback != "polled":
+            fail("an aa 0f light_num read is served on a polled light row only (the h7020 bulb-string "
+                 "screens' aa-read connect)")
+        if live_ic or section_count or special_info:
+            fail("light_num_pieces with another live piece count (an ic_pieces object form, the aa 41 "
+                 "section count or the special_info read)")
+        if not (_is_int(per_unit) and per_unit >= 1):
+            fail(f"light_num_pieces per_unit {per_unit!r} (1 or more)")
+    # The H707A status screen's TLV 0xA1: its segment count sizes every mask (H707AInfo4Detail.G0).
+    segment_info = status_read is not None and "cmd_a1" in status_read
+    if segment_info != (forms.get("f_a1") == "segment_info"):
+        fail("a requested cmd_a1 and wire f_a1 segment_info go together (the status read's segment count)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
@@ -1222,14 +1509,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if (power_write == "light_switch") != (power_read == "aa34_detail"):
         fail("power_write light_switch and power_read aa34_detail go together (the H6057 light switch and "
              "its light flag, the screen's on / off)")
-    writes = tuple(need(row.get("connect_writes"), "connect_writes"))
-    if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
-        writes = tuple(model["connect_writes"])
-        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
-                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
-        if len(listing) > 1:
-            fail(f"by_model connect_writes on a SKU that rows {listing} list (the screen splits them by SKU "
-                 "within one goodsType)")
+    writes = tuple(need(model.get("connect_writes", row.get("connect_writes")), "connect_writes"))
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
              "light_effect_stop or nothing on a light)")
@@ -1259,6 +1539,43 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sent and sent != {heartbeat}:
         fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
              f"power from the reply to {' / '.join(sorted(sent))}")
+    # The row's fact: the status read once per link, then the power from each aa 01 keep-alive reply
+    # (DeviceProfile.heartbeat_power), which is the whole device's one switch (ShareVM.N3 -> J3). Its
+    # heartbeat is then power (the check above). Every such row says it (the user's decisions 17 and 26), so
+    # one that leaves it out is refused too.
+    beat_power = bool(row.get("heartbeat_power", False))
+    beat_row = readback == "status" and "heartbeat_aa01" in lives and not row.get("zones")
+    if beat_power and not beat_row:
+        fail("heartbeat_power is served only on an unzoned status row whose power_live has heartbeat_aa01 "
+             "(the keep-alive reply is the one switch)")
+    if beat_row and not beat_power:
+        fail("no heartbeat_power on an unzoned status row whose power_live has heartbeat_aa01 (every such "
+             "row's screen sets the switch from each keep-alive reply, ShareVM.N3 -> J3: decisions 17 / 26)")
+    # The screen's re-read on a keep-alive power change (J3 -> Compose4Off2On: aa 05, then its aa a5
+    # groups): the pieces it walks, in groups of the wire group's num_per_group
+    # (DeviceProfile.heartbeat_reread_pieces).
+    reread = row.get("heartbeat_reread")
+    reread_pieces = 0
+    if reread is not None:
+        walked = reread.get("pieces") if isinstance(reread, dict) else None
+        if not beat_power:
+            fail("heartbeat_reread without heartbeat_power (the re-read follows a keep-alive reply's change)")
+        if not (_is_int(walked) and walked >= 1):
+            fail(f"heartbeat_reread pieces {walked!r} (1 or more: the pieces the screen's aa a5 groups walk)")
+        if not (_is_int(per_group) and per_group >= 1):
+            fail("heartbeat_reread needs the wire group num_per_group (the size of its aa a5 groups)")
+        reread_pieces = int(walked)
+    # The ee pushes the screen follows on the held link (DeviceProfile.push_brightness / push_power), read
+    # through the keep-alive reply's hook: on a heartbeat_power row only, where the poll reads nothing more.
+    pushes = tuple(row.get("brightness_live", cp.get("brightness_live")) or ())
+    if pushes and not beat_power:
+        fail(f"brightness_live {list(pushes)} without heartbeat_power (the library reads the ee 20 push on a "
+             "held link only; elsewhere the poll's own brightness read stands in)")
+    push_power = forms["f_ee_30"] if beat_power and "push_30" in lives else ""
+    push_on = bool(reread.get("push_on", False)) if isinstance(reread, dict) else False
+    if push_on and not push_power:
+        fail("heartbeat_reread push_on without an ee 30 push the library reads (power_live push_30 with the "
+             "wire f_ee_30)")
     _check_mode(w, readback, fail)
     # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
     nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]
@@ -1297,20 +1614,27 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "gradual": "gradual" in caps,
         "gradual_read_only": "gradual" in reads and "gradual" not in caps,
         "color_readback": color_readback,
-        "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
+        "color_readback_per_batch": (int(per_group) if color_readback == "mechanism_a_direct" or reread_pieces
+                                     else 3),
         "color_readback_live_ic": live_ic,
+        "color_readback_stop_at_miss": stop_at_miss,
+        # the live pieces size the writes too (ColorPieceConfig.c), unless the rule sizes the walk alone
+        "color_writes_live_ic": live_ic and not ic_rule.get("color_readback_ic_walk_only", False),
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
         "light_switch_power": power_write == "light_switch",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
+        "special_info_read": special_info,
+        "status_segment_count": segment_info,
         "brightness_range": raw_bright,
         "kelvin_by_pact": kelvin_by_pact,
         "brightness_by_pact": bright_by_pact,
         "status_color_groups_pact": gate,
         "power_resync": bool(resync),
-        "kelvin_by_hardware": () if by_soft else tuple(sorted(kelvin_by_version, reverse=True)),
-        "kelvin_by_software": tuple(sorted(kelvin_by_version, reverse=True)) if by_soft else (),
+        "kelvin_by_hardware": () if by_soft else tuple(kelvin_by_version),   # highest version first
+        "kelvin_by_software": tuple(kelvin_by_version) if by_soft else (),
+        "kelvin_version_compare": kelvin_compare,
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
         "device_info_reads": info_reads != "none",
         "light_effect_stop": writes == ("light_effect_stop",),
@@ -1322,8 +1646,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     }
     if out["scene_power_on"] and "scenes" not in row_caps:
         fail("by_model scene_power_on on a row without the scenes capability")
-    if ("segments" in row_caps or color_readback) and not out["segments"]:   # before SCHEME_LACKS (h6061)
+    # Before SCHEME_LACKS (h6061); a live string count's num_segments is the count before its first read.
+    if ("segments" in row_caps or color_readback or per_unit) and not out["segments"]:
         fail("segments or a colour read-back without wire counts num_segments")
+    if per_unit:
+        out["light_num_per_unit"] = per_unit
     for name, _index, segs in zones:
         if not all(0 <= s < out["segments"] for s in segs):
             fail(f"zone {name} segments {list(segs)} are not all below the {out['segments']} segments")
@@ -1345,8 +1672,22 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["segment_brightness"] = False
     if control == "illumination":
         out["kelvin_with_brightness"] = True
+    if piece_kelvin is not None:
+        out["kelvin_from_pieces"] = True
+    if beat_power:
+        out["heartbeat_power"] = True
     if empty_check:
         out["empty_secret_check"] = True
+    if reread_pieces:
+        out["heartbeat_reread_pieces"] = reread_pieces
+    if push_on:
+        out["heartbeat_reread_on_push"] = True
+    if pushes:   # push_20, or push_20_min_1: the screen's setter raises it to at least 1
+        out["push_brightness"] = True
+    if "push_20_min_1" in pushes:
+        out["push_brightness_min"] = 1
+    if push_power:
+        out["push_power"] = push_power
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         if status_by_pact:
@@ -1356,15 +1697,19 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         if status_groups:
             decode.update(f_a5="color_group", group_rule=group["rule"], num_per_group=int(per_group),
                           has_brightness=True)
+        elif single_record:
+            decode.update(f_a5="single_record")
         decode.update({**_MODE_UNSET, **w["mode"], **w["mode_status"]})   # the TLV 0x05's
         out["status_decode"] = tuple(sorted(decode.items()))
     if readback == "polled":
         mode = {**_MODE_UNSET, **w["mode"]}   # the aa 05 reply's (_check_mode: no mode_status)
         if mode != _MODE_UNSET:
             out["mode_decode"] = tuple(sorted(mode.items()))
-    if sized is not None:
-        out["color_readback_ic_range"] = (sized["min_ic"], sized["max_ic"])
-        out["color_readback_ic_per_piece"] = sized["ic_per_piece"]
+    out.update(ic_rule)
+    if status_read is not None and any(around):
+        out["ic_reads_around_status"] = around
+    if readback_ic is not None:
+        out["color_readback_ic_raw"] = True
     if relay:
         relay_power = need(row.get("relay_power", cp.get("relay_power")), "relay_power")
         if relay_power not in RELAY_POWERS:
@@ -1391,12 +1736,60 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         unknown = {out["mode_color_parse"], status or out["mode_color_parse"]} - set(parse_names)
         if unknown:
             fail(f"mode_color_parse {sorted(unknown)} not in the mode_color_parse table")
+        page = row.get("color_page")
+        reports = any(decode in COLOR_REPORT_DECODES for name in {out["mode_color_parse"], status} - {None}
+                      for decode in parse_names[name]["sub_modes"].values())
+        if page is not None and page not in COLOR_PAGES:
+            fail(f"color_page {page!r} (one of {list(COLOR_PAGES)})")
+        if (reports and "color_temp" in caps) != (page is not None):
+            fail("color_page goes with color_temp and a mode decode that reports a colour: how the screen "
+                 "shows that colour (devices.schema.json clientRow color_page)")
+        if page is not None:
+            out["color_page"] = page
     _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
     if ({"segments", "color_temp"} <= caps) != (part_kelvin is not None):
         fail("segment_color_temp goes with segments and color_temp (the colour scheme's drops applied): "
              "whether set_segment_color_temp may send a Kelvin to a piece selection")
     if control is not None and part_kelvin:   # whole_device_kelvin: no Kelvin on part of the device
         fail(f"segment_color_temp true with color_temp_control {control} (its Kelvin covers every piece)")
+    return out
+
+
+# clientRow ic_pieces rounding (DeviceProfile.color_readback_ic_rounding).
+IC_ROUNDINGS: Final = ("ceil", "floor")
+
+
+def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
+    """An object form of ``ic_pieces`` as the DeviceProfile fields that hold its rule over the live IC count:
+    the clamp, divisor, (where it is not ``ceil``) rounding and (where set) ``skip_zero``; or the ``(IC,
+    pieces)`` table; or the pair cap; the last two with the pieces ``otherwise``."""
+    rule: Mapping[str, Any] = ic
+    if "table" in rule:
+        table = tuple((entry["ic"], entry["pieces"]) for entry in rule["table"])
+        if (not table or len({at for at, _n in table}) != len(table)
+                or not all(at >= 0 and n >= 1 for at, n in table) or rule["otherwise"] < 1
+                or not isinstance(rule.get("readback_only", False), bool)):
+            fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1, readback_only a "
+                 "boolean)")
+        walk_only = {"color_readback_ic_walk_only": True} if rule.get("readback_only", False) else {}
+        return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"],
+                **walk_only}
+    if "pair_max" in rule:
+        if rule["pair_max"] < 1 or rule["otherwise"] < 1:
+            fail(f"ic_pieces {dict(rule)} (pair_max and otherwise >= 1)")
+        return {"color_readback_ic_pair_cap": rule["pair_max"],
+                "color_readback_ic_otherwise": rule["otherwise"]}
+    rounding, skip_zero = rule.get("rounding", "ceil"), rule.get("skip_zero", False)
+    if not (0 <= rule["min_ic"] <= rule["max_ic"] and rule["ic_per_piece"] >= 1 and rounding in IC_ROUNDINGS
+            and isinstance(skip_zero, bool)):
+        fail(f"ic_pieces {dict(rule)} (min_ic <= max_ic, ic_per_piece >= 1, rounding one of "
+             f"{list(IC_ROUNDINGS)}, skip_zero a boolean)")
+    out: dict[str, Any] = {"color_readback_ic_range": (rule["min_ic"], rule["max_ic"]),
+                           "color_readback_ic_per_piece": rule["ic_per_piece"]}
+    if rounding != "ceil":
+        out["color_readback_ic_rounding"] = rounding
+    if skip_zero:   # VM4H608A.S4: an IC of 0 stores no count
+        out["color_readback_ic_skip_zero"] = True
     return out
 
 
@@ -1469,26 +1862,32 @@ def _check_forms(forms: Mapping[str, str], used: Sequence[tuple[str, str]], fail
             fail(f"wire forms {form} {forms.get(form)!r}, where the library uses {member}")
 
 
-def _firmware(row: Row | ClientModel, fail: Fail) -> tuple[list[tuple[str, str, int, int]],
+def _firmware(row: Row | ClientModel, fail: Fail) -> tuple[list[tuple[str, str, int, int, str]],
                                                            list[tuple[str, str, tuple[int, ...]]]]:
     """The row's (or a by_model entry's) ``by_firmware`` items as Kelvin entries, ``(gate, version, min,
-    max)`` with the gate ``min_hard_version`` or ``min_soft_version``, and ``scene_versions_by_firmware``
-    entries."""
-    kelvin: list[tuple[str, str, int, int]] = []
+    max, compare)`` with the gate ``min_hard_version`` or ``min_soft_version`` and the item's ``compare``
+    (:data:`KELVIN_COMPARES`, ``string`` by default), and ``scene_versions_by_firmware`` entries."""
+    kelvin: list[tuple[str, str, int, int, str]] = []
     scenes: list[tuple[str, str, tuple[int, ...]]] = []
     for item in row.get("by_firmware") or ():
         gates: dict[str, Any] = {k: v for k, v in item.items() if k.startswith("min_")}
-        facts: dict[str, Any] = {k: v for k, v in item.items() if not k.startswith("min_")}
-        if not all(version(v) for v in gates.values()):
+        facts: dict[str, Any] = {k: v for k, v in item.items() if not k.startswith("min_") and k != "compare"}
+        if not all(isinstance(v, str) and parse_version(v) > 0 for v in gates.values()):
             fail(f"firmware gates {gates} are not all a.bb.cc versions")
         if "kelvin_range" in facts:
+            compare = item.get("compare", "string")
             if len(facts) != 1 or set(gates) not in ({"min_hard_version"}, {"min_soft_version"}):
                 fail("a Kelvin firmware branch must gate on min_hard_version or min_soft_version alone")
+            if compare not in KELVIN_COMPARES:
+                fail(f"Kelvin firmware compare {compare!r} (one of {list(KELVIN_COMPARES)})")
             (gate, at), = gates.items()
-            if not _STRING_GATE.fullmatch(at):
+            if compare == "string" and not _STRING_GATE.fullmatch(at):
                 fail(f"Kelvin firmware gate {at!r} is not the app's a.bb.cc form (two-digit fields: the gate "
                      "compares as a string)")
-            kelvin.append((gate, at, *_kelvin(facts["kelvin_range"], "firmware kelvin_range", fail)))
+            kelvin.append((gate, at, *_kelvin(facts["kelvin_range"], "firmware kelvin_range", fail), compare))
+        elif "compare" in item:
+            fail(f"firmware compare on {sorted(facts)}: only a Kelvin branch chooses its compare (the others "
+                 "compare as BleUtil.parseVersion)")
         elif set(facts) == {"scene_versions"}:
             if not gates or not set(gates) <= {"min_soft_version", "min_hard_version"}:
                 fail("a scene firmware branch must gate on the soft / hard version")
@@ -1507,13 +1906,14 @@ def _kelvin(value: Any, name: str, fail: Fail) -> tuple[int, int]:
 
 
 def _check_kelvin_by_firmware(base: tuple[int, int] | None, gated: Sequence[tuple[str, int, int]],
-                              fail: Fail) -> None:
+                              compare: str, fail: Fail) -> None:
     """``kelvin_by_hardware`` / ``kelvin_by_software``'s rules (``DeviceProfile._check_kelvin_by_version``):
-    a base range, one entry per version, each overlapping the base, and a range valid on every revision."""
+    a base range, one entry per version (under ``compare``: :func:`version_key`), each overlapping the base,
+    and a range valid on every revision."""
     if not gated:
         return
     lo, hi = base if base is not None else (0, -1)
-    if (base is None or len({v for v, _lo, _hi in gated}) != len(gated)
+    if (base is None or len({version_key(v, compare) for v, _lo, _hi in gated}) != len(gated)
             or any(k_lo > hi or k_hi < lo for _v, k_lo, k_hi in gated)
             or max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated))):
         fail(f"Kelvin firmware branches {list(gated)} need a base kelvin_range {base}, one per version, "

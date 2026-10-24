@@ -161,6 +161,10 @@ def test_analyzer_flags_a_bad_bcc_chunk_and_leaves_it_out() -> None:
 def test_analyzer_reads_the_status_request() -> None:
     req = frame(0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5)
     assert describe_frame(req, "tx") == ("status-request/3", [])
+    # The special-info read (goodsType 180's ac a1) is its own request, and its reply (a1 0b) no broken burst.
+    assert describe_frame(frame(0xAC, 0xA1), "tx") == ("status-request/special_info", [])
+    seg = status_burst_report([_chunk(bytes([0xAC, 0x00, 0x01, 0x00, 0x07, 0xA1, 0x0B, 6, *[10] * 6]))])
+    assert (seg.special_info, seg.malformed, seg.gaps, seg.tlv_types) == (1, 0, [], {})
     assert describe_frame(req[:-1] + bytes([req[-1] ^ 1]), "tx")[0] == "bad_checksum"
     # A request declaring more types than the frame holds: a spec gap, not a clean request.
     label, issues = describe_frame(frame(0xAC, 0x03, 0x20, 0x41), "tx")

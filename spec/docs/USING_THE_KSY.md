@@ -17,7 +17,7 @@ type cites the decompiled app (`doc-ref`, `path:line`) or the firmware handler i
 | File | Top-level type | Role |
 |---|---|---|
 | `govee_ble_frame.ksy` | `govee_ble_frame(direction, profile)` | **Entry point**: one GATT value written to `…2b11` or notified on `…2b10` |
-| `govee_status_stream.ksy` | `govee_status_stream(profile)` | **Entry point**: the joined data of one `0xAC` status burst (the TLV stream) |
+| `govee_status_stream.ksy` | `govee_status_stream(profile, reader)` | **Entry point**: the joined data of one `0xAC` burst, by its reader: the status read's TLV stream, or the special-info read's segment IC record |
 | `govee_upload.ksy` | `govee_upload(kind, form)` | **Entry point**: one joined `0xA1`/`0xA3`/`0xA4` upload value, or one decoded cloud `scenceParam` |
 | `govee_manufacturer_data.ksy` | `govee_manufacturer_data` | **Entry point**: the payload of one manufacturer-specific AD (type `0xFF`) |
 | `govee_scan_record.ksy` | `govee_scan_record` | **Entry point**: a raw advertising / scan-response PDU, or Android's 62-byte scan record |
@@ -88,7 +88,7 @@ The grammar models **plaintext** bytes from one byte source. A raw notification 
   (4) JOIN         multi-frame transfers: order the 0xAC / 0xAB chunks or the 0xA1 / 0xA3 / 0xA4
         │          packets, take their data fields, trim the last to len_last — §4.3, §4.5
         ▼
-  (5) PARSE        the joined bytes: govee_status_stream(profile) or govee_upload(kind, form)
+  (5) PARSE        the joined bytes: govee_status_stream(profile, reader) or govee_upload(kind, form)
 ```
 
 1. **Decrypt.** V1 = AES-128-ECB/NoPadding on each full 16-byte block + **RC4** on the trailing
@@ -231,7 +231,8 @@ from govee_status_stream import GoveeStatusStream
 status_profile = ref.make_profile(f_a5="color_group", rule="from_len", has_brightness=True)
 buf = bytes([0x01, 0x01, 0x01,  0x04, 0x01, 0x64,
              0xA5, 0x0D, 0x01, 100, 255, 0, 0, 80, 0, 255, 0, 60, 0, 0, 255])
-s = GoveeStatusStream(status_profile, KaitaiStream(BytesIO(buf)))
+status_read = GoveeBleFrame.StatusCommand.status_read   # the reader: the request's command
+s = GoveeStatusStream(status_profile, status_read, KaitaiStream(BytesIO(buf)))
 s._read()
 for tlv in s.tlvs:                          # status_tlv: tag (enum command), len_value, value
     st = tlv.value                          # govee_state(tag, status_tlv, profile)
@@ -255,6 +256,11 @@ the app cannot read still reads here; `status_tlv.app_read_fails` says so. A cli
 those failures, a `FIRMWARE-SOURCED` extension: the empty TLV 0x05 value H60A6 sends on purpose
 (`govee_state.app_empty_mode_fails`). The mode then stays unknown, and every other `app_read_fails` still
 fails the client's read.
+
+**Special-info reply.** The `ac a1` read (`status_command special_info`) replies by the same chunking under
+sub `segment_ic` (0x0B); its joined buffer is one record, not TLVs: read it with the reader
+`GoveeBleFrame.StatusCommand.special_info` and take `s.segment_ic` (`num_segments`, `ic_per_segment`,
+`app_read_fails` for an empty payload). The record needs no device context, so any profile serves.
 
 **Upload values.** The kind is not in the bytes (DIY and graffiti share commByte 0x58), so you pass it,
 with the form: `wire` for a value joined from A1 / A3 / A4 packets, `cloud` for a base64-decoded

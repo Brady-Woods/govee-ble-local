@@ -57,7 +57,10 @@ Reliability rules this module enforces (each one learned from live failures):
   ``disconnect`` or ``close``) or an operation that wants the link cancels a beat
   still writing rather than wait for it (the app writes its beat off its command
   queue), so no command waits for a beat and the link lasts exactly as long as
-  without it. Its reply stays in the receive queue for the next operation to drain.
+  without it. Its reply stays in the receive queue for the next operation to drain; with
+  ``heartbeat_reply`` every frame notified while no other frame has gone out since the beat (one sent
+  after it may have changed what the reply reports) is also handed to that callback, which reads the
+  reply out; ``heartbeat_sent`` is called once each beat has gone out, ahead of its reply.
   With ``heartbeat=None`` nothing is armed, whatever ``heartbeat_timing`` says.
 """
 from __future__ import annotations
@@ -117,12 +120,13 @@ from ..exceptions import (
 from ..models import Encryption
 from ..wire._spec import BgcInfo as _BgcInfo, Frame as _Frame
 from ..wire.build import (
+    PRO_MULTI_A3,
     PRO_MULTI_AC,
     PRO_READ,
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
-from ..wire.parse import bgc_encrypt_version, parse_write_ack, write_command
+from ..wire.parse import bgc_encrypt_version, multi_unit_comm, parse_multi_ack, parse_write_ack, write_command
 from ..wire.reassemble import BurstAssembler
 from ..wire.redact import carries_secret, mask_secret, shown_hex
 from . import handshake
@@ -271,6 +275,8 @@ class GoveeConnection:
         session_ack: bool = True,
         heartbeat: bytes | None = None,
         heartbeat_timing: HeartbeatTiming = "fixed_rate",
+        heartbeat_reply: Callable[[bytes], None] | None = None,
+        heartbeat_sent: Callable[[], None] | None = None,
     ) -> None:
         self._ble_device = ble_device
         # Where a session starts: the device's advertised encrypt flag (the app's per-MAC flag,
@@ -343,6 +349,18 @@ class GoveeConnection:
         self._heartbeat_timing = heartbeat_timing
         self._heartbeat_timer: asyncio.TimerHandle | None = None   # the next tick, while a chain runs
         self._heartbeat_beat: asyncio.Task[None] | None = None    # the last tick's write
+        # Called with each frame notified while no other frame has gone out since the beat's write:
+        # ``_tx_count`` is still ``_beat_tx``, the count right after that write (None before the session's
+        # first beat). The callback reads the beat's reply out of them through the spec (Device: the aa 01
+        # power reply, parse.parse_light_power; None for any other frame). A frame sent after the beat (a
+        # power write, a read) may have changed what the reply reports, so that reply goes only to the queue.
+        # The callback runs in the notify callback and must not raise. None: the reply only stays queued.
+        self._heartbeat_reply = heartbeat_reply
+        # Called once each beat's write has gone out, with _beat_tx (so every reply heartbeat_reply gets comes
+        # after it): a caller notes what its own state was when the read the reply answers was issued (Device:
+        # power_read_at's drop count). It runs in the beat's task and must not raise. None: nothing is called.
+        self._heartbeat_sent = heartbeat_sent
+        self._beat_tx: int | None = None
         # Callers holding or waiting for the lock (_locked), and open holds (hold_heartbeat): a tick that
         # finds either is dropped.
         self._lock_wanted = 0
@@ -543,6 +561,8 @@ class GoveeConnection:
                     "%s: RX unrecognised frame %s (%s)",
                     self.address, describe_frame(plain, "rx")[0], plain.hex(),
                 )
+        if self._heartbeat_reply is not None and self._beat_tx == self._tx_count:
+            self._heartbeat_reply(plain)   # nothing sent since the beat: the callback reads its reply out
         self._enqueue(plain)  # plaintext: survives a disconnect nulling the session key
 
     def _drain(self) -> None:
@@ -871,6 +891,7 @@ class GoveeConnection:
         self._session_key = None
         self._session_cipher = None
         self._ready = False
+        self._beat_tx = None   # the next session's replies answer its own beats
 
     def _on_disconnect(self, client: BleakClientWithServiceCache) -> None:
         if client is not self._client:
@@ -1102,20 +1123,97 @@ class GoveeConnection:
                 f"wait for; {err} (use query() for reads)"
             ) from None
 
+    async def send_check(
+        self, frame_plaintext: bytes, *, on_link: int, connect_budget: ConnectBudget | None = None,
+    ) -> None:
+        """Send the secret check a caller owes the session on link ``on_link`` (a :attr:`link_number`; the
+        ``33 b2`` of a secret set while that session was up, ``Device._send_pending_unlock``), so that no
+        other frame goes out on the link before its outcome, as nothing of the app's compose follows its
+        failed check (``AbsComposeControllerWithOpResult.onResult:315-334`` -> ``result2Fail``):
+
+        - with that link gone once the operation holds the lock (another link, or none, up), nothing is sent
+          and no connect is made: a session set up since sent the check in its setup, and the next one will;
+        - a refusal ends the session before the lock is released, as at session setup, so no frame queued
+          behind the check goes out on the refused link, and raises :class:`GoveeBleCommandRejected`;
+        - a link that stops acking is torn down and set up again within ``connect_budget``, whose session
+          setup sends the check (a refusal there raises :class:`GoveeBleAuthError`), and the check is not sent
+          a second time on it;
+        - a call cancelled once the check is written, before its outcome, tears the link down before the
+          lock is released, as the outcome is unknown: the next session's setup sends the check. One
+          cancelled while it waits for the lock has written nothing and leaves the link as it is.
+
+        A cancellation after the refusal still leaves the link down (the client is forgotten before the first
+        await, :meth:`_disconnect_locked`). GoveeBleInvalidValue, before any I/O, for a frame that is not a
+        write."""
+        self._check_write_frame(frame_plaintext)
+
+        async def op() -> None:
+            if on_link != self.link_number or not self.is_connected:
+                return   # that session is gone: its successor's setup sends the check
+            try:
+                await self._send_write_verified(frame_plaintext)
+            except GoveeBleCommandRejected:
+                await self._disconnect_locked()
+                raise
+            except asyncio.CancelledError:
+                # Cancelled once the check is written (its first await is the write): its outcome is unknown,
+                # so the link goes before the lock does, and no frame waiting for it goes out on a link whose
+                # check the device may yet refuse. The next session's setup sends the check.
+                await self._disconnect_locked()
+                raise
+            except (
+                _LinkLost, *_TRANSPORT_ERRORS, TimeoutError, GoveeBleTimeout, GoveeBleConnectionError,
+            ) as err:
+                _LOGGER.debug("%s: secret check failed on this link (%s); reconnecting, whose setup sends it",
+                              self.address, _err_text(err))
+                await self._disconnect_locked()
+                await self._ensure_connected_locked(connect_budget)
+
+        await self._run(op, extend_warm=True)
+
     async def send_many(self, frames: list[bytes]) -> None:
         """Send several write frames back to back under ONE lock acquisition and
         one connection (each still individually ack-verified), so a multi-part
         change (e.g. power + brightness + colour) can't be interleaved with a
         poll and never pays more than one connect. Every frame must be a write
-        (proType 0x33); anything else raises GoveeBleInvalidValue before any I/O."""
-        for frame in frames:
-            self._check_write_frame(frame)
+        (proType 0x33), but for a run of 0xA3 upload frames, from its START, directly before one: a
+        MultiController unit (goodsType 411's colour write, ``ColorModeControllerConfig.j``), which goes out
+        as one (:meth:`_write_unit_locked`). Anything else raises GoveeBleInvalidValue before any I/O."""
+        units = self._write_units(frames)
 
         async def op() -> None:
-            for frame in frames:
-                await self._write_locked(frame)
+            for run, frame in units:
+                if run:
+                    await self._write_unit_locked(run, frame)
+                else:
+                    await self._write_locked(frame)
 
         await self._run(op, extend_warm=True)
+
+    def _write_units(self, frames: list[bytes]) -> list[tuple[list[bytes], bytes]]:
+        """``frames`` as ``(0xA3 run, write)`` units in order, the run empty for a plain write: each 0x33
+        write closes the 0xA3 frames directly before it. GoveeBleInvalidValue for any other frame, a run whose
+        first frame isn't an 0xA3 START (:func:`..wire.parse.multi_unit_comm`) or one that no write closes."""
+        units: list[tuple[list[bytes], bytes]] = []
+        run: list[bytes] = []
+        for frame in frames:
+            self._check_frame(frame)
+            if frame[0] == PRO_MULTI_A3:   # the header the transport routes on, as every RX filter here
+                run.append(frame)
+                continue
+            self._check_write_frame(frame)
+            if run:
+                try:
+                    multi_unit_comm(run[0])
+                except ValueError as err:
+                    raise GoveeBleInvalidValue(f"{self.address}: an 0xA3 run starts with its START; {err}") \
+                        from None
+            units.append((run, frame))
+            run = []
+        if run:
+            raise GoveeBleInvalidValue(
+                f"{self.address}: an 0xA3 run must be followed by the write that ends its unit")
+        return units
 
     async def _write_locked(self, frame_plaintext: bytes, budget: ConnectBudget | None = None) -> bytes:
         """Ack-verified write with one reconnect-and-retry. Only failures AFTER the
@@ -1137,6 +1235,49 @@ class GoveeConnection:
             await self._disconnect_locked()
         await self._ensure_connected_locked(budget)
         return await self._send_write_verified(frame_plaintext)
+
+    async def _write_unit_locked(self, run: list[bytes], frame: bytes) -> bytes:
+        """A MultiController unit with one reconnect-and-retry of the whole unit, as :meth:`_write_locked`
+        retries a write: the device reassembles an 0xA3 upload from its START, so a unit is resent whole
+        (:meth:`_send_unit_verified`)."""
+        await self._ensure_connected_locked()
+        try:
+            return await self._send_unit_verified(run, frame)
+        except (
+            _LinkLost, *_TRANSPORT_ERRORS, TimeoutError, GoveeBleTimeout, GoveeBleConnectionError,
+        ) as err:
+            _LOGGER.debug("%s: 0xA3 unit failed on this link (%s); reconnecting to retry", self.address,
+                          _err_text(err))
+            await self._disconnect_locked()
+        await self._ensure_connected_locked()
+        return await self._send_unit_verified(run, frame)
+
+    async def _send_unit_verified(self, run: list[bytes], frame: bytes) -> bytes:
+        """One MultiController unit (``AbsControllerNoEvent4Multi``): every packet but the last goes on its
+        write's completion, so the 0xA3 ``run`` is streamed paced (``UNACKED_SEND_GAP``, as
+        :meth:`send_unacked` paces an upload) with no drain between them, then ``frame``, the unit's last
+        packet (the ``33 05 15 00`` of goodsType 411's colour write), and the unit is done on the first
+        ``a3 <comm>`` notification (``isSameController``: proType 0xA3 and the START's comm byte), which may
+        come before ``frame`` goes out: a whole frame whose byte 3 is 0 accepts the unit (``onResult`` at
+        ``MultiController.b()`` = 3; :func:`..wire.parse.parse_multi_ack`), and anything else raises
+        :class:`GoveeBleCommandRejected`. A ``33`` ack of ``frame`` is not the unit's, as the app's controller
+        doesn't take it. No ack within ``WRITE_ACK_TIMEOUT``: GoveeBleTimeout."""
+        comm = multi_unit_comm(run[0])   # checked by _write_units before the operation
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("%s: TX 0xA3 unit 0x%02X: %d packets, then %s", self.address, comm, len(run),
+                          describe_frame(frame, "tx")[0])
+        self._drain()
+        for packet in run:
+            await self._send_frame(packet)
+            await asyncio.sleep(UNACKED_SEND_GAP)
+        await self._send_frame(frame)
+        ack = await self._await_reply(PRO_MULTI_A3, comm, WRITE_ACK_TIMEOUT)
+        if ack is None:
+            raise GoveeBleTimeout(f"{self.address}: no ack for the 0xA3 unit 0x{comm:02X}")
+        if not parse_multi_ack(ack):
+            _LOGGER.debug("%s: device rejected the 0xA3 unit 0x%02X (%s)", self.address, comm, shown_hex(ack))
+            raise GoveeBleCommandRejected(f"{self.address}: device rejected the 0xA3 unit 0x{comm:02X}")
+        return ack
 
     async def send_unacked(
         self, frames: list[bytes] | Callable[[int], list[bytes]], *, gap: float = UNACKED_SEND_GAP
@@ -1266,6 +1407,9 @@ class GoveeConnection:
         terminal: int = QUERY_TERMINAL,
         idle_gap: float | None = BURST_IDLE_GAP,
         connect_budget: ConnectBudget | None = None,
+        burst_command: int = BurstAssembler.command,
+        burst_sub: int = BurstAssembler.sub,
+        on_link: int | None = None,
     ) -> list[bytes]:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
@@ -1283,19 +1427,27 @@ class GoveeConnection:
         read ends when the burst is complete (a one-packet reply, or the last packet
         once every packet before it is in) or failed (a first chunk whose lastLen
         doesn't fit), and only a chunk the app takes arms ``idle_gap``, so a stray
-        early 0xFF or a late chunk of an earlier burst doesn't end it.
+        early 0xFF or a late chunk of an earlier burst doesn't end it. ``burst_command``
+        and ``burst_sub`` are the reader's, whose first chunk the burst starts with: the
+        status read's by default, the special-info read's for ``ac a1``.
 
         ``connect_budget`` holds this operation's connect, not its reads, to its limits
-        (:class:`ConnectBudget`)."""
+        (:class:`ConnectBudget`). ``on_link`` (a :attr:`link_number`) makes the read only on that link: when
+        another link, or none, is up once the operation holds the lock, nothing is sent, no connect is made
+        and the result is empty (a read that belongs to that link, such as the re-read a keep-alive reply
+        starts)."""
 
         async def op() -> list[bytes]:
+            if on_link is not None and (on_link != self.link_number or not self.is_connected):
+                return []   # that link is gone: no connect for a read that belongs to it
             await self._ensure_connected_locked(connect_budget)
             self._drain()
             await self._send_frame(frame_plaintext)
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             frames: list[bytes] = []
-            burst = BurstAssembler() if opcode == PRO_MULTI_AC else None
+            burst = (BurstAssembler(command=burst_command, sub=burst_sub) if opcode == PRO_MULTI_AC
+                     else None)
             seen_opcode = False
             while True:
                 remaining = deadline - loop.time()
@@ -1442,7 +1594,8 @@ class GoveeConnection:
         (:meth:`_cancel_beat`). ``sent`` is the frame count at the tick: on after_quiet, a tick whose beat
         has not started when an operation sends a frame (one that ran and ended in the tick's loop pass)
         drops itself, since that send restarted the wait (HeartHandler.e). Its reply stays in the receive
-        queue, which the next operation drains. A failure is logged at DEBUG and changes nothing: no
+        queue, which the next operation drains, and goes to ``heartbeat_reply`` too while nothing else has
+        been sent since (``_beat_tx``). A failure is logged at DEBUG and changes nothing: no
         teardown and no count (the app counts none; EventHeart is not retried), so a dead link shows at the
         next operation's write retry. Never touches the idle timer or the warm window."""
         frame = self._heartbeat
@@ -1456,6 +1609,9 @@ class GoveeConnection:
             try:
                 async with asyncio.timeout(HEARTBEAT_WRITE_TIMEOUT):
                     await self._send_frame(frame)
+                self._beat_tx = self._tx_count   # its replies, until another frame goes out (heartbeat_reply)
+                if self._heartbeat_sent is not None:
+                    self._heartbeat_sent()   # with _beat_tx: every reply heartbeat_reply gets comes after it
             except (GoveeBleError, *_TRANSPORT_ERRORS, TimeoutError) as err:
                 _LOGGER.debug("%s: heartbeat not sent: %s", self.address, _err_text(err))
             except Exception as err:   # a background beat never raises

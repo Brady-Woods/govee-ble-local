@@ -266,9 +266,9 @@ def test_walk_mechanism_b_asks_each_batch_in_order() -> None:
             return _frame(0xAA, 0xA5, 2, 50, 1, 2, 3, 60, 4, 5, 6, 70, 7, 8, 9)
         return None
 
-    segs = run(_readback.walk_mechanism_b(target, read_reply))
+    walk = run(_readback.walk_mechanism_b(target, read_reply))
     assert asked == [build.bulb_group_query(seq, v2=True) for seq in range(1, 6)]   # 15 / 3 = 5 batches
-    assert segs == [Segment(3, (1, 2, 3), 50), Segment(4, (4, 5, 6), 60), Segment(5, (7, 8, 9), 70)]
+    assert walk == ([Segment(3, (1, 2, 3), 50), Segment(4, (4, 5, 6), 60), Segment(5, (7, 8, 9), 70)], 15)
 
 
 def test_walk_mechanism_a_direct_skips_on_a_failed_ic_read_and_logs_on_the_device_logger(
@@ -312,10 +312,52 @@ def test_walk_mechanism_a_direct_sizes_a_sections_walk_by_the_aa_40_section_sum(
             return _frame(0xAA, 0x40, *ic)
         return _frame(0xAA, 0xA5, frame[2], *([100, 1, 2, 3] * size))
 
-    segs = run(_readback.walk_mechanism_a_direct(target, read_reply))
+    read = run(_readback.walk_mechanism_a_direct(target, read_reply))
     walk = [build.bulb_group_query(g, v2=True) for g in range(1, groups + 1)]
     assert asked == [build.ic_count_query(), *walk]
-    assert [s.index for s in segs or ()] == list(range(pieces))
+    assert [s.index for s in (read.segments if read else ())] == list(range(pieces))
+
+
+_FLOOR = dict(color_readback_ic_range=(0, 4095), color_readback_ic_per_piece=4,
+              color_readback_ic_rounding="floor")
+_TABLE = dict(color_readback_ic_range=None, color_readback_ic_table=((36, 18),),
+              color_readback_ic_otherwise=14)
+_PAIR = dict(color_readback_ic_range=None, color_readback_ic_pair_cap=15, color_readback_ic_otherwise=30,
+             color_readback_ic_pair_reader=True)
+_SKIP_ZERO = dict(color_readback_ic_range=(1, 4095), color_readback_ic_per_piece=5,
+                  color_readback_ic_skip_zero=True)
+
+
+@pytest.mark.parametrize(("rule", "ic", "pieces"), [
+    (_FLOOR, (0x00, 0x33), 12),                        # h705a 125 / 240: 51 / 4 = 12 (ceil: 13, 4 groups)
+    (_TABLE, (0x00, 0x24), 18),                        # h6609 173: IC 36 -> 18
+    (_TABLE, (0x00, 0x28), 14),                        # any other IC -> 14
+    (_SKIP_ZERO, (0x00, 0x00), 0),                     # h705a 184: VM4H608A.S4 skips IC 0, no walk
+    (_PAIR, (0x00, 0x0A, 0x00, 0x00, 0x0C, 0x00), 22),  # H1A45: min(10, 15) + min(12, 15)
+    (_PAIR, (0x00, 0x14, 0x00, 0x00, 0x14, 0x00), 30),  # each strip capped at 15
+    (_PAIR, (0x00, 0x14, 0x00), 30),                    # one strip: 30
+    (_PAIR, (0x00, 0x00, 0x00, 0x00, 0x0C, 0x00), 30),  # first IC 0: VM4Light.h5 keeps no pair, 30
+    (_PAIR, (0x00, 0x0A, 0x00, 0x10, 0x00, 0x00), 0),   # second IC 0x1000: ControllerIcNum.e throws
+])
+def test_walk_mechanism_a_direct_sizes_a_live_ic_walk_by_its_ic_rule(
+    rule: dict[str, Any], ic: tuple[int, ...], pieces: int,
+) -> None:
+    # The ic_pieces object forms (_readback.live_ic_pieces), on H6641's walk (groups of 4).
+    base = profile_for("H6641")
+    assert base is not None
+    profile = dataclasses.replace(base, **rule)
+    asked: list[bytes] = []
+
+    async def read_reply(frame: bytes) -> bytes | None:
+        asked.append(frame)
+        if frame == build.ic_count_query():
+            return _frame(0xAA, 0x40, *ic)
+        return _frame(0xAA, 0xA5, frame[2], *([100, 1, 2, 3] * 4))
+
+    read = run(_readback.walk_mechanism_a_direct(_Target("HX", profile, profile.segments), read_reply))
+    walk = [build.bulb_group_query(g, v2=True) for g in range(1, -(-pieces // 4) + 1)]
+    assert asked == [build.ic_count_query(), *walk]
+    assert [s.index for s in (read.segments if read else ())] == list(range(pieces))
 
 
 def test_read_device_info_reports_a_silent_device() -> None:

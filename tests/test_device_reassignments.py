@@ -75,7 +75,7 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
               for gt, gate in targets.items()
               if profile_for(sku, pact=gate, goods_type=gt, allow_modelled=True) is not None]
     assert served and all(profile_for(sku, goods_type=gt, allow_modelled=True) is None for sku, gt in served)
-    # Nor is a pact_required row (straightfloorlamp 69, the modelled h70b3 rows, h70b6 329, pact_tvlightv2
+    # Nor is a pact_required row (straightfloorlamp 69, the h70b3 rows, h70b6 329, pact_tvlightv2
     # 24), whose goodsType the app also runs, at another pact, on a path the row doesn't serve; and the flag
     # means nothing on a row that takes any pact.
     required = [(sku, int(gt), _resolve._pact(row["pacts"][0])) for fam in FAMILIES
@@ -87,6 +87,15 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
                             for sku, gt, pact in required)
     with pytest.raises(_resolve.SpecError, match=r"^h6188 goodsType 0: pact_required on a row whose pacts"):
         _resolve.routes(edited("h6188", "0", pact_required=True))
+    # A pact branch's support is the row's level at that pact alone (dreamcolorlightv2 21: app_traced at
+    # (2,1), modelled elsewhere), so by default the SKU needs that pact; it needs listed pacts and no by_model
+    # support.
+    assert profile_for("H611A", pact=(2, 1)) is not None and profile_for("H611A") is None
+    assert profile_for("H611A", pact=(1, 1)) is None
+    assert profile_for("H611A", pact=(1, 1), allow_modelled=True) is not None
+    for fam_id, gt in (("h6188", "0"), ("h6609", "260")):
+        with pytest.raises(_resolve.SpecError, match=rf"^{fam_id} goodsType {gt}: a pact branch's support"):
+            _resolve.routes(edited(fam_id, gt, by_pact={"1,1": {"support": "app_traced"}}))
 
 
 def _load(path: pathlib.Path, name: str) -> Any:

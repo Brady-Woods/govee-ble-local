@@ -38,6 +38,12 @@ ReadBack = Literal["status", "polled", "plug", "none"]
 # control screens'); "per_command" = a session of its own per write (the device-list card's).
 SessionMode = Literal["held", "per_command"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
+# How a live IC count divides into pieces (DeviceProfile.color_readback_ic_rounding): "ceil" rounds up,
+# "floor" is Java's integer division.
+IcRounding = Literal["ceil", "floor"]
+# How a Kelvin firmware gate compares the device's version (DeviceProfile.kelvin_version_compare): "string" =
+# KelvinConfig's compareTo (Config.z2 / Z2 / X2), "numeric" = BleUtils.isHigherVersion (Config.Y2).
+KelvinCompare = Literal["string", "numeric"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
 # name of the spec's mode_color_parse table (devices.yaml ``mode_color_parse``, which maps each colour
 # sub-mode to a color_decode; :func:`wire_profile`), e.g. "kelvin_15_rgb_kelvin_0d" (H60A6) or
@@ -46,6 +52,10 @@ ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # any non-zero Kelvin = CCT, read unsigned: wire.parse.mode_color unsigned_kelvin), which no app screen uses.
 ModeColorParse = str
 _DEFAULT_PARSE: Final = "rgb_kelvin"
+# The colour page the SKU's control screen shows a reported colour on (DeviceProfile.color_page; devices.yaml
+# clientRow color_page): "stock" = the newdetail DelegateColorV2, whose W1 shows a one-colour report that is a
+# Kelvin tint in range as its colour temperature; "none" = the screen shows no colour page.
+ColorPage = Literal["stock", "none"]
 
 # How a plug's whole-device power is written (its main switch on the app's detail screen):
 # "outlet0"     = 33 01 11 / 10, the relay-0 encoding (goodsType 43: H5080 / H5083 / H5085, one outlet;
@@ -72,7 +82,8 @@ _H60A6_STATUS_DECODE: Final = (
 # has_brightness / empty_fails are flags.
 _C = _spec.Common
 _STATUS_ENUMS: Final[Mapping[str, Any]] = MappingProxyType({
-    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a3": _C.FormA3,
+    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a1": _C.FormA1,
+    "f_a3": _C.FormA3,
     "f_a5": _C.FormA5, "group_rule": _C.GroupCountRule, "music": _C.MusicDecode})
 _STATUS_FLAGS: Final = ("has_brightness", "empty_fails")
 
@@ -118,7 +129,9 @@ class DeviceProfile:
     segments: int = 0
     """Segment count: the whole-device mask width and the segment index bound (H6061: its panel
     count); 0 for a single-colour device. ``Device.set_segment_count`` overrides it with a count the
-    device reports."""
+    device reports, and so does the device's own read of it on a :attr:`section_count_read`,
+    :attr:`special_info_read`, :attr:`color_writes_live_ic` or :attr:`light_num_per_unit` profile
+    (``Device.segment_count``)."""
     zones: tuple[Zone, ...] = ()
     """Independently switchable zones (empty for an unzoned device)."""
     scene_versions: frozenset[int] = field(default_factory=frozenset)
@@ -176,15 +189,20 @@ class DeviceProfile:
     The newdetail screens read getColorPieceSize pieces, while H6047's old detail screen reads
     getBulbStringMaxNum = the 10 write segments, so it leaves this None. None -> falls back to
     :attr:`segments`. Ignored when :attr:`color_readback_live_ic` is True (the live 0x40 read
-    supplies the count instead)."""
+    supplies the count instead), but as a :attr:`color_readback_ic_walk_only` profile's walk where that
+    read gives no count."""
     color_readback_live_ic: bool = False
-    """mechanism_a_direct only: read the live 0x40 IC count first and derive the colour-piece count
+    """mechanism_a_direct: read the live 0x40 IC count first and derive the colour-piece count
     from it instead of a static :attr:`color_readback_segments`, as the app does for SKUs whose
-    segmentation isn't knowable from the static device table (H6641).
+    segmentation isn't knowable from the static device table (H6641). On a ``readback="status"`` profile
+    the count comes from the status read's TLV 0x40 (requested in :attr:`status_read`, read as
+    :attr:`status_decode`'s ``f_40`` says) or from :attr:`ic_reads_around_status`, and the pieces size the
+    status read's colour groups (else :attr:`color_readback_ic_raw`'s IC count).
 
-    The IC count is clamped to :attr:`color_readback_ic_range` and divided (rounding up) by
-    :attr:`color_readback_ic_per_piece`; the group count is then ceil(pieces / group size). The
-    reply's third byte is not used."""
+    The IC count is clamped to :attr:`color_readback_ic_range` and divided by
+    :attr:`color_readback_ic_per_piece`, rounding as :attr:`color_readback_ic_rounding` says (up by
+    default), unless :attr:`color_readback_ic_table` or :attr:`color_readback_ic_pair_cap` gives the rule;
+    the group count is then ceil(pieces / group size). The reply's third byte is not used."""
     section_count_read: bool = False
     """The device reports its own segment count with `aa 41` -> [IC s16be, sectionNum u8]
     (striplight ControllerIcSegmentNum; H6062).
@@ -246,17 +264,25 @@ class DeviceProfile:
     kelvin_by_hardware: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
     """Kelvin ranges that replace [:attr:`min_kelvin`, :attr:`max_kelvin`] from a hardware version up:
     ``(min_hard_version, min_kelvin, max_kelvin)`` entries, highest version first, of which the first
-    the device's hardware version (``aa 07 03``) is at least applies, compared as strings, as the app
-    does (``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``; a devices.yaml row's ``by_firmware``).
-    Until the hardware version is read, the range valid on every revision applies: the base range cut to
-    each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in force). Needs both
-    :attr:`min_kelvin` and :attr:`max_kelvin`; each entry must overlap the base range, and so must the
-    range valid on every revision."""
+    the device's hardware version (``aa 07 03``) is at least applies, compared as
+    :attr:`kelvin_version_compare` says, as the app does (a devices.yaml row's ``by_firmware``; strings for
+    ``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``). Until the hardware version is read, the
+    range valid on every revision applies: the base range cut to each entry's (``Device.min_kelvin`` /
+    ``max_kelvin`` give the range in force). Needs both :attr:`min_kelvin` and :attr:`max_kelvin`; each
+    entry must overlap the base range, and so must the range valid on every revision."""
     kelvin_by_software: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
     """The same from a soft version up: ``(min_soft_version, min_kelvin, max_kelvin)`` entries, applied with
     the device's soft version (``aa 06``) exactly as :attr:`kelvin_by_hardware` is with the hardware
-    version, compared as strings too (``KelvinConfig.Config.Z2``: bulblightv3 goodsType 348 from
-    ``"1.00.15"``). The same rules; a profile has entries of one kind only."""
+    version (``KelvinConfig.Config.Z2``: bulblightv3 goodsType 348 from ``"1.00.15"``, as strings). The same
+    rules; a profile has entries of one kind only."""
+    kelvin_version_compare: KelvinCompare = field(default="string", kw_only=True)
+    """How :attr:`kelvin_by_hardware` / :attr:`kelvin_by_software` compare the device's version with an
+    entry's (a devices.yaml Kelvin ``by_firmware`` item's ``compare``). ``"string"`` (the default):
+    the strings, as ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2``'s ``compareTo`` do, so a hardware
+    ``10.00.00`` is below ``3.08.01``. ``"numeric"``: each as one int of its digits, the dots removed, 0
+    when empty or unparsable (``_resolve.parse_version``), at least the entry's, as ``Config.Y2``'s
+    ``BleUtils.isHigherVersion`` does (h60ax goodsType 235, H60A1 / H80A1 from hardware ``"1.04.03"``), so
+    ``1.4.3`` (143) is below ``1.04.03`` (10403)."""
     mode_reports_kelvin: bool = field(default=True, kw_only=True)
     """Whether the ``aa 05`` mode report carries the Kelvin of a colour-temperature write. False where it
     reads 0 after one (H61A8: ``15 01 00 00`` after either write, bench 2026-10-17): a colour report of
@@ -267,14 +293,35 @@ class DeviceProfile:
     mode_color_parse_status: ModeColorParse | None = field(default=None, kw_only=True)
     """Decoding of the 0xAC status read's TLV 0x05 where it differs from the aa 05 reply's (devices.yaml
     ``mode_color_parse_status``); None = :attr:`mode_color_parse`."""
+    color_page: ColorPage | None = field(default=None, kw_only=True)
+    """How the control screen shows a colour its mode report carries (a devices.yaml row's ``color_page``,
+    set on every row with COLOR_TEMP whose decode reports a colour). ``"stock"``: the screen's newdetail
+    ``DelegateCurMode.createView`` builds ``DelegateColorV2``, whose ``W1`` shows a report of one colour that
+    is a Kelvin tint in the device's range (``KelvinConfig.i``, inclusive) as the colour temperature
+    ``KelvinConfig.c`` of it, else as the colour; so on such a profile, with COLOR_TEMP, a reported RGB that
+    is one of the app's tint colours in :func:`~._fold.kelvin_range` reads as that Kelvin
+    (``color_temp_kelvin``, no ``rgb_color``), whatever the decode, from an ``aa 05`` reply and a status
+    TLV 0x05 alike, as a pick of that colour does (:func:`~._fold.apply_rgb`), while every segment the same
+    read brought (the burst's TLV 0xA5 groups, the poll's ``aa a5`` walk) shows that colour, as ``W1`` tests
+    the pieces; where they all show another colour, the page shows theirs, read the same way
+    (:func:`~._fold._as_shown`). A black colour, the report's with no pieces or a piece's, reads as
+    (1, 1, 1), as the page's copy of them holds it (:func:`~._fold._on_page`). A 0x15 report, which carries
+    a Kelvin and no colour, and on the h60a1 screen's rows a 0x0d report of a Kelvin above 0, whose tint the
+    pieces replace, show those pieces' colour the same way where they all show one, and else read as decoded
+    (:func:`~._fold._shown_over_pieces`). A read that left a piece out (a walk with a group unanswered, a
+    burst whose groups leave one out) shows none of them: the report reads as decoded
+    (:func:`~._fold.brought_every_piece`). ``"none"`` (the screen shows
+    no colour page: H8015's illumination-only list) and None (a profile built by hand, or a decode that
+    reports no colour) read the report as the decode does. Source-traced, not live-verified."""
     scene_versions_by_firmware: tuple[tuple[str, str, tuple[int, ...]], ...] = field(
         default=(), kw_only=True)
     """Scene sets that replace :attr:`scene_versions` from a firmware version up: ``(min_soft_version,
     min_hard_version, versions)`` entries, ``""`` for no gate on that version, of which each one whose gates
     the device's soft (``aa 06``) and hard (``aa 07 03``) versions meet applies, in order, the last winning,
     after :attr:`scene_versions_by_pact` (a devices.yaml row's ``by_firmware``: the dreamcolorlightv1 rows'
-    part-brightness gates, ``Support.getSupportScenesOpSet``). Versions compare field by field
-    (``1.06.00``). A version not yet read meets every gate on it, as the newest firmware would, so until the
+    part-brightness gates, ``Support.getSupportScenesOpSet``). Versions compare as the app's
+    ``BleUtil.parseVersion`` does (the digits, dots removed, as one int: ``1.06.00`` is 10600, and ``1.6.0``
+    160, below it). A version not yet read meets every gate on it, as the newest firmware would, so until the
     device-info read the last entry's set applies (1.x's assumption), and a single unread version does not
     hold back the other's gates (``Device.update`` reads a missing one again on the next poll); a read
     version that does not parse meets none."""
@@ -295,11 +342,13 @@ class DeviceProfile:
         default=_H60A6_STATUS_DECODE, kw_only=True)
     """``readback="status"``: how the 0xAC reply is read, a devices.yaml row's wire facts as ``(govee_profile
     param, value)`` pairs: the forms of the TLVs the status stream reads (``f_30``, ``f_36``, ``f_40``,
-    ``f_41``, ``f_a3``, ``f_a5``: govee_common enum names), the colour-group form where it reads TLV 0xA5 as
-    colour groups (``f_a5`` ``"color_group"`` with ``group_rule``, ``num_per_group`` and ``has_brightness``
-    true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. A form left out is unknown: that TLV
-    is not read, and a 0xA5 TLV not read as colour groups is skipped. The default is the H60A6 status
-    screen's, 1.x's decode (a list is kept as a tuple)."""
+    ``f_41``, ``f_a1``, ``f_a3``, ``f_a5``: govee_common enum names), the colour-group form where it reads
+    TLV 0xA5 as colour groups (``f_a5`` ``"color_group"`` with ``group_rule``, ``num_per_group`` and
+    ``has_brightness`` true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. ``f_a5``
+    ``"single_record"`` (H703A / H703B) reads it as one ``[brightness, r, g, b]`` record, the whole-device
+    colour of a one-piece device, and needs no group facts. A form left out is unknown: that TLV is not read,
+    and a 0xA5 TLV read neither way is skipped. The default is the H60A6 status screen's, 1.x's decode (a list
+    is kept as a tuple)."""
     light_effect_stop: bool = field(default=False, kw_only=True)
     """A light whose screen writes ``33 25 01`` (``light_effect_stop``) on connect (a devices.yaml row's
     ``connect_writes``; bulblight ``VM4Light$connectBleSuc$1.j`` -> ``VM4Light.i5``): every session sends it
@@ -351,10 +400,11 @@ class DeviceProfile:
     ic_num_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`color_readback_live_ic` or :attr:`color_readback_ic_sections`. Without them: the
     screen reads the ``aa 40`` IC count at
-    connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
+    connect, but it does not size the pieces (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
     :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
-    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
-    devices.yaml row with ``ic_pieces: fixed``)."""
+    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces, or with
+    :attr:`special_info_read` the segment count the device reports (goodsType 180; a devices.yaml row with
+    ``ic_pieces: fixed``)."""
     scene_power_on: bool = field(default=False, kw_only=True)
     """A scene write is led by the power-on switch (``33 01 01``) unless the device is known to be on: the
     screen prepends it to a scene apply while its stored switch state is off, and an unknown state reads as
@@ -492,6 +542,229 @@ class DeviceProfile:
     for ``41 0c`` at pact (1, 1) and ``41 0c 42`` at (1, 2) / (2, 1) (``VM4LightH7070.T4``,
     ``Support.supportEffectChange``). A pact with no entry, or none heard yet, takes :attr:`status_read`
     (the spec's ``client_row``). Each pact once; each read distinct codes (lists are kept as tuples)."""
+    color_readback_ic_rounding: IcRounding = field(default="ceil", kw_only=True)
+    """How :attr:`color_readback_live_ic` divides the clamped IC count by :attr:`color_readback_ic_per_piece`:
+    ``"ceil"`` rounds up (the default, every profile before 1.9.0: ``H61D3Support.e``), ``"floor"`` is Java's
+    integer division (h705a ``Support.b`` for goodsTypes 125 / 240: IC / 4). A devices.yaml ``ic_pieces``
+    ``rounding``."""
+    color_readback_ic_table: tuple[tuple[int, int], ...] = field(default=(), kw_only=True)
+    """:attr:`color_readback_live_ic` by the IC count's value, in place of the clamp and divisor: ``(IC,
+    pieces)`` entries, each IC once, and :attr:`color_readback_ic_otherwise` at any other count (h6609
+    ``Support.getColorPieceSize(173, IC)``: 18 at 36, else 14; a devices.yaml ``ic_pieces`` ``table``). Empty
+    (the default): the clamp and divisor (a list is kept as a tuple)."""
+    color_readback_ic_pair_cap: int | None = field(default=None, kw_only=True)
+    """:attr:`color_readback_live_ic` from two strips, in place of the clamp and divisor: where the aa 40
+    reply's IC-pair reader returns a second pair (``ControllerIcNum.e``), its first IC is not 0 (the list
+    ``VM4Light.h5`` keeps) and its second is above 0, ``min(IC 1, cap) + min(IC 2, cap)`` pieces, else
+    :attr:`color_readback_ic_otherwise`; no count where that reader throws (``H61D3Support.e`` and
+    ``ColorModeH1A45`` for goodsType 375: cap 15, else 30; a devices.yaml ``ic_pieces`` ``pair_max``). None
+    (the default): the reply's one IC count."""
+    color_readback_ic_otherwise: int | None = field(default=None, kw_only=True)
+    """The pieces at an IC count :attr:`color_readback_ic_table` doesn't list, and on a reply without the
+    second strip :attr:`color_readback_ic_pair_cap` needs: 1 or more, and set with either of them."""
+    color_readback_ic_pair_reader: bool = field(default=False, kw_only=True)
+    """The screen reads the aa 40 reply with the IC-pair reader (``ControllerIcNum.e``; a devices.yaml row's
+    wire ``f_40: ic_pair``), which throws where either IC field is 0x1000 or more or the reply is under 3
+    bytes (:attr:`parse.IcCount.ic_pair` None, the spec's ``app_pair_fails``): no count there, whichever rule
+    gives the pieces (the h705a screens, H1A45). :attr:`color_readback_ic_pair_cap` needs it. False (the
+    default): the reader of bytes 0..1 alone (h61d3 ``ReadIcController``)."""
+    color_readback_ic_skip_zero: bool = field(default=False, kw_only=True)
+    """An IC count of 0 is no count, as a failed read: the screen's IC check skips it and keeps the count it
+    has (h705a ``VM4H608A.S4``, goodsType 184), so :attr:`~.device.Device.segment_count` keeps its count and
+    the walk is skipped (a devices.yaml ``ic_pieces`` ``skip_zero``). Not with
+    :attr:`color_readback_ic_pair_cap`, whose rule says what a first IC of 0 gives. False (the default): 0 is
+    a count."""
+    color_writes_live_ic: bool = field(default=False, kw_only=True)
+    """With :attr:`color_readback_live_ic`: the live pieces size the writes too, as the screen's strip takes
+    them from the stored IC, which each aa 40 read updates (``ColorPieceConfig.c``; the h705a screens resize a
+    built strip when a read changes it, ``ColorMode.Y`` / ``ColorModeV1.K``, while the h61d3 and H7067 strips
+    keep the count they were built with until a calibration or settings event, a first-session difference
+    their rows' docs name): :attr:`~.device.Device.segment_count` becomes each poll's count (at most
+    ``build.piece_cap`` of :attr:`color_scheme`: 112 on the 0x15 bodies, more on ``h3010``'s uncapped 0xA3
+    mask), so it is the whole-device mask and the segment index bound, and a write that
+    carries a mask before any count is known reads ``aa 40`` first (on a status profile its IC read: the
+    status read whose TLV 0x40 carries it, or the first of :attr:`ic_reads_around_status`) and raises
+    GoveeBleError, sending nothing, when the device gives no usable count, as a ``section_count_read`` profile
+    does. :attr:`segments` is then only the count before the first read. Every IC-sized devices.yaml row
+    (``ic_pieces`` object form) sets it but a ``readback_only`` rule's (:attr:`color_readback_ic_walk_only`);
+    False (the default): the writes keep :attr:`segments`."""
+    special_info_read: bool = field(default=False, kw_only=True)
+    """``readback="polled"`` only, and not with :attr:`section_count_read`: the device reports its own
+    segment count in the 0xAC special-info read (``ac a1``, its reply's segment IC record
+    ``[segments][IC per segment ...]``: the spec's ``segment_ic_info``; a devices.yaml row whose
+    ``connect_reads`` lists ``special_info``), which the goodsType 180 screen (H706A-C, H806A, H806C) makes
+    on every connect and stores (``VM4Light.x5`` -> ``Info4Detail.z0`` -> ``SegmentIcDataConfig``). That
+    count is the colour page's piece count, so the width of every mask (``ColorModeV2.d0``), and the pieces
+    the ``aa a5`` walk reads (``Support.b(180)``, ``VM4Light.F5``). As for :attr:`section_count_read`,
+    :meth:`~.device.Device.update` reads it on each poll, before ``aa 05`` and the walk as the app does, a
+    mask write reads it first while it is unknown and sends nothing without it, and :attr:`segments` is only
+    the profile's upper bound. Source-modelled, not live-verified."""
+    kelvin_from_pieces: bool = field(default=False, kw_only=True)
+    """``color_readback="mechanism_a_direct"`` only: the colour-temperature state comes from the read-back's
+    pieces, not the ``aa 05`` report's Kelvin (a devices.yaml row's ``kelvin_readback: pieces``; goodsType
+    180: ``VM4Light.g5`` -> ``ColorUtils.r`` of ``SubMode4Color.d``, then ``SubMode4Color.s``). Once a poll's
+    ``aa a5`` walk has read every piece, and the poll's ``aa 05`` report showed the colour mode,
+    ``state.color_temp_kelvin`` is the Kelvin of their one colour when they all show the same colour and it is
+    one of the app's tint colours (its whole 1000-10000 K table, which may lie outside :attr:`min_kelvin` /
+    :attr:`max_kelvin`), else None (:func:`._fold.apply_piece_kelvin`). In another mode (a scene, music, DIY)
+    that Kelvin, when there is one, goes to ``state.last_color_temp_kelvin`` only, as g5 syncs it whatever the
+    mode. A poll whose walk lost a group, or whose ``aa 05`` read went unanswered, leaves both as they were.
+    Source-modelled, not live-verified."""
+    heartbeat_power: bool = field(default=False, kw_only=True)
+    """Follow the screen's ``aa 01`` keep-alive power: ``readback="status"`` with the ``aa 01`` keep-alive
+    (:attr:`heartbeat` ``0x01``) and no :attr:`zones` only (the reply is the one switch), and ignored
+    otherwise. The screen reads the 0xAC status once per connect and then takes the power from each keep-alive
+    reply (``ShareVM.N3`` -> ``J3``, on at byte 2 == 1; ``BleComm.G`` hands it the aa 01 replies of a type-1
+    heartbeat). With it, :meth:`~.device.Device.update` makes the status read once per link, and a poll on a
+    link it brought state back on reads nothing more, while each keep-alive reply that arrives with no other
+    frame sent since its beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped) as
+    a power read: it stamps :attr:`~.device.Device.power_read_at`, unless the stamp was dropped after the beat
+    went out (the read the reply answers was issued then), and reaches the state callbacks. So the state a
+    poll returns on a fresh link is its status read's, whose TLV 0x01 stands in for the reply, and a poll on a
+    warm link reads nothing back. Where a reply changes ``state.is_on``, the screen's re-read follows on a
+    profile with :attr:`heartbeat_reread_pieces`; elsewhere the mode and colour on a link that stays up are
+    the status read's and the library's own writes, as the screen's (it sets the switch alone). The ``ee``
+    pushes the screen follows go through the same hook (:attr:`push_brightness`, :attr:`push_power`); a row
+    whose screen follows none (h7086 293, h7076 313, h3700 383) shows a brightness set elsewhere only after
+    the next connect's status read, as the screen does. Set by a
+    devices.yaml status row's ``heartbeat_power: true``: straightfloorlamp 69, h6069 284, rgbiclight 351 /
+    352, h7086 293, h7020 296, h7076 313 and h3700 383 (the user's decision 17), h7020 316 / 318 / 337 / 391 /
+    411, on 296's screen (the user's decision 26), and h61d3 263 (behind ``allow_modelled``). False (the
+    default: every other profile, among them the status rows on the aa 00 keep-alive, H60A6's, whose reply
+    carries no switch): the status read each poll, the reply left unread."""
+    heartbeat_reread_pieces: int = field(default=0, kw_only=True)
+    """With :attr:`heartbeat_power`: the re-read the screen makes when a keep-alive reply changes the switch
+    (``J3`` -> ``Compose4Off2On``), over this many pieces; 0 (the default): none, the screen sets the switch
+    alone (h7086 293, h7020 296, h7076 313, h3700 383: ``J3`` with no compose). On such a change the
+    :class:`~.device.Device` re-reads at once, on the link the reply came on and never another (no connect:
+    ``GoveeConnection.query``'s ``on_link``), holding the heartbeat as a compose in flight holds the app's
+    (``AbsBle.I``): the ``aa 05`` mode read, folded as a poll's, then, once it is answered, the screen's ``aa
+    a5`` colour groups 1 .. ceil(pieces / :attr:`color_readback_per_batch`), four-byte records
+    (``Controller4ColorInfoByGroup.generateReadController``; ``Compose4Off2On.w`` adds them), ending at the
+    first that goes unanswered as the compose does (``AbsComposeControllerWithOpResult.onOvertime``). Those
+    are the device's segment colours where the profile has SEGMENTS over exactly these pieces
+    (straightfloorlamp 69: 7, rgbiclight 351 / 352: 15), and are read and not applied elsewhere (h6069 284's
+    140, h61d3 263's one piece: their state's colour is the mode report's). h6069 284's 140 is the screen's
+    count when no shape layout is stored, and the layout's size otherwise (``CubeVM4Light.l5``); the library
+    has none, so it walks 140, kept until the stored-IC release reads the layout, the user's decision 26 (D10;
+    devices.yaml's row doc). The compose's timer,
+    sleep and wake reads are left out, as the library's connect reads leave the setting reads out. A change
+    that comes while a re-read runs sets the power and sends no re-read of its own, as the app skips a
+    ``Compose4Off2On`` that comes while a compose is in flight (``ComposeYieldGuard.skipIncomingIfBusy``). A
+    devices.yaml status row's ``heartbeat_reread: { pieces }``: 7 on straightfloorlamp 69, 140 on h6069 284,
+    15 on rgbiclight 351 / 352 and 1 on h61d3 263."""
+    heartbeat_reread_on_push: bool = field(default=False, kw_only=True)
+    """With :attr:`heartbeat_reread_pieces` and :attr:`push_power`: an ``ee 30`` switch push that changes the
+    switch starts the same re-read, as the screen's push handler does (h61d3 263, ``H703ADetailActivity``'s
+    ``VM4Light``: ``z5:703-797`` -> ``D5:222-259``, 300 ms later on 263, ``H61D3Support.l0:1340-1342``, the
+    handler ``J3:827-829`` runs; the library folds the push at once; a devices.yaml row's
+    ``heartbeat_reread: { push_on: true }``). False (the default): a push sets the switch alone
+    (straightfloorlamp 69: ``VM4Light.y5:577-589``; h7020: ``NewDetailVM.H5:258-270``), so the next keep-alive
+    reply finds no change and starts none, as ``J3`` tests the switch the push set."""
+    push_brightness: bool = field(default=False, kw_only=True)
+    """With :attr:`heartbeat_power`: follow the screen's ``ee 20`` brightness push on a held link, as its
+    notify list does (``DefParser.makeBrightnessNotifyParser`` -> ``p:195-199``, frame byte 2 unsigned:
+    ``AbsNotify.parse:33-41`` -> ``d:17-31`` -> ``AbsNotifyParse.e:23-32``), into the brightness the status
+    read's TLV 0x04 sets, in its raw unit: straightfloorlamp 69 (``VM4Light.Z3:709-728`` -> ``w5:552-564``),
+    h6069 284 (``CubeVM4Light.Z3:650-664`` -> ``p5:465-477``), rgbiclight 351 / 352 (``VM4Light.Z3:1054-1076``
+    -> ``S5:387-399``, raised to at least 1: :attr:`push_brightness_min`), h7020 296 / 316 / 318 / 337 / 391 /
+    411 (``NewDetailVM.Z3:853-881`` -> ``F5:223-234``) and h61d3 263 (``H703ADetailActivity``'s
+    ``VM4Light.Z3:953-977`` -> ``y5:688-700``): a devices.yaml status row's ``brightness_live: [push_20]``. A
+    push is read where the keep-alive reply is (``GoveeConnection``'s ``heartbeat_reply``: a frame notified
+    while no other frame has gone out since the beat), so one that comes after a frame the library sent,
+    before the next beat, stays in the receive queue, which the next operation drains; it sets
+    ``state.brightness`` (a live field, so the state is no longer optimistic) and reaches the callbacks when
+    it changes it. A push whose brightness range waits for the advertised pact is not read. False (the
+    default): no ``ee 20`` push is read."""
+    push_brightness_min: int = field(default=0, kw_only=True)
+    """With :attr:`push_brightness`: the least raw byte a pushed brightness is read as, where the screen's
+    setter raises the push and the status read's takes TLV 0x04 as it is. 1 on rgbiclight 351 / 352 (H617G /
+    R617G, H618G / R618D): ``VM4Light.S5:387-399`` sets the push through ``OpInfo4Detail.c:192-200``
+    (``RangesKt.coerceAtLeast(i, 1)``), where the status read's ``OpInfo4Detail.D`` sets the byte with no
+    floor (:180), so a pushed 0 shows as 1 on that screen (a devices.yaml status row's ``brightness_live:
+    [push_20_min_1]``). 0 (the default): the push as it is, as the other screens' setters take it
+    (straightfloorlamp ``Info4Detail.e:627-633``, h6069 ``CubeNewInfo4Detail.d:612-618``, h7020
+    ``Info4Detail.e:636-642``, h61d3 ``Info4Detail.e:648-654``)."""
+    push_power: str = field(default="", kw_only=True)
+    """With :attr:`heartbeat_power`: follow the screen's ``ee 30`` switch push on a held link, read under this
+    ``f_ee_30`` form (govee_common ``form_ee_30``; the spec's ``notify_30.is_on``), as its notify list does:
+    straightfloorlamp 69 (``generic_flags``: ``DefParser.makeSubSwitchNotifyParser`` -> ``M:76-81``, frame
+    byte 3 bit 0 the main switch, ``VM4Light.y5:577-589``), h7020 296 / 316 / 318 / 337 / 391 / 411 and h61d3
+    263 (``main_bit0_a``: ``DefParser.makeSwitchNotifyParser`` -> ``O:83-87``, frame byte 3 bit 0;
+    ``NewDetailVM.H5:258-270``, H3001's 361 alone taking another parser, ``Support.isGoodsTypeH3001:591-593``;
+    h61d3 ``VM4Light.z5:703-797``): set where a devices.yaml heartbeat_power row's ``power_live`` has
+    ``push_30``, with its wire ``f_ee_30``. It is read where the keep-alive reply is
+    (:attr:`push_brightness`) and folds as the reply does: a power read that sets ``state.is_on``, stamps
+    :attr:`~.device.Device.power_read_at` as the reply does and reaches the callbacks on a change; the re-read
+    follows only with :attr:`heartbeat_reread_on_push`. ``""`` (the default): no ``ee 30`` push is read (h6069
+    284 and rgbiclight 351 / 352, whose screens have no switch parser, and every row the library does not
+    follow on a held link)."""
+    color_readback_stop_at_miss: bool = field(default=False, kw_only=True)
+    """mechanism_a_direct on a polled profile: the poll's ``aa a5`` walk ends at the first group that gets no
+    usable reply and sends no later group, as the screen's connect compose ends there. Each group is a
+    ``Controller4ColorInfoByGroup`` step (``Companion.g:112-120``), a plain ``AbsController`` that is no
+    temporary or retried step (``IControllerNoEvent.DefaultImpls:31-37``), which the aa 05 step's callback
+    adds to the compose (``Compose4InfoBleIot$iControllerStrategy$1.v:125-132``), so a group that times out
+    ends it in ``result2Fail`` (``AbsComposeControllerWithOpResult.onOvertime:287-312``) and the comm drops
+    it (``ComposeBleComm.C:143-150`` -> ``v:305-313``): cubelight ``CubeVM4Light$connectBleSuc$2.l:47-60``
+    -> ``CubeVM4Light.l5:386-422`` (H6061, H6063, H6065, H6066, H6067, H606A) and h60a1
+    ``VM4Light.h5:327-340`` -> ``Y4:153-179`` (H60A1, H80A1). The groups read before it are the state's
+    segments, with no report shown over them (:func:`._fold.brought_every_piece`). A devices.yaml row's
+    ``color_group_stop_at_miss``. False (the default): a group that gets no usable reply is skipped and the
+    walk goes on, on the rows whose walk is not traced for it."""
+    ic_reads_around_status: tuple[bool, bool] = field(default=(False, False), kw_only=True)
+    """``readback="status"`` with :attr:`color_readback_live_ic`: the poll's ``aa 40`` reads ``(before,
+    after)`` the 0xAC status read, which give the live IC in place of a TLV 0x40 (a devices.yaml status row's
+    ``connect_reads`` / ``post_status_reads`` ``ic_num``: h7020
+    ``NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1``, whose connect read sends aa 40 ahead of the
+    0xAC read, as a mandatory step of the same read, and aa 40 again once it succeeds, ``NewDetailVM.s5``). An
+    unanswered or unusable first read ends the poll's status read, as it fails the app's. ``(False, False)``
+    (the default): a live-IC status profile takes the IC from the status read's TLV 0x40."""
+    color_readback_ic_raw: bool = field(default=False, kw_only=True)
+    """``readback="status"`` with :attr:`color_readback_live_ic`: the status read's TLV 0xA5 colour groups are
+    placed over the IC count itself, while the IC rule's pieces size the writes (a devices.yaml status row's
+    ``readback_pieces: ic_count``: ``Support.getColorPieceSize(gt, IC)`` = IC on the h7050 and h7020 status
+    screens, where the colour page writes ``ColorPieceConfig.b``'s pieces). False (the default): the rule's
+    pieces size both."""
+    light_num_per_unit: int = field(default=0, kw_only=True)
+    """``readback="polled"``: the screen reads the ``aa 0f`` string count at connect and stores the count
+    times this as its IC, the pieces its colour strip takes at each pick (h7020 ``NewDetailVM.u5``: the bulbs
+    per string, ``Support.getBulbStringSetting`` [1], or 1 on goodsType 149, where the count is the pieces; a
+    devices.yaml row's ``light_num_pieces``). :meth:`~.device.Device.update` reads it on every poll, after
+    ``aa 04`` and before ``aa 05``, and the pieces of a count of 0 or more become
+    :attr:`~.device.Device.segment_count`, at most ``build.MAX_MASK_SEGMENTS`` (the whole-device mask and
+    the segment index bound), while the ``aa a5`` walk takes them all (``NewDetailVM.D5``); a negative count
+    (a Java byte) is none. A write that carries a mask before any count is known reads it first and raises
+    GoveeBleError, sending nothing, without one, as a :attr:`section_count_read` profile does, and the walk
+    is skipped until a count is known. :attr:`segments` is then only the count before the first read. 0
+    (the default): no ``aa 0f`` read."""
+    color_readback_ic_walk_only: bool = field(default=False, kw_only=True)
+    """With :attr:`color_readback_live_ic` and without :attr:`color_writes_live_ic`: the IC rule sizes the
+    walk alone, the screen's strip keeping the static pieces it was built with (h6609 goodsType 260: the
+    ``H70C456789ColorMode`` strip is sized once by ``ColorPieceConfig.b``, its resize ``T()`` has no caller,
+    while ``DetailViewModel.T5`` walks ``H70c4Support.b(SKU, IC)`` pieces; a devices.yaml ``ic_pieces``
+    table with ``readback_only``). So a read that gives no count walks the static pieces
+    (:attr:`color_readback_segments`, else the segment count), as the screen walks the IC it stored, where a
+    live-IC profile otherwise skips the walk; and a walk of other than
+    :attr:`~.device.Device.segment_count` pieces is not applied, as the strip applies a colour or brightness
+    read-back only of its own length (``H70C456789ColorMode.updateColor`` / ``updateBrightness``), so it
+    shows none of it. False (the default, every profile before 1.9.0): the live-IC walk is skipped without a
+    count and applied whole."""
+    status_segment_count: bool = field(default=False, kw_only=True)
+    """``readback="status"``: the 0xAC status read's TLV 0xA1 (:attr:`status_decode` ``f_a1``
+    ``segment_info``) reports the device's segment count, its first byte, which the screen takes as its
+    colour page's piece count and so as every colour, colour-temperature and segment-brightness mask (the
+    H707A / H707B / H707C strings, cut by the user: ``H707AInfo4Detail.G0`` -> ``Info4BleIotDevice.P0`` /
+    ``SegmentIcDataCache``, ``H707AColorMode.X``). :attr:`~.device.Device.segment_count` becomes each read's
+    count, at most ``build.MAX_MASK_SEGMENTS`` (a count of 0 leaves it, as it leaves the page), and a write
+    that carries a mask before any count is known makes the status read first and raises GoveeBleError,
+    sending nothing, when the device reports none, as a :attr:`section_count_read` profile does. A reply
+    without TLV 0xA1 takes TLV 0x40's segment byte (:attr:`status_decode` ``f_40`` ``ic_pair``) where its IC
+    differs from the one the screen holds, as the reply's lambda does (``n6``), the screen's IC being each
+    read's 0x40 IC and 0xA1 IC sum, and before the first read none. :attr:`segments` is then only the count
+    before the first read (a devices.yaml status row that requests ``cmd_a1``). It needs ``0xA1`` in
+    :attr:`status_read` and ``f_a1`` ``segment_info`` in :attr:`status_decode`. False (the default): the
+    status read sizes nothing."""
     segment_color_temp: bool = field(default=True, kw_only=True)
     """Whether :meth:`~.device.Device.set_segment_color_temp` may send a colour temperature to a piece
     selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
@@ -551,6 +824,8 @@ class DeviceProfile:
             ("heartbeat_timing", HeartbeatTiming),
             ("white_type", WhiteType),
             ("session", SessionMode),
+            ("color_readback_ic_rounding", IcRounding),
+            ("kelvin_version_compare", KelvinCompare),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -563,6 +838,9 @@ class DeviceProfile:
         if self.kelvin_with_brightness and not self.whole_device_kelvin:
             raise GoveeBleInvalidValue(f"{where}: kelvin_with_brightness without whole_device_kelvin (the "
                                        "illumination tab writes every piece)")
+        if self.color_page is not None and self.color_page not in get_args(ColorPage):
+            raise GoveeBleInvalidValue(f"{where}: color_page={self.color_page!r} not in {get_args(ColorPage)}"
+                                       " or None")
         for name in ("mode_color_parse", "mode_color_parse_status"):
             value = getattr(self, name)
             if value not in _DECODES and not (value is None and name == "mode_color_parse_status"):
@@ -611,6 +889,51 @@ class DeviceProfile:
         if self.color_readback_ic_per_piece < 1:
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_ic_per_piece={self.color_readback_ic_per_piece!r}")
+        self._check_ic_rules(where)
+        if self.color_writes_live_ic and not self.color_readback_live_ic:
+            raise GoveeBleInvalidValue(f"{where}: color_writes_live_ic without color_readback_live_ic (the "
+                                       "live pieces come from its aa 40 read)")
+        if isinstance(self.ic_reads_around_status, list):
+            object.__setattr__(self, "ic_reads_around_status", tuple(self.ic_reads_around_status))
+        around = self.ic_reads_around_status
+        status_ic = self.readback == "status" and self.color_readback_live_ic
+        if (not (isinstance(around, tuple) and len(around) == 2 and all(isinstance(r, bool) for r in around))
+                or ((any(around) or self.color_readback_ic_raw) and not status_ic)):
+            raise GoveeBleInvalidValue(
+                f"{where}: ic_reads_around_status={around!r}, color_readback_ic_raw="
+                f"{self.color_readback_ic_raw!r} (two flags; either needs readback='status' with "
+                "color_readback_live_ic)")
+        reread = self.heartbeat_reread_pieces
+        if isinstance(reread, bool) or not isinstance(reread, int) or reread < 0:
+            raise GoveeBleInvalidValue(
+                f"{where}: heartbeat_reread_pieces={reread!r} (0, no re-read, or more)")
+        floor = self.push_brightness_min
+        if (isinstance(floor, bool) or not isinstance(floor, int) or floor < 0
+                or (floor and not self.push_brightness)):
+            raise GoveeBleInvalidValue(
+                f"{where}: push_brightness_min={floor!r} (0, or more with push_brightness)")
+        if self.color_readback_stop_at_miss and (self.color_readback != "mechanism_a_direct"
+                                                 or self.readback != "polled"):
+            raise GoveeBleInvalidValue(f"{where}: color_readback_stop_at_miss needs the mechanism_a_direct "
+                                       "walk on a polled profile")
+        push = self.push_power
+        if push and (push not in _C.FormEe30.__members__ or push == "unknown"):
+            raise GoveeBleInvalidValue(f"{where}: push_power={push!r} (a form_ee_30 form, or \"\")")
+        per_unit = self.light_num_per_unit
+        if isinstance(per_unit, bool) or not isinstance(per_unit, int) or per_unit < 0:
+            raise GoveeBleInvalidValue(
+                f"{where}: light_num_per_unit={per_unit!r} (0, no aa 0f read, or more)")
+        if self.color_readback_ic_walk_only and (
+                not self.color_readback_live_ic or self.color_writes_live_ic):
+            raise GoveeBleInvalidValue(f"{where}: color_readback_ic_walk_only needs color_readback_live_ic "
+                                       "and no color_writes_live_ic (the live pieces size the walk alone)")
+        if self.status_segment_count and (
+                self.readback != "status" or int(_C.Command.cmd_a1) not in self.status_read
+                or dict(self.status_decode).get("f_a1") != "segment_info"):
+            raise GoveeBleInvalidValue(
+                f"{where}: status_segment_count on readback={self.readback!r} with status_read="
+                f"{self.status_read!r} (the count is the 0xAC status read's TLV 0xA1, which it must request "
+                "and read as status_decode f_a1 segment_info)")
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))
@@ -632,6 +955,36 @@ class DeviceProfile:
             raise GoveeBleInvalidValue(
                 f"{where}: session='per_command' takes capabilities {sorted(c.value for c in card)} only and "
                 f"no zones; got {sorted(c.value for c in self.capabilities)} and {len(self.zones)} zones")
+
+    def _check_ic_rules(self, where: str) -> None:
+        """The IC rules' fields: :attr:`color_readback_ic_table` ``(IC, pieces)`` entries of ints, each IC
+        0 or more and once, the pieces 1 or more; :attr:`color_readback_ic_pair_cap` None or 1 or more, with
+        :attr:`color_readback_ic_pair_reader` and without :attr:`color_readback_ic_skip_zero`; not both; and
+        :attr:`color_readback_ic_otherwise` 1 or more where either is set, else None (a list is kept as a
+        tuple)."""
+        raw = self.color_readback_ic_table
+        try:
+            table = tuple(tuple(entry) for entry in raw)
+        except TypeError:   # a flat pair or None: not (IC, pieces) entries
+            raise GoveeBleInvalidValue(
+                f"{where}: color_readback_ic_table={raw!r} ((IC, pieces) entries)") from None
+        object.__setattr__(self, "color_readback_ic_table", table)
+        cap, otherwise = self.color_readback_ic_pair_cap, self.color_readback_ic_otherwise
+
+        def count(value: object, low: int) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool) and value >= low
+
+        if not (all(len(e) == 2 and count(e[0], 0) and count(e[1], 1) for e in table)
+                and len({e[0] for e in table}) == len(table)
+                and (cap is None or (count(cap, 1) and self.color_readback_ic_pair_reader
+                                     and not self.color_readback_ic_skip_zero))
+                and not (table and cap is not None)
+                and (count(otherwise, 1) if table or cap is not None else otherwise is None)):
+            raise GoveeBleInvalidValue(
+                f"{where}: color_readback_ic_table={table!r}, color_readback_ic_pair_cap={cap!r}, "
+                f"color_readback_ic_otherwise={otherwise!r}, color_readback_ic_pair_reader="
+                f"{self.color_readback_ic_pair_reader!r}, color_readback_ic_skip_zero="
+                f"{self.color_readback_ic_skip_zero!r}")
 
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of
@@ -663,7 +1016,8 @@ class DeviceProfile:
         """:attr:`status_decode`'s rules: ``(param, value)`` pairs, each param once and one of
         :data:`_STATUS_ENUMS` (a member name of its enum), ``num_per_group`` (1..255) or a flag (a bool);
         colour groups (``f_a5`` ``"color_group"``) need their rule, group size and 4-byte records, which is
-        what the status read reads (a list is kept as a tuple)."""
+        what the status read reads, and the one record (``"single_record"``) needs nothing more (a list is
+        kept as a tuple)."""
         bad = f"{where}: status_decode={self.status_decode!r}"
         try:
             pairs: tuple[tuple[Any, ...], ...] = tuple(tuple(pair) for pair in self.status_decode)
@@ -721,14 +1075,14 @@ class DeviceProfile:
         object.__setattr__(self, "scene_versions_by_firmware", gated)
         for soft, hard, versions in gated:
             gates = [g for g in (soft, hard) if g != ""]
-            if (not gates or not all(isinstance(g, str) and _resolve.version(g) is not None for g in gates)
+            if (not gates or not all(isinstance(g, str) and _resolve.parse_version(g) > 0 for g in gates)
                     or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in versions)):
                 raise GoveeBleInvalidValue(f"{where}: scene_versions_by_firmware={gated!r}")
 
     def _check_kelvin_by_version(self, where: str, name: str) -> None:
         """:attr:`kelvin_by_hardware` / :attr:`kelvin_by_software` (``name``)'s rules: well-formed entries,
-        highest version first, a base range, and an overlap with it for each entry and for the range valid
-        on every revision."""
+        highest version first (as :attr:`kelvin_version_compare` orders them), a base range, and an overlap
+        with it for each entry and for the range valid on every revision."""
         gated: tuple[tuple[str, int, int], ...] = getattr(self, name)
         if not gated:
             return
@@ -741,7 +1095,7 @@ class DeviceProfile:
         lo, hi = self.min_kelvin, self.max_kelvin
         if lo is None or hi is None:
             raise GoveeBleInvalidValue(f"{bad} needs min_kelvin and max_kelvin")
-        versions = [entry[0] for entry in gated]
+        versions = [_resolve.version_key(entry[0], self.kelvin_version_compare) for entry in gated]
         if versions != sorted(versions, reverse=True) or len(set(versions)) != len(versions):
             raise GoveeBleInvalidValue(f"{bad}: list the versions highest first, once each")
         if any(k_lo > hi or k_hi < lo for _version, k_lo, k_hi in gated):
@@ -817,8 +1171,10 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     row's facts from those the app runs at the write's pact (H615A-E's (65535, 255)). And so does a
     ``pact_required`` row: its goodsType also runs, at pacts the row doesn't list, a path the row doesn't
     serve (the (1,1) of straightfloorlamp 69, the h70b3 rows and pact_tvlightv2 24, the (1,2) / (1,3) of
-    h70b6 329), so a pact-less advert may be one of those. A pact route is its pact's alone, so a pact-less
-    advert takes the row's own route (H60A6: the 13 segments)."""
+    h70b6 329), so a pact-less advert may be one of those. So does a route only a pact branch's support
+    admits (dreamcolorlightv2 21 at (2,1), whose row is ``modelled`` at its other pacts): a pact-less advert
+    may be a unit at one of those. A pact route is its pact's alone, so a pact-less advert takes the row's own
+    route (H60A6: the 13 segments)."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -869,10 +1225,11 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     A SKU whose routes all need a pact is unsupported without one, whatever the goodsType: one only
     pact-conditioned reassignments' target rows route, as the app keeps a pact-less unit at its source
     goodsType; one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
-    that pact, where the app runs other frames than the row's; and one only ``pact_required`` rows route
-    (H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and the ``modelled`` h70b3 rows' H70B3 / H70B4 / H70B5 /
-    H6810 / H6811 / H8811), whose pact-less advert may carry a pact where the app runs a path the row
-    doesn't serve."""
+    that pact, where the app runs other frames than the row's; one only ``pact_required`` rows route
+    (H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and the h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 / H6811 /
+    H8811), whose pact-less advert may carry a pact where the app runs a path the row doesn't serve; and,
+    without ``allow_modelled``, one a row admits at some pacts alone (a pact branch's ``support``: H611A /
+    H6143 / H6144 at (2,1), ``modelled`` at (1,1) / (1,2) and with no pact)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -948,8 +1305,8 @@ def supported_skus(*, allow_modelled: bool = False) -> list[str]:
     """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
     ``allow_modelled`` a ``modelled`` one), at one pact at least. A SKU that several rows list needs the pact
     or the goodsType to pick its profile, and one whose routes all need a pact (a pact-conditioned
-    reassignment's target rows, a SKU a pairing write names at an exact pact, or a ``pact_required`` row's)
-    needs its pact (:func:`profile_for`)."""
+    reassignment's target rows, a SKU a pairing write names at an exact pact, a ``pact_required`` row's, or a
+    row's that a pact branch's support alone admits) needs its pact (:func:`profile_for`)."""
     skus = set(_ADMITTED[1])
     if allow_modelled:
         skus |= set(_MODELLED[1])
@@ -973,9 +1330,10 @@ def wire_profile(profile: DeviceProfile) -> Any:
     :attr:`DeviceProfile.relay_on_mask`, as the aa 01 heartbeat rule the library's poll follows:
     ``power_state.is_on_heartbeat``; else a light's,
     masks 0, with :attr:`DeviceProfile.light_nonzero`, the poll's rule, as both ``light_nonzero`` and
-    ``light_heartbeat_nonzero``), and on a ``readback="status"`` profile the 0xAC reply's decode
+    ``light_heartbeat_nonzero``), on a ``readback="status"`` profile the 0xAC reply's decode
     (:attr:`DeviceProfile.status_decode`: its forms and colour-group form, and the TLV 0x05's music layout and
-    empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with.
+    empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with,
+    and the ``ee 30`` push's ``f_ee_30`` where the profile follows it (:attr:`DeviceProfile.push_power`).
     Cached per set of facts (``_spec.profile``)."""
     status = profile.mode_color_parse_status
     mode_status = None if status is None else _decode(profile, status)
@@ -997,6 +1355,8 @@ def wire_profile(profile: DeviceProfile) -> Any:
     # (masks 0, govee_profile power_rule); each is already the rule the poll follows, so it fills both the
     # connect-read and the heartbeat params.
     mask = profile.relay_on_mask if profile.readback == "plug" else 0
+    if profile.push_power:   # the ee 30 switch push the profile follows (DeviceProfile.push_power)
+        reads["f_ee_30"] = int(_C.FormEe30[profile.push_power])
     return _spec.profile(**_decode(profile, profile.mode_color_parse),
                          mode_status=None if mode_status is None else tuple(sorted(mode_status.items())),
                          relay_on_mask=mask, relay_heartbeat_on_mask=mask,

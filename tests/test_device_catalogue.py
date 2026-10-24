@@ -64,11 +64,12 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     rows["64"] = {"models": ["H6047"]}
     assert [line.split(":")[0] for line in _resolve.catalogue(twin, {"H0064": 64}).review] == ["H0064"]
     # The build: an added SKU joins its row's profile, and a row its only SKU leaves is dropped. A by_model
-    # entry needs its SKU's row or catalogue route (H6009 / H6010's scene_power_on and H3511's wire counts
-    # are catalogue routes).
+    # entry needs its SKU's row or catalogue route (H6009 / H6010's scene_power_on, H3511's wire counts and
+    # H61B1's wire group are catalogue routes).
     with pytest.raises(SystemExit, match=re.escape("bulblightv3 by_model ['H6009', 'H6010']: no row")):
         gen.project(doc, schema, {"H0064": 64})
-    table, cut = gen.project(doc, schema, {"H0064": 64, "H6052": 23, "H6009": 64, "H6010": 64, "H3511": 349})
+    table, cut = gen.project(doc, schema, {"H0064": 64, "H6052": 23, "H6009": 64, "H6010": 64, "H3511": 349,
+                                           "H61B1": 123})
     groups = [skus for skus, _fields, _routes in _resolve.profiles(cut, table)]
     assert ("H6004", "H6006", "H6008", "H0064") in groups and not any("H6052" in g for g in groups)
     lamp = next(f for f in cut if f["id"] == "tablelampv1")["client_profile"]["by_goods_type"]

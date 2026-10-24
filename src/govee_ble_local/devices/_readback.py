@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from ..models import DeviceState, Segment
 from ..wire import build, parse, reassemble
@@ -27,6 +27,17 @@ ReadReply = Callable[[bytes], Awaitable[bytes | None]]
 
 QueryStatus = Callable[[], Awaitable[tuple[reassemble.StatusReply, list[bytes], list[bytes]]]]
 """One 0xAC status-burst query: ``(parsed, 0xAC frames, all frames)`` (``Device._query_status``)."""
+
+
+class Walk(NamedTuple):
+    """What a segment-colour walk read: ``segments``, the pieces its answered groups brought, each placed by
+    the group asked for, and ``pieces``, the pieces it walked (its groups cover them). A walk that had a
+    group go unanswered brought fewer. The app's connect read fails at that group: the group read is not a
+    temporary or retried step, so ``AbsComposeControllerWithOpResult.onOvertime:287-312`` ends the compose
+    in ``result2Fail``, and the screen syncs nothing from that read (:func:`._fold.brought_every_piece`)."""
+
+    segments: list[Segment]
+    pieces: int
 
 
 class ReadTarget(Protocol):
@@ -83,14 +94,14 @@ async def status_burst(dev: ReadTarget, query_status: QueryStatus) -> reassemble
     return st
 
 
-async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
+async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> Walk | None:
     """H61A8's per-segment colour (AA A5 <seq>, the V2 records with brightness): request each batch
-    and assemble positional segments, or None if no batch came back. per_batch / batch-count are
-    client constants (not frame-encoded: the screen's group size, 3 with brightness on the bench H61A8,
-    read back live). Each reply is placed by the batch asked for, as goodsType 19's screen does (see
-    the loop); a batch that didn't answer is left out. Kept apart from :func:`walk_mechanism_a_direct`
-    (H6047 / H6641, group size 4, colour only): the two share the wire opcode (0xA5), not the record
-    layout the library decodes."""
+    and assemble positional segments over the walk's pieces (:class:`Walk`), or None if no batch came
+    back. per_batch / batch-count are client constants (not frame-encoded: the screen's group size, 3
+    with brightness on the bench H61A8, read back live). Each reply is placed by the batch asked for, as
+    goodsType 19's screen does (see the loop); a batch that didn't answer is left out. Kept apart from
+    :func:`walk_mechanism_a_direct` (H6047 / H6641, group size 4, colour only): the two share the wire
+    opcode (0xA5), not the record layout the library decodes."""
     profile = dev.profile
     per_batch = profile.color_readback_per_batch   # >= 1, checked by DeviceProfile
     seg_count = profile.color_readback_segments or dev.segment_count
@@ -111,27 +122,50 @@ async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segme
             _LOGGER.debug("%s (%s): batch %d reply carries group %d; placed as batch %d, as the app does",
                           dev.address, dev.sku, seq, parsed[0], seq)
         batches.append((seq, parsed[1][: max(0, seg_count - (seq - 1) * per_batch)]))
-    return parse.bulb_groups_to_segments(batches, per_batch) or None
+    segments = parse.bulb_groups_to_segments(batches, per_batch)
+    return Walk(segments, seg_count) if segments else None
 
 
-async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
+async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
+                                  live_pieces: int | None = None, *,
+                                  stop_at_miss: bool = False) -> Walk | None:
     """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
-    requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
-    controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
-    size is the profile's `color_readback_per_batch` (the spec row's wire group num_per_group, 4 on
-    every current SKU). The total piece count — and hence the group count, ceil(pieces / group size) —
-    comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
-    10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
-    derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
-    the groups from the IC count it stored earlier; the library has none, so it skips the walk. With
+    requests (AA A5 <group>) over the walk's pieces (:class:`Walk`), or None when the walk was skipped or no
+    group came back. A different controller from H61A8's mechanism_b (BulbGroupColorV2); they only share
+    the wire opcode. Group size is the profile's `color_readback_per_batch` (the spec row's wire group
+    num_per_group, 4 on every current SKU). The total piece count — and hence the group count,
+    ceil(pieces / group size) — comes from either the segment count (`color_readback_segments`, else
+    ``Device.segment_count``: the static `segments`, H6047's 10, or the count an aa 41 read reported, H6062;
+    on the h7020 bulb strings
+    ``live_pieces``, the last aa 0f read's pieces, which may pass the 112 the masks carry, as
+    ``NewDetailVM.D5`` walks them all) or, when `color_readback_live_ic` is set (H6641), a live `0x40`
+    IC-count read
+    derived the way the app does (:func:`live_ic_pieces`; ``live_pieces``, where the caller made that read:
+    ``Device`` makes it once per poll, as it sizes the writes too). When that read fails the app still walks
+    the groups from the IC count it stored earlier; the library has none, so it skips the walk, but where the
+    rule sizes the walk alone (:func:`walk_pieces`, ``color_readback_ic_walk_only``: h6609 goodsType 260) it
+    walks the static pieces. With
     `color_readback_ic_sections` (goodsTypes 141 / 204) the same read's section sum sizes the walk, else the
     static count when it is 0, in Java's group count (:func:`_java_group_count`); a failed read skips it.
 
-    On goodsType 184 (H608A-D / H808A) the app sizes its first walk from the IC the screen opened with,
-    the account's stored count (``VM4H608A$connectBleSuc$1.l`` -> ``VM4H608A.a5``), and folds this
-    session's aa 40 count only afterwards (``VM4H608A.S4``, which also uploads it); the library sizes the
-    walk from this poll's aa 40. The two agree unless the IC changed while no app was connected, which the
-    app corrects on that same connect; the stored count is cloud data a local library doesn't have.
+    On goodsType 184 (H608A-D / H808A) the app sizes its first walk from the server's per-SKU IC, not the
+    account's: ``AcNewDetail4H608A.e3`` drops the account IC that ``Model.t`` passes, so
+    ``AbsAcLightDetail.K1`` takes ``SkuIcManager.d(sku)`` (``/appsku/v1/skus``), and
+    ``VM4H608A$connectBleSuc$1.l`` -> ``VM4H608A.a5`` walks that. The library sizes the walk from this poll's
+    aa 40 instead, a divergence the user approved (decision 21(a), "Live count only"). The app itself settles
+    on the live count: it folds this session's aa 40 count after the walk (``VM4H608A.S4``, which also
+    uploads it with ``updateDeviceIc``), so only a connect's first walk differs, and only where the
+    device's IC differs from the per-SKU one. An IC of 0, which ``S4`` skips, is no count
+    (``color_readback_ic_skip_zero``): the library skips that poll's walk where the app walks the count it
+    holds.
+
+    A group that gets no usable reply is skipped and the walk goes on; with ``stop_at_miss`` it ends there,
+    keeping the groups read before it, as a compose ends at a step that fails
+    (``AbsComposeControllerWithOpResult.onOvertime``) after each earlier step's callback has applied its group
+    (the keep-alive re-read, ``Compose4Off2On``; and the poll's walk on a
+    :attr:`~.profile.DeviceProfile.color_readback_stop_at_miss` profile, whose connect compose holds the
+    groups). The :class:`Walk` counts the pieces the walk covers either way, so a walk that lost a group never
+    reads as one that brought every piece.
 
     Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
@@ -139,21 +173,11 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     profile = dev.profile
     group_size = profile.color_readback_per_batch   # >= 1 (DeviceProfile); the spec's num_per_group
     if profile.color_readback_live_ic:
-        ic_reply = await read_reply(build.ic_count_query())
-        ic = parse.parse_ic_count(ic_reply) if ic_reply else None
-        if ic is None:
-            _LOGGER.debug(
-                "%s (%s): live IC-count read failed; skipping segment colour read-back",
-                dev.address, dev.sku,
-            )
+        live = (live_pieces if live_pieces is not None
+                else walk_pieces(dev, await read_live_ic(dev, read_reply)))
+        if live is None:
             return None
-        if ic.ic_count_checked is None:
-            _LOGGER.debug(
-                "%s (%s): implausible live IC count 0x%04x; skipping segment colour read-back",
-                dev.address, dev.sku, ic.ic_count,
-            )
-            return None
-        total = live_ic_pieces(dev, ic.ic_count_checked)
+        total = live
         group_count = build.ceil_div(total, group_size)
     elif profile.color_readback_ic_sections:
         sections = await _section_sum(dev, read_reply)
@@ -166,7 +190,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
         # throws before it places a group).
         total = max(0, wanted)
     else:
-        total = profile.color_readback_segments or dev.segment_count
+        total = (live_pieces if live_pieces is not None
+                 else profile.color_readback_segments or dev.segment_count)
         group_count = build.ceil_div(total, group_size)
 
     groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
@@ -175,13 +200,16 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
         expected = max(0, min(group_size, total - (g - 1) * group_size))
         parsed = parse.parse_direct_color_group(reply, expected) if reply else None
         if parsed is None:
+            if stop_at_miss:
+                break
             continue
         if parsed[0] != g:
             _LOGGER.debug("%s (%s): aa a5 reply carries group %d for the group %d read; "
                           "placing it by the request, as the app does",
                           dev.address, dev.sku, parsed[0], g)
         groups.append((g, parsed[1]))
-    return parse.direct_groups_to_segments(groups, group_size) or None
+    segments = parse.direct_groups_to_segments(groups, group_size)
+    return Walk(segments, total) if segments else None
 
 
 async def _section_sum(dev: ReadTarget, read_reply: ReadReply) -> int | None:
@@ -206,24 +234,97 @@ def _java_group_count(pieces: int, group_size: int) -> int:
     return max(0, (whole if pieces >= 0 else -whole) + (part != 0))
 
 
-def live_ic_pieces(dev: ReadTarget, ic: int) -> int:
-    """Colour pieces for a live ``aa 40`` IC count (``ic``: :attr:`parse.IcCount.ic_count_checked`), as
-    the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12 names):
-    ``ReadIcController.Companion.d`` reads bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the
-    spec's ``ic_count_signed``) and clamps it to ``H61D3Support.q(247)`` = 41..70
-    (``color_readback_ic_range``); ``H61D3Support.e(247, ic)`` = ceil(ic / 5) pieces
-    (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. The reply's
-    third byte is never used.
+def walk_pieces(dev: ReadTarget, live: int | None) -> int | None:
+    """The pieces a live-IC walk covers, from its ``aa 40`` read's pieces ``live`` (:func:`read_live_ic`):
+    those, or where the read gave no count, none (the walk is skipped: the app walks the count it stored,
+    which the library doesn't have), but the static pieces (``color_readback_segments``, else the segment
+    count) on a :attr:`~.profile.DeviceProfile.color_readback_ic_walk_only` profile (the devices.yaml
+    ``readback_only`` table). That screen walks the IC it stored at pairing (h6609 ``DetailViewModel.T5``
+    over ``H70c4Support.b(SKU, q())``) and writes the static pieces; the static count is its walk at every IC
+    but the table's. Logs which, where the read gave no count."""
+    if live is not None:
+        return live
+    if not dev.profile.color_readback_ic_walk_only:
+        _LOGGER.debug("%s (%s): no live IC count; skipping segment colour read-back", dev.address, dev.sku)
+        return None
+    pieces = dev.profile.color_readback_segments or dev.segment_count
+    _LOGGER.debug("%s (%s): no live IC count; walking the static %d pieces", dev.address, dev.sku, pieces)
+    return pieces
 
-    A count of 0x1000 or more never gets here: ``ReadIcController.Companion.a`` then takes its
-    byte-swap branch, which indexes past the 2-byte array it was given, so the app's read callback
-    never stores the count (``VM4Light.D5`` does not run), the same as a failed read; the spec's
-    ``ic_count_checked`` is None there and the walk skips."""
-    ic_range = dev.profile.color_readback_ic_range
+
+async def read_live_ic(dev: ReadTarget, read_reply: ReadReply) -> int | None:
+    """The ``aa 40`` read of :attr:`~.profile.DeviceProfile.color_readback_live_ic`: the pieces
+    :func:`live_ic_pieces` derives from its reply, or None (logged) when the read failed or the app's reader
+    would store no count (what the walk then does is :func:`walk_pieces`'s)."""
+    reply = await read_reply(build.ic_count_query())
+    ic = parse.parse_ic_count(reply) if reply else None
+    if ic is None:
+        _LOGGER.debug("%s (%s): live IC-count read failed: no count", dev.address, dev.sku)
+        return None
+    pieces = live_ic_pieces(dev, ic)
+    if pieces is None:
+        _LOGGER.debug("%s (%s): implausible live IC count 0x%04x: no count", dev.address, dev.sku,
+                      ic.ic_count)
+    return pieces
+
+
+def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
+    """Colour pieces (0 or more) for a live ``aa 40`` reply, by the profile's rule (the spec's ``ic_pieces``
+    object forms), or None where the app's reader stores no count, the same as a failed read.
+
+    The one-count rules take bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the spec's
+    ``ic_count_checked``). A count of 0x1000 or more has none: ``ReadIcController.Companion.a`` then takes
+    its byte-swap branch, which indexes past the 2-byte array it was given, so the app's read callback never
+    stores it (``VM4Light.D5`` does not run). The reply's third byte is never used. Where the screen reads
+    the reply with the IC-pair reader (``color_readback_ic_pair_reader``: the h705a screens'
+    ``ControllerIcNum.b`` and H1A45's ``ControllerIcNum.e``), that reader also throws on a second IC field
+    of 0x1000 or more (:attr:`parse.IcCount.ic_pair` None, the spec's ``app_pair_fails``), so there is no
+    count there either, whatever the rule. Under ``color_readback_ic_skip_zero`` an IC of 0 is none too:
+    h705a ``VM4H608A.S4`` (:516-538) skips it and keeps the count the screen holds (goodsType 184).
+
+    - The clamp and divisor, as the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12
+      names): ``ReadIcController.Companion.d`` clamps the count to ``H61D3Support.q(247)`` = 41..70
+      (``color_readback_ic_range``); ``H61D3Support.e(247, ic)`` = ceil(ic / 5) pieces
+      (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. h705a ``Support.b``
+      (:317-336) divides 125 / 240's count by 4 in Java's integer division
+      (``color_readback_ic_rounding`` floor).
+    - The table (``color_readback_ic_table``): h6609 ``Support.getColorPieceSize(173, IC)`` (:146-149), 18
+      pieces at IC 36, else 14 (``color_readback_ic_otherwise``); ``H70c4Support.b(SKU, IC)`` (:101-132) for
+      H70C4 / H70C5 / H70C7 / H6870 / H80C4 at goodsType 260, 20 at IC 1000, else 10, the walk's alone.
+    - The pair (``color_readback_ic_pair_cap``): the counts ``ControllerIcNum.e`` returns
+      (:attr:`parse.IcCount.ic_pair`). ``VM4Light.j5`` (:551-575) keeps the first and the second's IC,
+      ``VM4Light.h5`` (:1182-1199) stores the two only where the first is not 0, and ``H61D3Support.e``
+      (:1142-1153) gives ``min(IC 1, 15) + min(IC 2, 15)`` for two whose second is above 0, else 30
+      (goodsType 375)."""
+    profile = dev.profile
+    if profile.color_readback_ic_pair_reader and ic.ic_pair is None:
+        return None   # ControllerIcNum.e throws: no count is stored
+    otherwise = profile.color_readback_ic_otherwise or 0   # set with either rule (DeviceProfile)
+    cap = profile.color_readback_ic_pair_cap
+    if cap is not None:   # with color_readback_ic_pair_reader (DeviceProfile), so a pair is here
+        pair = ic.ic_pair or ()
+        if len(pair) == 2 and pair[0] != 0 and pair[1] > 0:
+            return max(0, min(pair[0], cap) + min(pair[1], cap))
+        return otherwise
+    return ic_rule_pieces(profile, ic.ic_count_checked)
+
+
+def ic_rule_pieces(profile: DeviceProfile, count: int | None) -> int | None:
+    """Colour pieces (0 or more) for an IC ``count`` by the profile's one-count rule (:func:`live_ic_pieces`'s
+    table or clamp and divisor), or None for no count: ``count`` None, or 0 under
+    ``color_readback_ic_skip_zero``. A status profile's TLV 0x40 count comes here as the screen's reader
+    returns it (``reassemble.StatusReply.ic_count``)."""
+    if count is None or (count == 0 and profile.color_readback_ic_skip_zero):
+        return None
+    otherwise = profile.color_readback_ic_otherwise or 0   # set with the table (DeviceProfile)
+    if profile.color_readback_ic_table:
+        return dict(profile.color_readback_ic_table).get(count, otherwise)
+    ic_range = profile.color_readback_ic_range
     # Every table profile has its clamp (devices/_resolve.py); a custom profile without one uses the
     # reported count as it is, never below 0.
-    clamped = max(0, ic) if ic_range is None else max(ic_range[0], min(ic_range[1], ic))
-    return build.ceil_div(clamped, dev.profile.color_readback_ic_per_piece)
+    clamped = max(0, count) if ic_range is None else max(ic_range[0], min(ic_range[1], count))
+    per = profile.color_readback_ic_per_piece
+    return clamped // per if profile.color_readback_ic_rounding == "floor" else build.ceil_div(clamped, per)
 
 
 async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:

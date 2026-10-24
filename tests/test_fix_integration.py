@@ -114,6 +114,7 @@ def _plug(monkeypatch: pytest.MonkeyPatch, send: Any, up: dict[str, bool]) -> De
     d = make_device(ble_device(ADDR, "H5083"), "H5083")
     assert d is not None
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_check = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock()  # type: ignore[method-assign]
     return d
 

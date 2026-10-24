@@ -180,6 +180,9 @@ Details:
   (`HeartHandler.e` restarts the wait on every send). A newdetail screen sends none until its connect-time info
   read is over (`ShareVM.R` -> `updateSkipHeart`), nor while a compose or multi-packet send is in flight
   (`AbsBle.I`). Per row: `devices.yaml` clientRow `heartbeat` / `heartbeat_timing`, and `timing.heartbeat`.
+  A status-read screen on `AA 01` takes its live switch from each reply (`ShareVM.N3` -> `J3`), and four of
+  them re-read the mode and colour on a change (`J3` -> `Compose4Off2On`: `AA 05`, then the screen's `AA A5`
+  groups); per row: clientRow `heartbeat_power` / `heartbeat_reread`.
   FIRMWARE-SOURCED: the H6006, H5083, H60A6 and H6047 firmware drop a link that has had no write for 10-11 s
   (H6006 `FUN_9b02801c`); the H6008 firmware has no such timer. Auto-disconnect status `19` triggers
   `EventAutoDisconnect`.

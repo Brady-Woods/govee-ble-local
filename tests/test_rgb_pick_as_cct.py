@@ -13,6 +13,10 @@ full ARGB int is exactly one of the 178 colours of the Kelvin tint table (``Cons
   ``33 05 0d <picked RGB> <K u2be> <first tint of K>``;
 * H6061 is covered in tests/test_h6061.py (``Config.Zt``), including its unchanged [2000, 9000] range.
 
+The read side follows the same rule on the stock colour page (``DeviceProfile.color_page``), whatever the
+decode: it shows a one-colour report that is such a tint as its colour temperature (``DelegateColorV2.W1``
+via ``KelvinConfig.i`` / ``c``).
+
 Every expected frame is either built by the independent ``_cct15`` / ``_cct0d`` helpers below or is
 a hex literal checked against them; none of it is hardware-verified."""
 from __future__ import annotations
@@ -22,13 +26,17 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst
 
+from govee_ble_local.devices import _fold
+from govee_ble_local.devices._readback import Walk
 from govee_ble_local.devices.device import Device
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import profile_for, wire_profile
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.models import DeviceState, Segment
 from govee_ble_local.registry import create_device
 from govee_ble_local.wire import build as b
+from govee_ble_local.wire import reassemble
 from govee_ble_local.wire.cct import _KELVIN_BY_TINT, kelvin_for_tint, tint_for_kelvin
 
 
@@ -49,7 +57,7 @@ def _rgb(colour: int) -> tuple[int, int, int]:
 def _dev(sku: str, segments: int | None = None) -> Device:
     d = create_device(ble_device("AA:BB:CC:DD:EE:99", sku), sku, allow_modelled=True)
     if segments is not None:
-        d.set_segment_count(segments)      # H6062 reports its own count; skip the aa 41 read
+        d.set_segment_count(segments)      # a device that reports its own count: skip its aa 41 / aa 40 read
     sent: list[bytes] = []
 
     async def send(frame: bytes, **_k: object) -> None:
@@ -92,13 +100,28 @@ APP_RANGES = {
     "H6006": (2700, 6500), "H6061": (2000, 9000),
     # H61A8: KelvinConfig.Config.z2, [2000, 9000] below hardware "3.08.01" (test_device_v3 has the branch)
     "H61A8": (2000, 9000),
+    # H60A1: KelvinConfig.Config.Y2, [2200, 6500] below hardware "1.04.03" (the branch below)
+    "H60A1": (2200, 6500),
 }
+# By the hardware version (aa 07 03) where the app gates the range. H60A1 (h60ax 235): Config.Y2 compares as
+# BleUtils.isHigherVersion does, numbers: q0 of each, the digits with the dots removed, 0 when empty or
+# unparsable, inclusive (KelvinConfig.java:406-407,423-427,1434-1436; BleUtils.java:74-79,327-335,1065-1074),
+# so 1.4.3 (143) and junk are below 1.04.03 (10403), where a string compare puts them above (1.02.00: the
+# user's two units). H61A8: Config.z2's string compare, so 10.00.00 is below 3.08.01, where the numbers put it
+# above.
+_V1, _V2 = (2200, 6500), (2700, 6500)
+APP_RANGES_BY_HARDWARE = [
+    ("H60A1", "1.04.03", _V2), *(("H60A1", hardware, _V1) for hardware in ("1.02.00", "1.4.3", "abc")),
+    ("H61A8", "10.00.00", (2000, 9000)), ("H61A8", "3.08.01", _V2)]
 
 
 def test_profile_ranges_equal_the_apps_kelvin_config() -> None:
-    for sku, (lo, hi) in APP_RANGES.items():
+    for sku, span in APP_RANGES.items():   # the profile's base range
         p = profile_for(sku)
-        assert p is not None and (p.min_kelvin, p.max_kelvin) == (lo, hi), sku
+        assert p is not None and (p.min_kelvin, p.max_kelvin) == span, sku
+    for sku, hardware, span in APP_RANGES_BY_HARDWARE:
+        p = profile_for(sku)
+        assert p is not None and _fold.kelvin_range(p, hardware) == span, (sku, hardware)
 
 
 # ── golden frames, whole device (Device.set_rgb and turn_on(rgb=)) ───────────
@@ -106,7 +129,7 @@ GOLDEN_WHOLE = [
     # (sku, segment count override, picked colour, frame). 0x15: white slot ff ff ff, picked colour as tint
     ("H60A6", None, 0xFFB969, "33051501ffffff0bb8ffb969ff1f0000000000a1"),    # 13 segments, mask 1fff
     ("H60A6", None, 0xFFB46B, "33051501ffffff0bb8ffb46bff1f0000000000ae"),    # second tint of 3000 K
-    ("H6641", None, 0xE5E9FF, "33051501ffffff1f40e5e9ffffff000000000071"),    # 16 segments, 8000 K
+    ("H6641", 14, 0xE5E9FF, "33051501ffffff1f40e5e9ffff3f0000000000b1"),      # 14 pieces (IC 70), 8000 K
     ("H6062", 15, 0xFFE7CC, "33051501ffffff1388ffe7ccff7f000000000012"),      # 15 sections, 5000 K
     ("H6047", None, 0xFFC987, "33051501ffffff0dacffc987ff03000000000031"),    # both bars, 3500 K
     # 0x0d: picked colour, K, then the FIRST tint of K (the same frame for the h6188 scheme)
@@ -119,7 +142,7 @@ GOLDEN_WHOLE = [
     ("H6004", None, 0xFFB46B, "33050dffb46b0bb8ffb969000000000000000087"),
     ("H6006", None, 0xFFD5A1, "33050dffd5a10fa0ffd5a1000000000000000094"),
     # white type rgb_self_tem_color, every piece: the slot is 00 00 00 (Bytes.r kind 3, 12 pieces)
-    ("H61E5", None, 0xFFB969, "330515010000000bb8ffb969ff0f00000000004e"),
+    ("H61E5", 12, 0xFFB969, "330515010000000bb8ffb969ff0f00000000004e"),
 ]
 
 
@@ -127,7 +150,7 @@ def test_the_golden_literals_equal_the_independent_frame_builders() -> None:
     # recomputed here (checksums included), so a wrong literal cannot hide a wrong builder
     assert bytes.fromhex(GOLDEN_WHOLE[0][3]) == _cct15(3000, (0xFF, 0xB9, 0x69), 0xFF, 0x1F)
     assert bytes.fromhex(GOLDEN_WHOLE[1][3]) == _cct15(3000, (0xFF, 0xB4, 0x6B), 0xFF, 0x1F)
-    assert bytes.fromhex(GOLDEN_WHOLE[2][3]) == _cct15(8000, (0xE5, 0xE9, 0xFF), 0xFF, 0xFF)
+    assert bytes.fromhex(GOLDEN_WHOLE[2][3]) == _cct15(8000, (0xE5, 0xE9, 0xFF), 0xFF, 0x3F)
     assert bytes.fromhex(GOLDEN_WHOLE[3][3]) == _cct15(5000, (0xFF, 0xE7, 0xCC), 0xFF, 0x7F)
     assert bytes.fromhex(GOLDEN_WHOLE[4][3]) == _cct15(3500, (0xFF, 0xC9, 0x87), 0xFF, 0x03)
     assert bytes.fromhex(GOLDEN_WHOLE[5][3]) == _cct0d(4000, (0xFF, 0xD5, 0xA1))
@@ -184,13 +207,13 @@ def test_h60a6_zone_picks_are_one_cct_frame_with_the_zone_mask() -> None:
 
 
 def test_segment_picks_are_one_cct_frame_with_the_segment_mask() -> None:
-    d = _dev("H6641")
+    d = _dev("H6641", 14)
     asyncio.run(d.set_segment_rgb([0, 3], (0xE5, 0xE9, 0xFF)))
     assert [f.hex() for f in _sent(d)] == [_cct15(8000, (0xE5, 0xE9, 0xFF), 0x09, 0x00).hex()]
     d = _dev("H6062", 33)                           # more than 16 segments: a 5-byte mask
     asyncio.run(d.set_segment_rgb([32], (0xFF, 0xE7, 0xCC)))
     assert _sent(d) == [_cct15(5000, (0xFF, 0xE7, 0xCC), 0, 0, 0, 0, 1)]
-    d = _dev("H61E5")             # rgb_self_tem_color on some pieces: the tint in the slot, Kelvin and tint 0
+    d = _dev("H61E5", 12)         # rgb_self_tem_color on some pieces: the tint in the slot, Kelvin and tint 0
     asyncio.run(d.set_segment_rgb([0], (0xFF, 0xB9, 0x69)))
     assert _sent(d) == [_frame(0x33, 0x05, 0x15, 0x01, 0xFF, 0xB9, 0x69, 0, 0, 0, 0, 0, 0x01, 0x00)]
 
@@ -210,7 +233,7 @@ def test_slider_paths_are_unchanged() -> None:
     d = _dev("H6008")
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [_cct0d(4000, (0xFF, 0xD5, 0xA1))]
-    d = _dev("H61E5")                   # white type rgb_self_tem_color over every piece: slot 00 00 00
+    d = _dev("H61E5", 12)               # white type rgb_self_tem_color over every piece: slot 00 00 00
     asyncio.run(d.set_color_temp(3000))
     asyncio.run(d.turn_on(kelvin=3000))
     whole = bytes.fromhex(GOLDEN_WHOLE[-1][3])
@@ -218,7 +241,7 @@ def test_slider_paths_are_unchanged() -> None:
 
 
 # ── every table colour, every scheme: CCT iff inside the SKU's inclusive range ─
-WHOLE_CASES = [("H60A6", None), ("H6641", None), ("H6062", 15), ("H6047", None),
+WHOLE_CASES = [("H60A6", None), ("H6641", 14), ("H6062", 15), ("H6047", None),
                ("H6188", None), ("H6008", None), ("H6004", None), ("H6052", None), ("H6006", None)]
 
 
@@ -280,7 +303,7 @@ def test_2000k_colour_is_rgb_below_a_2700k_minimum_and_cct_at_a_2000k_minimum() 
     asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
     assert _sent(d)[0].hex() == "33050dff8d0b0000000000000000000000000042"
     for sku in ("H6641", "H6052", "H6188", "H6062"):                       # minimum 2000
-        d = _dev(sku, 15 if sku == "H6062" else None)
+        d = _dev(sku, {"H6062": 15, "H6641": 14}.get(sku))
         asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
         assert d.state.color_temp_kelvin == 2000, sku
 
@@ -395,7 +418,7 @@ def test_h61a8_sends_the_apps_0x15_frames() -> None:
 # ── state after a conversion: Kelvin, no rgb (the app syncs the Kelvin) ──────
 # kelvin None: a SKU without COLOR_TEMP (H7318, legacy_02) keeps the picked colour, as ColorViewModel.u0 does.
 @pytest.mark.parametrize(("sku", "segments", "colour", "kelvin"),
-                         [("H60A6", None, 0xFFB969, 3000), ("H6641", None, 0xE5E9FF, 8000),
+                         [("H60A6", None, 0xFFB969, 3000), ("H6641", 14, 0xE5E9FF, 8000),
                           ("H6062", 15, 0xFFE7CC, 5000), ("H6047", None, 0xFFC987, 3500),
                           ("H6188", None, 0xFFD1A3, 4000), ("H6008", None, 0xFFB46B, 3000),
                           ("H6004", None, 0xFFB969, 3000), ("H6052", None, 0xFF8D0B, 2000),
@@ -419,6 +442,95 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
     assert d.state.last_color_temp_kelvin == kelvin
 
 
+# A report of one Kelvin tint colour in range reads as that colour temperature on the stock colour page,
+# from the status TLV 0x05 and from an aa 05 reply alike, whatever the decode; its Kelvin bytes are not read.
+# A row without a colour page (color_page none) reads it as decoded. Where the same read brings the segments
+# (the burst's TLV 0xA5 groups; the poll's aa a5 walk, after its aa 05) it folds only when every segment
+# shows that colour, as DelegateColorV2.W1 tests SubMode4Color.d, which those pieces fill; pieces that differ
+# keep the RGB, and pieces that all show another colour are shown instead (W1 shows d[0], or its Kelvin).
+# Segments held from before the read (a write's, an earlier read's) are not tested: d is the report's one
+# colour until the same read's groups replace it (h60a1 Info4Detail.Q:416-420, SubMode4Color.j:113-148).
+# A 0x15 report carries no colour and leaves d to the same read's pieces, so the page shows them there too
+# (h60a1 Info4Detail.Q:399-407, cubelight CubeNewInfo4Detail.U:488-537), its Kelvin above 0 held unless their
+# tint replaces it (Q:401-404). So does the h60a1 screen's 0x0d report of a Kelvin above 0, whose tint in d
+# the pieces replace (Q:416-426, SubMode4Color.j:124-126). The page tests a copy of d with each black colour
+# as (1, 1, 1) (ColorViewModel.initColor4Device:1194-1202), the pieces' or, with none, the report's. The
+# status path is checked where the burst brings the pieces: a polled row's status decode reads no TLV 0xA5.
+_TINT_4000 = (0x0D, 0xFF, 0xD5, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00)   # 4000 K's tint, Kelvin 0, no wire tint
+_REPORT_15 = (0x15, 0x01, 0x00, 0x00)   # the bench H60A6 burst's report (test_wire_reassemble._BURST)
+_TINT = (0xFF, 0xD5, 0xA1)
+_NO_PIECES = [
+    ("H70B3", (2, 1), "stock", (0x0D, 0xFF, 0x8D, 0x0B, 0x07, 0xD0), (None, 2000)),     # 2000 K: the low end
+    ("H70B1", (2, 1), "stock", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),     # its second, Kelvin 0
+    ("H6800", (2, 1), "stock", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K
+    ("H6840", (2, 1), "stock", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # no tint
+    ("H6052", (2, 1), "stock", (0x0D, 0xFF, 0xD5, 0xA1), (None, 4000)),                 # rgb_0d, colour only
+    ("H6052", (2, 1), "stock", (0x0D, 0x00, 0x00, 0x00), ((1, 1, 1), None)),           # black, as on the page
+    ("H6004", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_tint
+    ("H6061", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_0d
+    ("H60A6", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # kelvin_15_rgb_kelvin_0d
+    ("H6050", (1, 1), "stock", _TINT_4000, (None, 4000)),                    # rgb_kelvin_tint_positive_0d
+    ("H8015", (1, 1), "none", _TINT_4000, ((0xFF, 0xD5, 0xA1), None)),       # no colour page
+]
+
+
+@pytest.mark.parametrize(("sku", "pact", "page", "body", "shown", "pieces"), [
+    *((*case, ()) for case in _NO_PIECES),
+    # the walk's 14 pieces all the tint (its status decode reads no TLV 0xA5)
+    ("H60A1", (1, 1), "stock", _TINT_4000, (None, 4000), (_TINT,) * 14),
+    # the burst's 13 group pieces and the walk's alike, the last a near miss
+    ("H60A6", (1, 2), "stock", _TINT_4000, (_TINT, None), (_TINT,) * 12 + ((0xFF, 0xD5, 0xA2),)),
+    # the 13 pieces all show red, not the report's tint: the page shows red, with no Kelvin remembered
+    ("H60A6", (1, 2), "stock", _TINT_4000, ((0xFF, 0x00, 0x00), None), ((0xFF, 0x00, 0x00),) * 13),
+    # the bench 0x15 report over 13 pieces, the last a near miss: no one colour, so as decoded (colour kept)
+    ("H60A6", (1, 2), "stock", _REPORT_15, ((9, 9, 9), None), (_TINT,) * 12 + ((0xFF, 0xD5, 0xA2),)),
+    # a 0x15 report at 4000 K over the 13 pieces, all red: red, and the report's Kelvin held
+    ("H60A6", (1, 2), "stock", (0x15, 0x01, 0x0F, 0xA0), ((0xFF, 0x00, 0x00), None, 4000),
+     ((0xFF, 0x00, 0x00),) * 13),
+    # a 0x15 report the Glide's decode reads nothing from, then the walk's 20 pieces, all 4000 K's tint
+    ("H6061", (1, 1), "stock", _REPORT_15, (None, 4000), (_TINT,) * 20),
+    # the h60a1 screen's 0x0d report at 4000 K over the 13 pieces, all red: red, and the report's Kelvin held
+    ("H60A6", (1, 2), "stock", (0x0D, 0xFF, 0x00, 0x00, 0x0F, 0xA0), ((0xFF, 0x00, 0x00), None, 4000),
+     ((0xFF, 0x00, 0x00),) * 13),
+    # the bench 0x15 report over 12 black pieces and one (1, 1, 1): the page's copy shows black as (1, 1, 1)
+    ("H60A6", (1, 2), "stock", _REPORT_15, ((1, 1, 1), None), ((0, 0, 0),) * 12 + ((1, 1, 1),)),
+    # the walk's last group of the 20 goes unanswered (None): the app's connect read fails there and syncs
+    # nothing (h60a1 VM4Light.g5 -> j5), so the 16 red pieces are not shown and the report reads as decoded
+    ("H6061", (1, 1), "stock", _TINT_4000, (None, 4000), ((0xFF, 0x00, 0x00),) * 16 + (None,) * 4),
+])
+def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
+    sku: str, pact: tuple[int, int], page: str, body: tuple[int, ...],
+    shown: (tuple[tuple[int, int, int] | None, int | None]
+            | tuple[tuple[int, int, int] | None, int | None, int]),
+    pieces: tuple[tuple[int, int, int] | None, ...],
+) -> None:
+    p = profile_for(sku, pact=pact)      # a pact the row lists
+    assert p is not None and p.color_page == page
+    groups = b"".join(bytes([0xA5, 1 + 4 * len(rec), 1 + g // 4, *(v for rgb in rec for v in (100, *rgb))])
+                      for g in range(0, len(pieces), 4) for rec in [pieces[g:g + 4]] if None not in rec)
+    burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body]) + groups),
+                                    decode=wire_profile(p))
+    held = [Segment(0, (9, 9, 9), 100)]   # a held segment that is not the tint
+    via_status = DeviceState(rgb_color=(9, 9, 9), segments=list(held))
+    _fold.apply_status(p, via_status, burst)
+    poll = Device(p, ble_device("AA:BB:CC:DD:EE:98", sku), sku=sku)   # its aa 05 read, then the walk's pieces
+    poll._state.rgb_color, poll._state.segments = (9, 9, 9), list(held)
+    poll._read_reply = AsyncMock(return_value=_frame(0xAA, 0x05, *body))  # type: ignore[method-assign]
+    asyncio.run(poll._read_mode())
+    if pieces:
+        poll._apply_segments(Walk([Segment(i, rgb, 100) for i, rgb in enumerate(pieces) if rgb], len(pieces)))
+    # initColor4Device syncs a Kelvin only when every piece is one tint (KelvinConfig.f:144-157); a third
+    # value in shown is the Kelvin held otherwise
+    want = (*shown[:2], shown[2] if len(shown) == 3 else shown[1])
+    for state in (via_status, poll.state) if burst.segments or not pieces else (poll.state,):
+        assert (state.rgb_color, state.color_temp_kelvin, state.last_color_temp_kelvin) == want
+    # the next poll's aa 05 goes unanswered: its walk shows no report, not this poll's
+    poll._read_reply = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    asyncio.run(poll._read_mode())
+    poll._apply_segments(Walk([Segment(0, (1, 2, 3), 100)], 1))
+    assert (poll.state.rgb_color, poll.state.color_temp_kelvin) == shown[:2]
+
+
 def test_h6047_state_tracks_the_kelvin_per_bar() -> None:
     d = _dev("H6047")
     asyncio.run(d.set_rgb((0xFF, 0xC9, 0x87)))
@@ -434,6 +546,6 @@ def test_h6047_state_tracks_the_kelvin_per_bar() -> None:
 
 
 def test_segment_pick_updates_the_segment_colour_state() -> None:
-    d = _dev("H6641")
+    d = _dev("H6641", 14)
     asyncio.run(d.set_segment_rgb([2], (0xE5, 0xE9, 0xFF)))
     assert [(s.index, s.rgb) for s in d.state.segments] == [(2, (0xE5, 0xE9, 0xFF))]

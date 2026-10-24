@@ -256,9 +256,11 @@
           "description": "Discriminators a thin client feeds the parametric .ksy types (facts not in the byte stream); wire is the govee_profile context as data.",
           "properties": {
             "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
-            "color_scheme": { "type": "string", "enum": ["h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02", "kelvin_v9"], "description": "Colour-write byte-layout family, the app's colour instruction for the SKU (Config.J[version]): 'h60a6' = 0x15 with a segment mask (Bytes.h / Bytes.r), 'h6006' = 0x0d with the tint in both slots (Config.bu, Bytes.f / Bytes.p), 'h6188' = 0x0d with the white-slot CCT (Config.GM -> Bytes.A, the illumination tab's), 'h61a8' = 0x0b with no CCT (Config.cu, Bytes.d), 'h6061' = 0x15 colour version 5, whole device (Config.Zt: Bytes.l RGB, Bytes.u CCT), 'legacy_02' = 0x02, whole device (Config.fu: Bytes.a, and Bytes.o for a pick that is a Kelvin tint in the row's kelvin_range, which a row with rgb needs even without color_temp), 'kelvin_v9' = 15 04 <K u16be>, colour instruction 9, a Kelvin only: no RGB frame and no mask (Config.N[9] = JM -> Bytes.D; the colour page's Config.J[9] = hu maps a pick to its Kelvin first)." },
+            "color_scheme": { "type": "string", "enum": ["h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02", "kelvin_v9", "h3010"], "description": "Colour-write byte-layout family, the app's colour instruction for the SKU (Config.J[version]): 'h60a6' = 0x15 with a segment mask (Bytes.h / Bytes.r), 'h6006' = 0x0d with the tint in both slots (Config.bu, Bytes.f / Bytes.p), 'h6188' = 0x0d with the white-slot CCT (Config.GM -> Bytes.A, the illumination tab's), 'h61a8' = 0x0b with no CCT (Config.cu, Bytes.d), 'h6061' = 0x15 colour version 5, whole device (Config.Zt: Bytes.l RGB, Bytes.u CCT), 'legacy_02' = 0x02, whole device (Config.fu: Bytes.a, and Bytes.o for a pick that is a Kelvin tint in the row's kelvin_range, which a row with rgb needs even without color_temp), 'kelvin_v9' = 15 04 <K u16be>, colour instruction 9, a Kelvin only: no RGB frame and no mask (Config.N[9] = JM -> Bytes.D; the colour page's Config.J[9] = hu maps a pick to its Kelvin first), 'h3010' = colour version 8, whole device (Config.gu: Bytes.j RGB, Bytes.t CCT), sent as one MultiController unit, the 0xA3 packets of govee_upload color_multi_value on comm byte 0x6e and then 33 05 15 00 (ColorModeControllerConfig.j, where LightColorCapabilityCenter.b2 holds: goodsType 411)." },
             "power_read": { "type": "string", "enum": ["aa01", "ac_status", "aa34_detail", "advert"], "description": "Power source (govee_state power_state.is_on): 'aa01' = the aa 01 read at connect, on when the byte == 1 (any non-zero byte under the wire power light_nonzero); 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0; 'aa34_detail' = the aa 34 device-detail read at connect (no aa 01 read, and no advertised on/off: power_write; wire f_34 device_detail), on while the light is open (govee_state device_detail.light_open, byte 0 bit 7: the screen's on / off and the light switch's state, whatever the white noise does; H6057), with power_write light_switch; 'advert' = no GATT read: only the advertisement's switch byte, read as the device-list card reads it (source advert: govee_manufacturer_data device_state read as power_state, on when its byte == 1; AbsBleIotItem.B -> AbsBaseBleModel.z -> BleUtil.parseBleBroadOnOff)." },
             "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1 (!= 0 under the wire power light_heartbeat_nonzero or light_nonzero); 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
+            "brightness_live": { "type": "array", "uniqueItems": true, "maxItems": 1, "items": { "type": "string", "enum": ["push_20", "push_20_min_1"] }, "description": "Live brightness after connect that the library follows on a held link: 'push_20' = the ee 20 brightness push, frame byte 2 unsigned, the status read's brightness unit (DefParser.makeBrightnessNotifyParser -> p, base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:97-102,195-199,334-341; base-classes10/com/govee/base2light/ble/comm/AbsNotify.java:17-41, AbsNotifyParse.java:23-32), which the screen's notify list (its view model's Z3) registers; 'push_20_min_1' = the same push, which the screen's setter raises to at least 1 where the status read's setter takes the byte as it is (rgbiclight: VM4Light.S5 -> OpInfo4Detail.c, RangesKt.coerceAtLeast(i, 1), base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:192-200, beside OpInfo4Detail.D's setBrightness, :180; DeviceProfile.push_brightness_min 1). Served only with heartbeat_power (DeviceProfile.push_brightness: the reply's hook, timing.heartbeat.deviations), and set on those rows whose screen registers it; elsewhere the poll's own brightness read stands in and the family's notify list documents the push." },
+            "color_group_stop_at_miss": { "type": "boolean", "description": "true = the connect read's aa a5 colour-group walk (connect_reads color_group, the direct read-back) ends at the first group that goes unanswered (or whose reply is unusable), sending no later group, as the screen's connect compose ends there: each group is a Controller4ColorInfoByGroup step (Companion.g, base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:112-120), a plain AbsController whose isTempTryComm / needRetryComm are false (base-classes10/com/govee/base2light/ble/controller/IControllerNoEvent.java:31-37, AbsControllerNoEvent4Single.java:182-208), added to the connect compose after the aa 05 (base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:125-132,238-250), so a group that times out ends the compose in result2Fail (base-classes10/com/govee/base2light/ble/controller/AbsComposeControllerWithOpResult.java:287-312) and the comm drops it (base-classes10/com/govee/base2light/ble/comm/ComposeBleComm.java:143-150,305-313). The groups read before it stay the state's segments, and the read shows no report over them (it did not bring every piece). Set where the screen's walk is traced to that compose: h6061 (CubeVM4Light$connectBleSuc$2.l -> CubeVM4Light.l5) and h60ax 235 (h60a1 VM4Light.h5 -> Y4). Only with the direct walk on a polled row (DeviceProfile.color_readback_stop_at_miss). Absent = a group that gets no usable reply is skipped and the walk goes on, on the rows whose walk is not traced for it." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
             "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientModel" }, "description": "Per-SKU overrides (keys = a model of the family): the colour report and the Kelvin and brightness ranges; a by_goods_type entry for the device's gt wins over it." },
@@ -324,12 +326,19 @@
     "modeColorVersion": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "A firmware version 'a.bb.cc', compared field by field; an empty or unparsable device version fails (the older branch applies)."
+      "description": "A firmware version 'a.bb.cc', compared as the app's BleUtil.parseVersion compares it (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121; BleUtils.q0, base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074, is the same: the digits with the dots removed, as one int, so 1.6.0 is below 1.06.00); an empty or unparsable device version parses to 0 and fails (the older branch applies). A kelvin_range item's gate compares as its compare says (clientFirmware), a string compare by default (KelvinConfig)."
     },
     "commandId": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
       "description": "A govee_common::command member id (govee_common.ksy enum command), e.g. cmd_41, color_group, plug_sync_time."
+    },
+    "connectRead": {
+      "anyOf": [
+        { "$ref": "#/$defs/commandId", "description": "An aa <command> read, by its govee_common::command id." },
+        { "const": "special_info", "description": "The 0xAC special-info read ac a1 (govee_ble_frame.ksy status_command special_info), whose reply's segment IC record (sub segment_ic, govee_status_stream segment_ic_info) is the device's segment count: the goodsType 180 screen's (VM4Light.x5)." }
+      ],
+      "description": "One connect read (clientRow connect_reads)."
     },
     "docRef": {
       "type": "array",
@@ -360,6 +369,8 @@
         "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" },
         "power_write": { "enum": ["light_switch"], "description": "The whole-device power write where the HA light's power is not the 33 01 main switch (absent = the main switch; a zoned fixture without one writes 33 30 per zone, a plug its relay_power). 'light_switch' = the H6057 header's light switch, 33 30 <1 / 0> (govee_ble_frame cmd_30_write under form_30 light_switch: H6057DetailVM.h5, BleProtocol.command_light_switch), the light alone: the white-noise speaker keeps playing on off. It goes with power_read aa34_detail (its state is the device_detail light_open flag, the screen's on / off), which is then the power's only read-back: the advertisement's switch byte is not taken for it, since the device-list card that reads it (AbsBaseBleModel.z) toggles the 33 01 main switch (AbsLightModel4BleIot.v0 -> AbsDeviceModel4BleIot.l) and the control screen never reads it. It needs wire f_30 light_switch, and is refused on a zoned row (the user's decision for h6057 104, 2026-10-22: 'Light switch 33 30')." },
         "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" },
+        "brightness_live": { "$ref": "#/$defs/family/properties/client_profile/properties/brightness_live" },
+        "color_group_stop_at_miss": { "$ref": "#/$defs/family/properties/client_profile/properties/color_group_stop_at_miss" },
         "heartbeat": {
           "oneOf": [
             { "$ref": "#/$defs/commandId", "enum": ["power", "heartbeat", "volume", "cmd_36"] },
@@ -367,6 +378,8 @@
           ],
           "description": "The keep-alive read the control screen sends while the link is up (timing.heartbeat): aa <command> with the zero fill, govee_ble_frame read_request with no selector. The command is a govee_common::command member id: the ConnectHeartbeat type the screen's view model picks, ShareVM.K3 = ConnectHeartbeat.a(I3()): 1 power = aa 01 when I3 is true, 2 heartbeat = aa 00 when it is false (ConnectHeartbeat.c also maps 3 -> aa 33 and 4 -> aa 36); or the controller of the IHeart its A3 sets (BleComm.l: aa 36 on H6047 / H6042, aa 33 on H610A); or the plug screens' (h5080 BleComm.l HeartControllerV2, ctlchannel HeartGMessage: aa 01); or 'none' where the path sends none. Set on each row with support, which cites the deciding Class.method in doc-ref; no family default." },
         "heartbeat_timing": { "enum": ["fixed_rate", "after_quiet"], "description": "When the heartbeat goes out (timing.heartbeat.timing): 'fixed_rate' = every interval_ms from the screen's start (AbsBle.HeartRunnable; a tick due while the link is busy is dropped, not queued); 'after_quiet' = interval_ms after the last frame the screen sent, every send restarting the wait (ctlchannel HeartHandler.e). Absent = fixed_rate." },
+        "heartbeat_power": { "type": "boolean", "description": "true = the library follows the screen's aa 01 keep-alive power on this status row (timing.heartbeat.deviations; DeviceProfile.heartbeat_power): the 0xAC status read once per link, as the screen reads it once per connect (afterConnectedSingleReadDeviceInfo), then the power from byte 2 == 1 of each aa 01 reply (BleComm.G -> ShareVM.N3 -> J3), a power read that stamps Device.power_read_at. Only on a status row (power_read ac_status) whose power_live has heartbeat_aa01, with heartbeat power and no zones (the reply is the one switch). Every status row on the aa 01 keep-alive says it (the resolver refuses one that doesn't): the rows the user's decision 17 named (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313, h3700 383), the h7020 rows on 296's screen, 316 / 318 / 337 / 391 / 411 (NewDetailVM.I3 true, J3 sets the switch from each reply; the user's decision 26), and h61d3 263. The ee pushes such a row's screen follows go through the reply's hook too: brightness_live push_20, and power_live push_30 with the wire f_ee_30 (DeviceProfile.push_brightness / push_power). Absent = the status read on every poll, its TLV 0x01 standing in for the reply." },
+        "heartbeat_reread": { "type": "object", "additionalProperties": false, "required": ["pieces"], "properties": { "pieces": { "type": "integer", "minimum": 1, "description": "The pieces the screen's aa a5 groups walk on the re-read (doc cites the count)." }, "push_on": { "type": "boolean", "description": "true = an ee 30 switch push that changes the switch starts the same re-read, as the screen's push handler does (h61d3 263, H703ADetailActivity's VM4Light: split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:703-797 z5 -> 222-259 D5, the handler J3 (:827-829) runs, 300 ms later on 263, H61D3Support.l0; DeviceProfile.heartbeat_reread_on_push). Needs a push_30 the library reads (power_live push_30 with the wire f_ee_30). Absent = a push sets the switch alone, and the next keep-alive reply then finds no change." } }, "description": "With heartbeat_power: the screen's re-read when a keep-alive reply changes the switch (J3 -> Compose4Off2On, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-81,99-107): its timer, sleep and wake reads (left out, as connect_reads leaves the setting reads out), the aa 05 mode read (decoded by the row's mode_color_parse), then the aa a5 colour groups the screen's mode callback adds, 1 .. ceil(pieces / the wire group's num_per_group), four-byte [brightness, R, G, B] records (Controller4ColorInfoByGroup.generateReadController), ending at the first that goes unanswered (AbsComposeControllerWithOpResult.onOvertime). The library sends it at once on the link the reply came on (DeviceProfile.heartbeat_reread_pieces), and applies the colours as segments where the row has segments over exactly these pieces. Needs the wire group num_per_group. Absent = the screen sets the switch alone (J3 with no compose: h7086 293, h7020 296, h7076 313, h3700 383)." },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" },
@@ -405,9 +418,12 @@
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this goodsType's colour page; wins over the family's specs.kelvin_range." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" },
         "mode_reports_kelvin": { "type": "boolean", "description": "false = the device's aa 05 colour report carries Kelvin 0 after a colour-temperature write, so the Kelvin last written stands, as the screen keeps what it set (hardware-observed; doc names the device); absent = the report carries it." },
+        "color_page": { "enum": ["stock", "none"], "description": "The colour page the control screen's DelegateCurMode builds (base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-203), which decides how a reported colour is shown. stock = DelegateColorV2: built when the screen's view model is an IColorModeFuc and no DeviceDetailConfig.R interceptor (DeviceDetailConfig.java:275-285) supports the device, and shown, the screen's mode list holding the colour page (mode 9). Its w1 (colorv2/DelegateColorV2.java:666-730, observing the report's SubMode4Color through ColorViewModel.initColor4Device:1182-1224 and v1:625-630) hands the report's colours to W1:1105-1123: one colour that is a Kelvin tint in the device's range (KelvinConfig.i:193-200, ColorUtils.i:261-276, inclusive) is shown as the colour temperature KelvinConfig.c:119-122 of it, else as that colour. The library folds such a report the same way, whatever the decode (DeviceProfile.color_page; devices._fold). A colour that is not a mode report's is not covered: h61d3 263's one-record status TLV 0xA5 (SubMode4Color.l), which its stock page shows the same way, reads as decoded until the H703A / H703B step (decision 27), and that row has no color_page. none = the screen shows no colour page (its mode list has no mode 9, e.g. bulblight VM4Light.C3 = [13] on goodsType 328), so no page tests the report; the library reads it as the decode does. The page's one override is DeviceDetailParams.Build.U (DeviceDetailParams.java:441-445 -> DeviceDetailConfig.l:614-617 -> g:495-497, the list R reads); in 7.7.02 only rgbiclight h6160 DetailConfig.init:76-105 (DetailConfig$init$4) sets one, for H6163 / H6117 at goodsType 0 (a row with no support), and its DelegateColor4H6163 extends DelegateColorV2 and keeps w1 / W1 (DelegateColor4H6163.m:75-82 -> DelegateColorV2.m:1141-1159 -> v1). A screen's own colour strip (DeviceDetailParams.Build.V, e.g. CubeColorModeV2) changes nothing here. Required, and only allowed, on a row with color_temp whose mode decode (mode_color_parse or mode_color_parse_status) reports a colour (a mode_color_decode of rgb_kelvin_tint, rgb_kelvin_tint_positive, rgb_kelvin_0d, rgb_kelvin_0d_nocct, rgb or bri_rgb_pair); each such row's doc-ref cites its screen's detail config (DeviceDetailConfig.l)." },
+        "kelvin_readback": { "enum": ["pieces"], "description": "Where the screen takes the colour-temperature state from on a read-back, where not the mode report's Kelvin (absent). pieces = the colour read-back's pieces, once the connect read has read them all: the Kelvin of their one colour when every piece shows the same one and it is one of the app's tint colours (its whole 1000-10000 K table, ColorUtils.C, not the row's kelvin_range), else none; it replaces the mode report's Kelvin as the colour mode's, and a non-zero one is the screen's held Kelvin whatever the mode (goodsType 180: VM4Light.g5 -> ColorUtils.r, SubMode4Color.s, syncKelvin). Needs color_temp and the direct colour read-back on a polled row whose walk is not IC-sized." },
         "status_read": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; [] = the bare read ac 03 00, no types requested, whose reply carries the TLVs the firmware chooses (Compose4BaseInfoSingleRead.Companion.a passes no ext bytes; the h70dx screen); absent = no status read." },
         "device_info_reads": { "enum": ["none", "firmware"], "description": "A status row (status_read): whether the library adds its aa 06 / aa 07 03 / aa 07 02 device-info reads to the first poll. none = the screen sends none of them (doc cites its Compose4BaseInfoSingleRead connect read, whose reply's TLV 0x07 carries the versions and device id: Compose4BaseInfoSingleRead.w, and the callback that takes them), so the library sends none either and takes them from TLV 0x07 alone; firmware = the library sends them where the screen does not, a FIRMWARE-SOURCED extension (CLAUDE.md rule 6) that doc cites (a firmware handler or a bench observation). There is no third value: a status row without that evidence sends none, as its screen does (the user's decision, 2026-10-22). Absent on every other row, where the library always sends them." },
-        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The state reads (aa <command>) the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order; device-info, timer and Wi-Fi reads are not listed." },
+        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectRead" }, "description": "The state reads the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order: aa <command> reads and the 0xAC special-info read (connectRead); device-info, timer and Wi-Fi reads are not listed. On a status_read row they are the reads sent before the 0xAC read, in the same connect read (Compose4BaseInfoSingleRead.Companion.c adds them ahead of its time sync and ControllerSingleRead), each one a mandatory step of it (AbsComposeControllerWithOpResult.onOvertime fails the read)." },
+        "post_status_reads": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "On a status_read row: the state reads (aa <command>) the screen sends after the 0xAC read succeeds, in the app's order (h7020 NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o -> NewDetailVM.s5), the setting reads left out as in connect_reads; absent = none." },
         "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
         "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
         "ic_pieces": {
@@ -419,14 +435,57 @@
               "properties": {
                 "min_ic": { "type": "integer", "minimum": 0 },
                 "max_ic": { "type": "integer", "minimum": 0 },
-                "ic_per_piece": { "type": "integer", "minimum": 1 }
+                "ic_per_piece": { "type": "integer", "minimum": 1 },
+                "rounding": { "enum": ["ceil", "floor"], "description": "How the division rounds: ceil (absent: IC / n + (IC % n != 0), H61D3Support.e) or floor (Java's integer division IC / n, h705a Support.b for 125 / 240)." },
+                "skip_zero": { "type": "boolean", "description": "true = an IC count of 0 gives no count, as a failed read: the screen's IC check skips it and keeps the count it stored (h705a VM4H608A.S4 for 184), so the writes keep the count they have and that poll's walk is skipped. Absent = 0 is a count." }
               },
-              "description": "ceil(clamp(IC, min_ic, max_ic) / ic_per_piece) pieces."
+              "description": "clamp(IC, min_ic, max_ic) / ic_per_piece pieces, rounded as rounding says (up when absent)."
             },
-            { "const": "fixed", "description": "The IC count sizes nothing: the screen's piece count is fixed (the row's static pieces)." },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["table", "otherwise"],
+              "properties": {
+                "table": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["ic", "pieces"],
+                    "properties": { "ic": { "type": "integer", "minimum": 0 }, "pieces": { "type": "integer", "minimum": 1 } }
+                  },
+                  "description": "IC counts the rule names, each with its pieces (an IC at most once)."
+                },
+                "otherwise": { "type": "integer", "minimum": 1, "description": "The pieces at any other IC count." },
+                "readback_only": { "type": "boolean", "description": "true = the rule sizes the direct read-back's walk alone, and the colour writes keep the static pieces (wire num_segments), as the h6609 260 strip's position set is sized once by ColorPieceConfig.b (H70C456789ColorMode's constructor; its resize T() has no caller) while DetailViewModel.T5 walks H70c4Support.b(SKU, IC) pieces; a read that gives no count walks the static pieces, as the screen walks its stored IC's, and a walk of other than the static pieces is made and not applied, as the strip applies a read-back only of its own length (H70C456789ColorMode.updateColor / updateBrightness). The library's DeviceProfile.color_readback_ic_walk_only. Absent = the pieces size the writes too." }
+              },
+              "description": "Pieces by the IC count's value: the entry's where the IC equals its ic, else otherwise (h6609 Support.getColorPieceSize(173, IC): 18 at 36, else 14; H70c4Support.b for H70C4 / H70C5 / H70C7 / H6870 / H80C4 at 260: 20 at 1000, else 10, the read-back only)."
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pair_max", "otherwise"],
+              "properties": {
+                "pair_max": { "type": "integer", "minimum": 1, "description": "The most pieces each strip's IC count gives." },
+                "otherwise": { "type": "integer", "minimum": 1, "description": "The pieces when the reply carries no second strip." }
+              },
+              "description": "Two strips: min(IC 1, pair_max) + min(IC 2, pair_max) where the IC-pair reader (ControllerIcNum.e) returns a second pair, the first IC is not 0 (the list VM4Light.h5 keeps) and the second is above 0, else otherwise; no count where that reader throws (govee_state ic_count app_pair_fails). H61D3Support.e and ColorModeH1A45's strip for goodsType 375: min(ic1, 15) + min(ic2, 15), else 30."
+            },
+            { "const": "fixed", "description": "The aa 40 IC count does not size the pieces: the screen reads it and the library discards it. The pieces are the row's static count, or, with the special_info connect read, the segment count the device reports (goodsType 180)." },
             { "const": "sections", "description": "The read-back walks the aa 40 reply's two section bytes summed as Java bytes (govee_state ic_count section_sum, as the sectioned IC-pair reader ControllerIcNum.d passes them on) when the sum is not 0, else the row's static pieces, in Java's sum / group + (sum % group != 0) groups (none below 1); no walk where the reader throws (rgbiclight VM4Light.N5). Writes keep the static pieces." }
           ],
-          "description": "The colour pieces from the IC count read at connect (connect_reads ic_num)."
+          "description": "The colour pieces from the IC count read at connect: the aa 40 read (connect_reads ic_num, and on a status_read row post_status_reads ic_num: the reads around the 0xAC read) or, on a status_read row, the 0xAC read's TLV 0x40 (status_read ic_num), which the row's wire f_40 reads (one_count signed, one_count_u16 unsigned: govee_state ic_count ic_count / ic_count_u16, with no byte-order check). Each read stores the count, as the screen does (Info4BleIotDevice.G0), and a TLV 0x40 ahead of the TLV 0xA5 sizes that burst's colour groups, as the screen's lambda reads q() at each 0xA5 TLV. An object form derives the pieces from the aa 40 reply's IC count (govee_state ic_count ic_count_checked; no count where it is absent), or from its IC pair, or from the TLV 0x40's count; a status_read row takes the object forms only. Where the row's wire f_40 is ic_pair the screen reads the reply with the IC-pair reader (ControllerIcNum.e), and there is no count where that reader throws (govee_state ic_count app_pair_fails: either IC field 0x1000 or more), whichever form; the pair form needs it. An object form's pieces size the direct read-back's walk and every colour write: they are every pick's position set, the whole-device mask included, with no cap but the rule's, as the screens that size their strip by the IC count build it (ColorPieceConfig.c over the stored IC; the row's doc names its strip). A strip that the connect read does not resize (the h61d3 and H7067 screens store the count without posting deviceInfoChanged; the row's doc says so) keeps the count it was built with until a calibration or settings event, so in the first app session after the IC changed with no app connected its picks have the old count, where the library's writes take the new one. The row's wire num_segments is then only the count before the first read. sections sizes the read-back alone."
+        },
+        "readback_pieces": { "enum": ["ic_count"], "description": "On a status_read row with an ic_pieces object form: the status read's TLV 0xA5 colour groups are placed over the IC count itself (ic_count: the count as the row's IC read gives it, as Support.getColorPieceSize(gt, IC) = IC on the h7050 and h7020 status screens), while ic_pieces sizes the writes. Absent = the ic_pieces rule's pieces size both." },
+        "light_num_pieces": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["per_unit"],
+          "properties": {
+            "per_unit": { "type": "integer", "minimum": 1, "description": "The pieces per unit of the count: the bulbs per string the screen multiplies it by (h7020 NewDetailVM.Y5: Support.getBulbStringSetting [1] at the row's goodsType and pact), or 1 where the screen stores the count itself (h7020 NewDetailVM.u5 on goodsType 149)." }
+          },
+          "description": "The colour pieces from the aa 0f string-count read at connect (connect_reads light_num): the reply's count (govee_state light_num_state count) times per_unit, which the screen stores as its IC (h7020 NewDetailVM.u5 -> Info4BleIotDevice.G0), so the count its colour strip takes at each pick (ColorPieceConfig.c over the stored IC; the row's doc names its strip). As an ic_pieces object form's pieces, they size the direct read-back's walk and every colour write, the whole-device mask included. A count below 1 is no count: the app would size no pieces or a negative number. The row's wire num_segments is only the count before the first read. A row with support that reads light_num has this; it is the row's one live piece count (no ic_pieces object form, no aa 41 section count)."
         },
         "by_pact": { "type": "object", "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientBranch" }, "description": "Pact branches, keyed 'pactType,pactCode' (decimal) (clientBranch)." },
         "by_firmware": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clientFirmware" }, "description": "Firmware branches, applied after by_pact (clientFirmware)." },
@@ -443,7 +502,16 @@
         { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
         { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
         { "if": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } }, "then": { "required": ["ic_pieces"] } },
-        { "if": { "required": ["ic_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } } }
+        { "if": { "required": ["ic_pieces"] }, "then": { "anyOf": [
+          { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } },
+          { "required": ["status_read"], "properties": { "status_read": { "contains": { "const": "ic_num" } } } },
+          { "required": ["post_status_reads"], "properties": { "post_status_reads": { "contains": { "const": "ic_num" } } } }
+        ] } },
+        { "if": { "required": ["post_status_reads"] }, "then": { "required": ["status_read"] } },
+        { "if": { "required": ["post_status_reads"], "properties": { "post_status_reads": { "contains": { "const": "ic_num" } } } }, "then": { "required": ["ic_pieces"] } },
+        { "if": { "required": ["readback_pieces"] }, "then": { "required": ["ic_pieces", "status_read"] } },
+        { "if": { "required": ["support", "connect_reads"], "properties": { "connect_reads": { "contains": { "const": "light_num" } } } }, "then": { "required": ["light_num_pieces"] } },
+        { "if": { "required": ["light_num_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "light_num" } } } } }
       ]
     },
     "clientCapabilities": {
@@ -456,7 +524,7 @@
     "clientModel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, the scene apply's power-on, and the connect writes.",
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, the scene apply's power-on, the connect reads and writes, the piece rule and the support level.",
       "properties": {
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
@@ -464,6 +532,9 @@
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
         "scene_power_on": { "type": "boolean", "description": "true = the control screen writes the power-on switch (33 01 01, SwitchControllerConfig.d) ahead of a scene or DIY apply while its stored switch state for the device is off, and an unknown state reads as off (ApplyOffNeedOpenConfig's SKU set, ApplyOffNeedOpenHelper.b / .d, DeviceSwitchConfig.getSwitch); absent = false. Only on a SKU whose row offers scenes." },
         "connect_writes": { "$ref": "#/$defs/clientRow/properties/connect_writes", "description": "This SKU's connect writes, replacing its row's, which stay required for the row's other SKUs: the screen splits them by SKU within one goodsType (bulblight Support.c at 342). Only on a SKU that one row of the family lists." },
+        "connect_reads": { "$ref": "#/$defs/clientRow/properties/connect_reads", "description": "This SKU's connect reads, replacing its row's, which stay required for the row's other SKUs: the screen adds a read by SKU within one goodsType (rgbiclight ControllerStrategyConfig.E1 reads aa 40 where supportBindWithIcNum holds, H61A0 / H61A1 / H61A2 at 71, or supportIcFresh, H61B5 at 123 at every pact). Only on a SKU that one row of the family lists." },
+        "ic_pieces": { "$ref": "#/$defs/clientRow/properties/ic_pieces", "description": "This SKU's piece rule, replacing its row's (which the row's other SKUs keep): the screen sizes the pieces by SKU within one goodsType (h6609 H70c4Support.b at 260 tests the IC for five of its nine SKUs). Only on a SKU that one row of the family lists, with the row's ic_num read." },
+        "support": { "$ref": "#/$defs/clientRow/properties/support", "description": "This SKU's support level, replacing its row's: a SKU whose own fact is inferred where the row's other SKUs' are traced (h6609 260's IC-gated read-back for H70C4 / H70C5 / H70C7 / H6870 / H80C4); the row's doc names the reason. Only on a SKU that one row of the family lists." },
         "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
         "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }
@@ -475,6 +546,7 @@
       "description": "A pact branch of a client_profile row: applied over the row's own values when the device's pact is the key, its leaves replacing the row's. The pact is the advertised one where the screen scans before connecting, else the record's; with the pact unknown, the row's own values apply. Firmware branches stay on the row (by_firmware), as in wire. A branch on color_scheme, zones or capabilities changes the device's controls at that pact; the wire layer's by_pact branch at the same pact carries the pact's wire facts.",
       "properties": {
         "doc": { "type": "string" },
+        "support": { "$ref": "#/$defs/clientRow/properties/support", "description": "The row's support level at this pact alone, replacing the row's there: a pact at which the screen's per-unit gates (chip, firmware) resolve to the branch the row states, where at its other pacts they may not (dreamcolorlightv2 21 at (2,1); the branch's doc names the inference). The row's own level holds at its other pacts and with no pact, so a client serves a pact the branch alone admits only on that advertised pact. Only on a row that lists its pacts (not 'any') and whose SKUs carry no by_model support." },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "status_read": { "$ref": "#/$defs/clientRow/properties/status_read" },
@@ -492,11 +564,13 @@
       "additionalProperties": false,
       "minProperties": 2,
       "anyOf": [ { "required": ["min_soft_version"] }, { "required": ["min_hard_version"] }, { "required": ["min_wifi_soft_version"] } ],
-      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version or min_soft_version is a string compare, as KelvinConfig.Config.z2's versionHard.compareTo and Z2 / X2's versionSoft.compareTo are: hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
+      "dependentRequired": { "compare": ["kelvin_range"] },
+      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version or min_soft_version compares as its compare says: by default a string compare, as KelvinConfig.Config.z2's versionHard.compareTo and Z2 / X2's versionSoft.compareTo are, so hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
       "properties": {
         "min_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE firmware (soft) version." },
         "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version." },
         "min_wifi_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum Wi-Fi module firmware version." },
+        "compare": { "type": "string", "enum": ["string", "numeric"], "description": "How a kelvin_range item's gate compares the device's version (only a kelvin_range item has it; absent = string). string: as KelvinConfig.Config.z2 / Z2 / X2's compareTo (the gate in a.bb.cc form, two-digit fields). numeric: as KelvinConfig.Config.Y2's BleUtils.isHigherVersion (base-classes10/com/govee/base2kt/utils/BleUtils.java:74-79,327-335): q0 of each (modeColorVersion's parse), the device's at least the gate's, so 1.4.3 (143) is below 1.04.03 (10403)." },
         "doc": { "type": "string" },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },
@@ -807,7 +881,8 @@
             "unknown",
             "ic_pair",
             "one_count",
-            "device_count"
+            "device_count",
+            "one_count_u16"
           ],
           "description": "govee_profile command_forms.f_40 (govee_common::form_40)."
         },
@@ -818,6 +893,13 @@
             "section_count"
           ],
           "description": "govee_profile command_forms.f_41 (govee_common::form_41)."
+        },
+        "f_a1": {
+          "enum": [
+            "unknown",
+            "segment_info"
+          ],
+          "description": "govee_profile command_forms.f_a1 (govee_common::form_a1). On a status row that requests cmd_a1, segment_info's count (TLV 0xA1 value[0]) is the device's segment count, which sizes every mask and the segment index (the library's segment_count; wire num_segments is the count before the first read); a reply without it takes TLV 0x40's segment byte (f_40 ic_pair) where that TLV's IC changed, as the H707A screen's lambda does."
         },
         "f_a2": {
           "enum": [
@@ -838,7 +920,8 @@
           "enum": [
             "unknown",
             "color_group",
-            "bulb_batch_v2"
+            "bulb_batch_v2",
+            "single_record"
           ],
           "description": "govee_profile command_forms.f_a5 (govee_common::form_a5)."
         },
@@ -932,7 +1015,8 @@
             "unknown",
             "from_len",
             "fixed",
-            "by_pieces"
+            "by_pieces",
+            "whole_groups"
           ],
           "description": "govee_common::group_count_rule."
         },

@@ -18,8 +18,9 @@ from govee_ble_local.devices.device import Device
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.wire import build
+from govee_ble_local.wire.cct import tint_for_kelvin
 
-from fake_ble import FakeGovee, ble_device, frame, virtual_time
+from fake_ble import FakeGovee, ble_device, frame, status_burst, virtual_time
 from test_connection import H60A6_BURST
 from test_device_races import _H6062_COLOUR
 
@@ -86,6 +87,68 @@ async def test_a_poll_sends_no_beat_between_its_reads(monkeypatch: pytest.Monkey
             assert fake.received[-1] == beat   # the chain kept running: the next tick beats
         else:
             assert beat in polled   # the gaps leave room for a beat: the hold is what keeps it out
+    await dev.stop()
+
+
+@pytest.mark.parametrize(("sku", "follows", "reread"), [
+    ("H703A", True, ["aa05", "aaa501"]),                                       # h61d3 263: one piece
+    ("H617G", True, ["aa05", "aaa501", "aaa502", "aaa503", "aaa504"]),         # rgbiclight 351: 15 pieces
+    ("H7025", True, []),                                                       # h7020 296: the switch alone
+    ("H60A6", False, []),
+])
+async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follows_the_reply(
+        monkeypatch: pytest.MonkeyPatch, sku: str, follows: bool, reread: list[str]) -> None:
+    # heartbeat_power (the user's decision 17): the screen reads the 0xAC status once per connect, then
+    # ShareVM.N3 -> J3 takes the power from each aa 01 keep-alive reply, a read that stamps power_read_at with
+    # the drop count of its beat; where J3 re-reads on a change (Compose4Off2On: aa 05, then the screen's aa
+    # a5 groups; DeviceProfile.heartbeat_reread_pieces) the library re-reads at once on that link, and where
+    # it sets the switch alone (h7020 NewDetailVM.J3) it reads nothing. H60A6's aa 00 reply carries no switch
+    # (BleComm.G): it reads the status on every poll, as before. A new link reads it again.
+    fake = FakeGovee()
+    fake.status_burst = status_burst(bytes([0x01, 0x01, 0x01]))   # on
+    fake.read_replies[0x01] = frame(0xAA, 0x01, 0x00)              # the keep-alive reply: off
+    dev = _device(monkeypatch, fake, sku, held=True, allow_modelled=True)
+    assert dev.profile.heartbeat_power is follows
+    beat_frame = build.heartbeat(dev.profile.heartbeat)
+    with virtual_time():
+        await dev.update()
+        assert dev.state.is_on is True
+        with _span(fake) as beat:   # two beats: the first reply changes the power, the second doesn't
+            await asyncio.sleep(2 * conn_mod.HEARTBEAT_INTERVAL + 0.5)
+        # one re-read in all: J3 re-reads only on a change (zSwitchCur != z)
+        assert beat.count(beat_frame) == 2 and [f[:3].hex() if f[1] == 0xA5 else f[:2].hex() for f in beat
+                                                if f[:2] in (b"\xaa\x05", b"\xaa\xa5")] == reread
+        # stamped with is_on now off: the reply's stamp where it follows (the status read's gave on)
+        assert dev.power_read_at is not None and dev.state.is_on is not follows
+        with _span(fake) as polled:
+            await dev.update()
+        assert dev.state.is_on is not follows
+        if follows:   # a drop after the beat (an advert, a write): the reply to that beat stamps nothing,
+            dev._drop_power_read()   # and the reply to the next beat, sent after the drop, stamps again
+            dev._on_beat_reply(frame(0xAA, 0x01, 0x00))
+            assert dev.power_read_at is None and dev.state.is_on is False
+            await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL)
+            assert dev.power_read_at is not None
+            # The link reads no status again, so a whole-device write sets every held piece, as the app's
+            # whole-strip pick does (DelegateColorV2.F0 / G0 -> ColorModeUtil.e): H617G's 15 from the re-read.
+            held = len(dev.state.segments)
+            assert held == (15 if sku == "H617G" else 0)   # applied over H617G's 15 segments; H703A's dropped
+            await dev.set_color_temp(3000)
+            assert [s.rgb for s in dev.state.segments] == [tint_for_kelvin(3000)] * held
+            await dev.set_rgb((1, 2, 3))
+            assert [s.rgb for s in dev.state.segments] == [(1, 2, 3)] * held
+            # The ee pushes the screen follows come through the same hook (its Z3 notify list): every row here
+            # takes the ee 20 brightness, a 0 as 1 on H617G's screen (OpInfo4Detail.c), and the ee 30 switch
+            # where it has the parser (not H617G's screen).
+            for push in (frame(0xEE, 0x20, 0), frame(0xEE, 0x30, 0x00, 0x01)):
+                dev._on_beat_reply(push)
+            assert (dev.state.brightness, dev.state.is_on) == (int(sku == "H617G"),
+                                                               bool(dev.profile.push_power))
+        await dev.release()
+        with _span(fake) as fresh:
+            await dev.update()
+    assert any(f[0] == 0xAC for f in polled) is not follows
+    assert any(f[0] == 0xAC for f in fresh) and dev.state.is_on is True
     await dev.stop()
 
 

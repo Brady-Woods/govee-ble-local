@@ -1002,11 +1002,15 @@ types:
         type: govee_common::echo
         doc: an untyped selector and the zero fill
   mode_query:
-    doc: AA 05 [selector], the mode read.
+    doc: >-
+      AA 05 [selector], the mode read. Also the newdetail screens' re-read on a keep-alive power change
+      (ShareVM.N3 -> J3 -> Compose4Off2On, after its timer, sleep and wake reads), whose reply the screen's
+      callback decodes and answers with its colour-group reads (Compose4Off2On.w).
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/AbsModeController.java:34-37
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:45-58,107-109
       - split_h60ax/com/govee/pact_h60a0/ble/controller/compose/ModeController.java:26-44
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-81,99-107
     seq:
       - id: selector
         type: u1
@@ -1107,10 +1111,16 @@ types:
         type: u1
         doc: the delay kind the reply echoes
   group_query:
-    doc: AA A5 / AA A2 [group] colour-group read, group 1-based.
+    doc: >-
+      AA A5 / AA A2 [group] colour-group read, group 1-based. A status-read screen sends AA A5 only in its
+      keep-alive power change's re-read, after the AA 05 of Compose4Off2On (straightfloorlamp VM4Light.t5,
+      CubeVM4Light.l5, rgbiclight VM4Light.N5, h61d3 VM4Light.w5).
     doc-ref:
-      - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:111-136,197-211
-      - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:937-958
+      - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-41,111-136,197-211
+      - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:275-287,882-970
+      - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light.java:428-440,481-521
+      - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:333-345,386-422
+      - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:315-327,636-669
     seq:
       - id: group
         type: u1
@@ -1153,10 +1163,11 @@ types:
   status_request:
     doc: |
       The 0xAC request [command][args][rest]; AC 03 [N][types] is the status TLV
-      read.
+      read, AC A1 (no args) the special-info read.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-95
       - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-179,230
+      - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109
       - H60A6 FUN_9b04c11c @0x9b04c11c
     seq:
       - id: command
@@ -1226,8 +1237,9 @@ types:
         doc: the echoed request command (status_command values for 0xAC)
       - id: sub
         type: u1
+        enum: status_sub
         if: has_sub and is_first
-        doc: the reader's sub-command, 0 for the status read
+        doc: the reader's sub-command (its d()), which the app matches
       - id: data
         size-eos: true
         doc: the data window; the app takes len_first_data, 17 or len_last
@@ -1241,7 +1253,7 @@ types:
         value: >-
           has_sub and index == 0
           and command == status_command::status_read.to_i
-          and sub == 0
+          and sub == status_sub::none
         doc: first chunk of the status read (command 3, sub 0)
       len_window:
         value: 'is_first ? (has_sub ? 12 : 13) : 17'
@@ -1615,6 +1627,24 @@ types:
     instances:
       is_ok:
         value: result == 0
+      multi_result:
+        value: 'rest.bytes.size > 0 ? rest.bytes[0] : 0'
+        doc: |
+          frame byte 3, which a MultiController unit's ack is read by
+          (AbsControllerNoEvent4Multi.onResult at b(), MultiController.e: 3 for
+          Companion.a and c); 0 = success
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:35-51,68-74
+          - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Multi.java:31-33,80-98
+      is_multi_ok:
+        value: _io.size == 18 and multi_result == 0
+        doc: |
+          a MultiController unit's ack accepts the unit: a whole 20-byte frame
+          (this body's 18 bytes between the proType and the checksum) whose byte
+          3 is 0 (onResult: bArr.length == 20 and bArr[b()] == 0); a shorter
+          a3 <comm> frame fails the unit
+        doc-ref:
+          - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Multi.java:80-82,96-97
   matter_packet:
     doc: |
       FIRMWARE-SOURCED, CAUTION: one 20-byte 0x3F Matter-factory unit
@@ -1961,6 +1991,31 @@ enums:
       id: day_sync
       doc-ref:
         - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncVM.java:319
+    0xa1:
+      id: special_info
+      doc: |
+        the special-info read AC A1 (no args); the reply's sub names its record:
+        segment_ic, a govee_status_stream segment_ic_info (goodsType 180's connect read)
+      doc-ref:
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109,127-133
+        - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165
+        - split_h705a/com/govee/h705a/newDetail/VM4Light.java:604-606,1566-1572
+  status_sub:
+    0x00:
+      id: none
+      doc: the status read's (ControllerSingleRead leaves d() at 0)
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:91-93
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-95
+    0x0b:
+      id: segment_ic
+      doc: |
+        the special-info read's segment IC record: [segments][IC per segment],
+        govee_status_stream segment_ic_info
+      doc-ref:
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109
+        - base-classes11/com/govee/base2light/pact/feast/BleProtocol.java:25
+        - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:839-860
   wifi_multi_command:
     0x01:
       id: matter_info
@@ -2200,6 +2255,16 @@ enums:
       doc-ref:
         - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:840
         - base-classes11/com/govee/base2light/pact/feast/BleProtocol.java:35
+    0x6e:
+      id: sub_mode_color_multi
+      -orig-id: sub_mode_color_multi
+      doc: |
+        goodsType 411's colour write (govee_upload color_multi_value), its
+        0xA3 packets followed by 33 05 15 00 in one MultiController unit
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:200
+        - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:689-727
+        - base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:47-66
     0xa4:
       id: part_scenes
       doc: partial scenes; an 0xA3 comm byte, not proType 0xA4

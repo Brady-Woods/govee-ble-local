@@ -111,9 +111,13 @@ def test_h6047_whole_device_cct_is_one_frame_with_tint() -> None:
 
 
 def test_h6641_whole_device_cct_is_one_frame_with_tint() -> None:
+    # The mask is the live piece count (ColorPieceConfig.c, decision 2): before the first poll the write reads
+    # aa 40 first; IC 70 is ceil(70 / 5) = 14 pieces, ff 3f.
     d = _dev("H6641")
+    d._conn.query = AsyncMock(return_value=[_frame(0xAA, 0x40, 0x00, 70, 0x00)])  # type: ignore[method-assign]
     asyncio.run(d.set_color_temp(2000))
-    assert [_hex14(f) for f in _sent(d)] == ["33051501ffffff07d0ff8d0bffff"]   # 16 segments
+    assert [_hex14(f) for f in _sent(d)] == ["33051501ffffff07d0ff8d0bff3f"]
+    assert d._conn.query.await_args.args[0] == b.ic_count_query() and d.segment_count == 14
 
 
 def test_zone_and_segment_cct_carry_tint() -> None:

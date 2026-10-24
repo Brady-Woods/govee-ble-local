@@ -18,15 +18,16 @@ from govee_ble_local.exceptions import (
     GoveeBleAuthError,
     GoveeBleCommandRejected,
     GoveeBleConnectionError,
+    GoveeBleInvalidValue,
     GoveeBleTimeout,
 )
 from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport import framelog
 from govee_ble_local.transport.connection import GoveeConnection
-from govee_ble_local.wire import redact
+from govee_ble_local.wire import build, redact
 
-from fake_ble import FakeGovee, ble_device, frame, virtual_time
+from fake_ble import SESSION_KEY, FakeGovee, ble_device, frame, virtual_time
 
 ADDR = "AA:BB:CC:DD:EE:FF"
 
@@ -136,6 +137,36 @@ async def test_send_many_rejection_is_typed(monkeypatch, fast) -> None:
     with pytest.raises(GoveeBleCommandRejected, match="status 0x03"):
         await c.send_many([frame(0x33, 0x01, 0x01), frame(0x33, 0x04, 50)])
     assert len(fake.received) == 1  # stops at the first refused write
+
+
+@pytest.mark.parametrize(("closed", "ack", "error", "sends"), [
+    (True, frame(0xA3, 0x6E, 0x00, 0x00), None, 1),                    # the unit's ack: byte 3 is 0
+    (True, frame(0xA3, 0x6E, 0x00, 0x01), GoveeBleCommandRejected, 1),  # byte 3 refuses the unit
+    (True, frame(0x33, 0x05, 0x00), GoveeBleTimeout, 2),   # the last packet's 33 ack isn't the unit's
+    (False, None, GoveeBleInvalidValue, 0),                # a run that no write closes is refused
+])
+async def test_send_many_sends_an_a3_run_and_its_write_as_one_unit(
+        monkeypatch, fast, closed: bool, ack: bytes | None, error: type[Exception] | None,
+        sends: int) -> None:
+    # goodsType 411's colour (ColorModeControllerConfig.j): MultiController.c's 0xA3 packets, then 33 05 15
+    # 00, done on an A3 6E ack (AbsControllerNoEvent4Multi.onResult at MultiController.b() = 3); without one
+    # the unit goes again, whole, on a fresh link.
+    fake = FakeGovee()
+    unit = build.color_rgb_frames(0xFF, 0, 0, "h3010", 15)
+
+    def on_write(client, plain: bytes) -> None:
+        if ack is not None and plain == unit[-1]:
+            client.push(fake._wire(ack, SESSION_KEY), 0.005)
+
+    fake.on_write = on_write
+    c = _make(monkeypatch, fake)
+    sent = unit if closed else unit[:-1]
+    if error is None:
+        await c.send_many(sent)
+    else:
+        with pytest.raises(error):
+            await c.send_many(sent)
+    assert fake.received == unit * sends
 
 
 async def test_half_dead_link_reconnects_and_retries(monkeypatch, fast) -> None:

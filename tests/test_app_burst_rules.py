@@ -13,8 +13,10 @@ import random
 import pytest
 from fake_ble import FakeGovee, ble_device, frame
 
+from govee_ble_local.devices import _fold
 from govee_ble_local.devices.device import make_device
 from govee_ble_local.devices.profile import profile_for, wire_profile
+from govee_ble_local.models import DeviceState
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import _spec, build, describe, parse
@@ -329,6 +331,27 @@ def test_a_group_starting_exactly_at_the_end_is_a_no_op() -> None:
 def test_without_the_piece_count_group_0_is_dropped_as_before() -> None:
     st = _status(_group(0, 1) + _group(1, 1), pieces=None)
     assert [s.index for s in st.segments] == [0]
+
+
+_H703A_ONE = bytes([0xA5, 0x05, 0x00, 0x40, 0x11, 0x22, 0x33])   # [byte 0 unread][brightness, r, g, b]
+
+
+@pytest.mark.parametrize(("tlvs", "pieces", "rgb", "kelvin"), [
+    (_H703A_ONE, 1, (0x11, 0x22, 0x33), None),
+    (_H703A_ONE + bytes([0xA5, 0x09, 0x01, 1, 4, 5, 6, 9, 9, 9, 9]), 1, (4, 5, 6), None),   # the last wins
+    (bytes([0x05, 0x04, 0x15, 0x01, 0x0F, 0xA0]) + _H703A_ONE, 1, None, 4000),   # the mode's Kelvin decides
+    (bytes([0x05, 0x04, 0x15, 0x01, 0x00, 0x00]) + _H703A_ONE, 1, (0x11, 0x22, 0x33), None),
+])
+def test_the_h703a_one_record_tlv_is_the_colour_the_mode_then_decides(
+        tlvs: bytes, pieces: int, rgb: tuple[int, int, int] | None, kelvin: int | None) -> None:
+    # h61d3 263: VM4Light$afterConnectedSingleReadDeviceInfo$1.n:114-124 -> SubMode4Color.l:180-201, folded
+    # before the burst's TLV 0x05 (_fold.apply_status).
+    p = profile_for("H703A", allow_modelled=True)
+    assert p is not None
+    st = r.parse_status(_chunk(bytes([0x01, 0x01, 0x01]) + tlvs), pieces=pieces, decode=wire_profile(p))
+    state = DeviceState()
+    assert st.is_on is True and _fold.apply_status(p, state, st) == (True, True)
+    assert (state.rgb_color, state.color_temp_kelvin) == (rgb, kelvin)
 
 
 _BASIC = bytes([0x07, 0x11, 0x10, 0x56, 0x53, 0x00, 0x5E, 0x00, 0x02, 0xA6, 0x0A,

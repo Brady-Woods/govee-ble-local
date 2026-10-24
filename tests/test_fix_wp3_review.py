@@ -3,7 +3,8 @@ WP3-069, WP3-081).
 
 Offline and deterministic: every connection method is mocked (writes and reads recorded in one
 ordered log, reads scripted per command byte, an unscripted read gets no reply), so nothing reaches
-a real transport.
+a real transport, but for one case of the unlock test, which runs the real connection against a fake
+peripheral (fake_ble.FakeGovee).
 """
 from __future__ import annotations
 
@@ -15,15 +16,16 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device, frames_of
+from fake_ble import SESSION_KEY, FakeClient, FakeGovee, ble_device, frames_of
 from fake_ble import frame as _frame
 
 from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
-from govee_ble_local.exceptions import GoveeBleAuthError, GoveeBleCommandRejected, GoveeBleTimeout
+from govee_ble_local.exceptions import GoveeBleAuthError, GoveeBleTimeout
 from govee_ble_local.identify import parse_broadcast_onoff
 from govee_ble_local.models import Encryption
 from govee_ble_local.scenes import load_scenes
+from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import build
 
@@ -64,6 +66,7 @@ def _dev(sku: str, replies: Replies | None = None, **changes: Any) -> tuple[Devi
         return list(r(frame) if callable(r) else r)
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_check = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=send_unacked)  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
@@ -251,9 +254,12 @@ def test_unlock_goes_before_a_scene_upload(live: None) -> None:
 
 @pytest.mark.parametrize(("sku", "empty"), [
     ("H6050", False),   # H605051NewDetailVm (and the plugs): the check with a known secret only
-    ("H6075", True),    # h6071 67, VM4Light's connect strategy: Controller4Secret.a("") first at connect
+    ("H6058", True),    # hollowlamp 59, H6058NewDetailVm.T4: Controller4Secret.a("") first at connect
+    ("H6075", True),    # h6071 67, VM4Light's connect strategy: the same
 ])
-def test_unlock_goes_before_a_read(live: None, sku: str, empty: bool) -> None:
+def test_unlock_goes_before_a_read(
+    live: None, monkeypatch: pytest.MonkeyPatch, sku: str, empty: bool,
+) -> None:
     d, log = _locked("H6008", {0xB1: [_frame(0xAA, 0xB1, 0x01, *_SECRET)]})
     assert run(d.read_secret()) == _SECRET
     assert log == [("send", build.secret_check(_SECRET)), ("query", build.secret_read())]
@@ -301,26 +307,40 @@ def test_unlock_goes_before_a_read(live: None, sku: str, empty: bool) -> None:
     assert run(overlap()) == ([build.empty_secret_check()] if empty else [])
     assert flog == ([("query", build.secret_read()), ("send", build.empty_secret_check()), power] if empty
                     else [power, ("query", build.secret_read())])
-    # A refused check after the read ends the session, as at setup: the write fails and nothing goes out
-    # unchecked on that link, so the next operation's setup sends the check again (source-modelled).
+    # A refused check after the read ends the session before anything else goes out on its link, on the real
+    # connection: the write fails, a frame another operation queued behind the check after its own unlock
+    # step (a plug's post-power 33 b5) waits until the link is gone, and the next session's setup sends the
+    # check again and is refused the same way, as nothing of the app's compose follows its failed check
+    # (GoveeConnection.send_check; source-modelled).
     if empty:
-        def read(_request: bytes) -> list[bytes]:
-            g._unlock_frames()   # the unlock step of the session this read sets up
-            return [_frame(0xAA, 0xB1, 0x01, *_SECRET)]
+        monkeypatch.undo()   # the link state the connection keeps, not `live`'s
+        fake = FakeGovee()
+        links: list[list[bytes]] = []
 
-        g, glog = _dev(sku, {0xB1: read})
+        def answer(client: FakeClient, plain: bytes) -> None:
+            if fake.clients.index(client) == len(links):
+                links.append([])
+            links[-1].append(plain)
+            refused = plain == build.empty_secret_check()
+            reply = (_frame(0xAA, 0xB1, 0x01, *_SECRET) if plain[:2] == b"\xaa\xb1"
+                     else _frame(0x33, plain[1], 0x01 if refused else 0x00))
+            client.push(fake._wire(reply, SESSION_KEY), 0.005)
 
-        async def refuse(frame: bytes, **_k: object) -> None:
-            if frame == build.empty_secret_check():
-                raise GoveeBleCommandRejected("refused")
-            glog.append(("send", frame))
+        fake.on_write = answer
+        monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
+        g = Device(_profile(sku), ble_device(_ADDR, sku), sku=sku, idle_disconnect=0)
 
-        g._conn.send = AsyncMock(side_effect=refuse)  # type: ignore[method-assign]
-        g._conn.disconnect = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        run(g.read_secret())
-        with pytest.raises(GoveeBleAuthError):
-            run(g.set_power(True))
-        assert g._conn.disconnect.await_count == 1 and glog == [("query", build.secret_read())]
+        async def refuse() -> list[BaseException | None]:
+            await g.read_secret()
+            write = asyncio.ensure_future(g.set_power(True))
+            await asyncio.sleep(0)   # its check is on the link
+            queued = asyncio.ensure_future(g._conn.send(build.plug_sync_time(0, 0, 0)))
+            done = await asyncio.gather(write, queued, return_exceptions=True)
+            await g.stop()
+            return done
+
+        assert [type(e) for e in run(refuse())] == [GoveeBleAuthError, GoveeBleAuthError]
+        assert links == [[build.secret_read(), build.empty_secret_check()], [build.empty_secret_check()]]
 
 
 def test_unlock_goes_before_the_segment_count_read(live: None) -> None:

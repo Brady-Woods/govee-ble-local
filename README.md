@@ -79,13 +79,14 @@ advertisement, build a capability-driven `Device`, then drive it.
   `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
-  rows, H615A-E, H6076 / H8076 / R16D0, H70B6, H6198 / H6199, and behind `allow_modelled` the h70b3 rows'
-  H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the
-  advertisement's pact (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it
-  (`create_device` with the advertisement, `supported`, `match` and `discover` pass it already).
-  `allow_modelled=True` (also on `supported_skus`, `create_device`, `supported`, `match` and `discover`)
-  admits the rows the spec marks `modelled` (inferred from the app, not traced), which are off by default
-  (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed in 2.0).
+  rows, H615A-E, H6076 / H8076 / R16D0, H70B6, H6198 / H6199, the h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 /
+  H6811 / H8811, and H611A / H6143 / H6144, admitted by default at pact (2,1) only) needs `pact=`:
+  `supported_skus()` lists it, but without the advertisement's pact (`GoveeAdvertisement.pact`)
+  `is_supported_sku` and `profile_for` refuse it (`create_device` with the advertisement, `supported`, `match`
+  and `discover` pass it already). `allow_modelled=True` (also on `supported_skus`, `create_device`,
+  `supported`, `match` and `discover`) admits the rows the spec marks `modelled` (inferred from the app, not
+  traced), which are off by default (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed
+  in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,
@@ -108,8 +109,12 @@ advertisement, build a capability-driven `Device`, then drive it.
   comes up with the first operation (or `connect()`) and drops `idle_disconnect` seconds after the last one
   (8 s by default), or 30 s after a command (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the
   reconnect). While it is up the `Device` sends the keep-alive read the SKU's control screen sends every 2 s
-  (`DeviceProfile.heartbeat`), which never keeps the link longer; to send none, build the `Device` from
-  `dataclasses.replace(profile, heartbeat=None)` (`create_device`'s docstring has the recipe). `release()`
+  (`DeviceProfile.heartbeat`), which never keeps the link longer; on a status row whose screen takes its power
+  from the reply (`DeviceProfile.heartbeat_power`) the reply sets `state.is_on`, and where the screen re-reads
+  on a change the `Device` does too (`DeviceProfile.heartbeat_reread_pieces`); the `ee 20` brightness and
+  `ee 30` switch pushes such a screen follows set them the same way (`DeviceProfile.push_brightness` /
+  `push_power`); to send none, build the `Device`
+  from `dataclasses.replace(profile, heartbeat=None)` (`create_device`'s docstring has the recipe). `release()`
   drops it now and ends that window, for a caller that knows no follow-up is coming (a voice command, an
   automation, a burst across many devices): it waits for each link operation already running or queued (FIFO)
   and never splits a scene's upload from its activation or an H6047 bar read from its write, but it can land
@@ -158,10 +163,31 @@ write `state` keeps the Kelvin that was sent until an RGB or scene write or a sc
 the same `15 01 00 00` after an RGB write too, a Kelvin the library sent stays in `state` across a colour
 change made in the Govee app.
 
-Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
-H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
-mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
-tint) and no `color_temp_kelvin`.
+Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU, and reads a
+colour the report carries the way the screen's colour page shows it. On the stock colour page
+(`DeviceProfile.color_page == "stock"`) a report of one colour that is a Kelvin tint in the SKU's range is
+that colour temperature (`color_temp_kelvin`, no `rgb_color`), whatever the decode, as a pick of that colour
+is sent as one. Where the same read brings the segments (a status burst's TLV 0xA5 groups on the H60A6 at
+pact (1,2) / (1,3) and the H60A4, or a poll's `aa a5` walk after its `aa 05` on the H60A1 and the Glide
+panels), that holds only when every segment shows that colour, as the page tests the pieces; segments that
+differ keep the `rgb_color`, and segments that all show another colour are what the page shows (their colour,
+or its colour temperature if it is a tint in range). These segmented devices write a colour as the 0x15
+segment frame, and the report after such a write can be the 0x15 sub-mode (the bench H60A6's status burst
+carries `15 01 00 00`), a Kelvin and no colour. There too, when the same read's segments all show one
+colour, the page shows it, read the same way, whatever the report's Kelvin; with segments that differ, or
+none, the report reads as decoded (a Kelvin above 0 as `color_temp_kelvin`; a Kelvin of 0, or the Glide panels'
+decode, which reads nothing from 0x15, leaves `rgb_color` as it was). The same goes on the H60A1, H60A4 and
+H60A6 (and, behind `allow_modelled`, the H1270, H1232 and H1252) for a 0x0d report of a Kelvin above 0, whose
+tint their screen replaces with the same read's segments; the Glide panels' screen keeps that tint, so there it
+reads as its Kelvin. Wherever the page's colour is shown, black counts as (1, 1, 1), as the app's page shows
+it: a black segment, and a black report where the same read brings no segments. `segments` keep the black. So
+the H6052, whose screen decodes its colour report as RGB only, reports a tint colour in range (the colour of a
+colour-temperature write, should the lamp echo it) as `color_temp_kelvin`, and any other colour (the white
+`ff ff ff` it reported for a colour temperature set elsewhere, for one; black as (1, 1, 1)) as `rgb_color`.
+H8015, H6071 and H6075 show no colour page (`color_page == "none"`), so their reports read as decoded. The
+H703A / H703B (behind `allow_modelled`) are the one exception for now: their screen shows the stock page too,
+but their colour comes from the status read's one-record TLV 0xA5, not a mode report, and a tint there still
+reads as `rgb_color` where the app shows its Kelvin (their profile has no `color_page`).
 
 H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
 BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of

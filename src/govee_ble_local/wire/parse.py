@@ -68,6 +68,28 @@ def parse_write_ack(frame: bytes) -> int | None:
     return int(f.body.result)
 
 
+def multi_unit_comm(frame: bytes) -> int:
+    """The comm byte of a built 0xA3 upload's START frame (``a3_packet`` index 0, ``a3_start.comm_byte``),
+    read by the frame reader: the command a MultiController unit's ack carries
+    (``AbsControllerNoEvent4Multi.isSameController``: proType 0xA3 and ``getCommandType``). ValueError for a
+    frame that isn't an 0xA3 START."""
+    f = _spec.try_read_frame(frame, _spec.TX, _spec.PLAIN)
+    start = None if f is None or f.pro_type != _C.ProType.multi_write_v1 else getattr(f.body, "start", None)
+    if start is None:
+        raise ValueError(f"not an 0xA3 upload START: {shown_hex(frame)}")
+    return int(start.comm_byte)
+
+
+def parse_multi_ack(frame: bytes) -> bool | None:
+    """Whether a MultiController unit's ``a3 <comm>`` ack accepts the unit (``upload_ack.is_multi_ok``: a
+    whole 20-byte frame whose byte 3 is 0, ``AbsControllerNoEvent4Multi.onResult`` at ``MultiController.b()``
+    = 3 for ``Companion.a`` / ``c``), or None for a frame that doesn't read as an 0xA3 reply."""
+    f = _spec.try_read_frame(frame, _spec.RX, _spec.PLAIN)
+    if f is None or f.pro_type != _C.ProType.multi_write_v1:
+        return None
+    return bool(f.body.is_multi_ok)
+
+
 def _reply(frame: bytes, prof: Any = _REPLY) -> Any:
     """The ``read_reply`` body of a ``0xAA`` frame read under ``prof``, else None (another proType, or a
     reply that doesn't read)."""
@@ -139,16 +161,18 @@ def parse_power(frame: bytes) -> int | None:
     return None if b is None else int(b.state)
 
 
-def parse_light_power(frame: bytes, prof: Any = _REPLY) -> bool | None:
+def parse_light_power(frame: bytes, prof: Any = _REPLY, *, heartbeat: bool = False) -> bool | None:
     """AA 01 reply on a light: the spec's ``power_state.is_on`` with no relay mask, by ``prof``'s power rule
     (``devices.profile.wire_profile``): on only when the byte is 1 (ControllerSwitch.Companion.c,
     ControllerSwitch.java:32, and the aa 01 heartbeat ShareVM.N3), the default, or at any non-zero byte
     under ``light_nonzero`` (the legacy SwitchController.parseValidBytes, the H70BX connect read
     AfterConnectSuccessReadDeviceInfo.w, and where the row's heartbeat rule says so, H1168's
     HeartControllerWithBattery: ``DeviceProfile.light_nonzero`` is the rule the poll follows); None if this
-    is not an aa 01 reply. Not for plugs, whose byte is a relay mask (:func:`parse_power`)."""
+    is not an aa 01 reply. ``heartbeat``: the reply to the aa 01 keep-alive, read by the heartbeat's rule
+    (``power_state.is_on_heartbeat``: a status row's, ``DeviceProfile.heartbeat_power``). Not for plugs,
+    whose byte is a relay mask (:func:`parse_power`)."""
     b = _reply_state(frame, _Command.power, prof)
-    return None if b is None else bool(b.is_on)
+    return None if b is None else bool(b.is_on_heartbeat if heartbeat else b.is_on)
 
 
 def parse_detail_power(frame: bytes) -> bool | None:
@@ -464,17 +488,32 @@ class IcCount:
     # (the spec's ``section_sum``, ``ControllerIcNum.d``): None where that reader throws (``app_pair_fails``)
     # or the reply is under 6 bytes.
     section_sum: int | None = None
+    # The IC counts the IC-pair reader returns (``ControllerIcNum.e``): ``(ic_count,)``, with ``ic_count_2``
+    # after it where the reply carries a second pair (the spec's ``has_second_pair``), or None where that
+    # reader throws (``app_pair_fails``).
+    ic_pair: tuple[int, ...] | None = None
 
 
 def parse_ic_count(frame: bytes) -> IcCount | None:
-    """AA 40 reply: the live IC count, the reply's third byte and the section sum (see :class:`IcCount`)."""
+    """AA 40 reply: the live IC count, the reply's third byte, the section sum and the IC-pair reader's counts
+    (see :class:`IcCount`)."""
     b = _reply_state(frame, _Command.ic_num)
     if b is None or getattr(b, "segment", None) is None:   # shorter than [ic_count s2][segment]
         return None
     checked, sections = b.ic_count_checked, b.section_sum
+    second = (int(b.ic_count_2),) if b.has_second_pair else ()
+    pair = None if b.app_pair_fails else (int(b.ic_count), *second)
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment),
                    ic_count_checked=None if checked is None else int(checked),
-                   section_sum=None if sections is None else int(sections))
+                   section_sum=None if sections is None else int(sections), ic_pair=pair)
+
+
+def parse_light_num(frame: bytes) -> int | None:
+    """AA 0F reply: the bulb-string count, byte 0 read as a Java byte (``light_num_state``; h7020
+    ``Controller4BulbNum.Companion.c`` / ``d``), so 0x80 or more is negative; None for another frame or an
+    empty reply."""
+    b = _reply_state(frame, _Command.light_num)
+    return None if b is None else int(b.count)
 
 
 @dataclass(frozen=True)
@@ -604,20 +643,23 @@ def parse_soft_version(frame: bytes) -> str | None:
 @dataclass(frozen=True)
 class Notify:
     """One decoded ``0xEE`` device push (:func:`parse_notify`). ``sub_type`` is the push sub-type
-    byte; only the field that sub-type carries is set."""
+    byte; only the fields that sub-type carries are set."""
     sub_type: int
     level: int | None = None                      # 0x20 brightness push (raw reported value)
     wifi_connected: bool | None = None            # 0x11 (status byte == 0)
     zone_flags: tuple[int, int, int] | None = None  # 0x30 flag bytes (family-interpreted)
+    is_on: bool | None = None                     # 0x30 power by the profile's f_ee_30 (None: form unknown)
 
 
-def parse_notify(frame: bytes) -> Notify | None:
-    """0xEE push (``notify``). Types the three sub-payloads the curated SKUs emit (0x20/0x11/0x30);
-    other (cross-category) sub-types return None.
+def parse_notify(frame: bytes, prof: Any = _spec.PLAIN) -> Notify | None:
+    """0xEE push (``notify``), read under ``prof`` (``devices.profile.wire_profile``; its ``f_ee_30`` form
+    reads the 0x30 switch push). Types the three sub-payloads the curated SKUs emit (0x20/0x11/0x30);
+    other (cross-category) sub-types return None. A 0x30 push's ``is_on`` is the spec's ``notify_30.is_on``
+    under that form, None where the form is unknown (the plain profile's).
 
-    Spec surface for tools and tests: Device does not consume 0xEE pushes (it polls), so nothing
-    in the library calls this yet."""
-    f = _spec.try_read_frame(frame, _spec.RX, _spec.PLAIN)
+    ``Device`` reads the 0x20 brightness and 0x30 switch pushes on a held link where the profile follows
+    them (``DeviceProfile.push_brightness`` / ``push_power``); tools and tests read the rest."""
+    f = _spec.try_read_frame(frame, _spec.RX, prof)
     if f is None or f.pro_type != _C.ProType.notify:
         return None
     sub = f.body.sub
@@ -627,5 +669,7 @@ def parse_notify(frame: bytes) -> Notify | None:
     if sub == _C.NotifySub.wifi_connect:
         return Notify(sub_type=int(sub), wifi_connected=bool(d.is_connected))   # wifi_status: status == 0
     if sub == _C.NotifySub.switch_zone:
-        return Notify(sub_type=int(sub), zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)))
+        known = int(prof.forms.f_ee_30) != int(_C.FormEe30.unknown)
+        return Notify(sub_type=int(sub), zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)),
+                      is_on=bool(d.is_on) if known else None)
     return None

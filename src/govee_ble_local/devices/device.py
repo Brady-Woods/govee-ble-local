@@ -15,7 +15,7 @@ import copy
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Final, Literal, Never, ParamSpec, TypedDict, TypeVar
+from typing import Any, Final, Literal, Never, ParamSpec, TypedDict, TypeVar
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -38,7 +38,7 @@ from ..exceptions import (
 )
 from ..identify import GoveeAdvertisement, bound_advertisement, parse_broadcast_onoff
 from ..identify import _govee_record, _latest_govee_key, _pact_entries
-from ..models import Capability, DeviceState, Encryption, Segment, Zone
+from ..models import Capability, DeviceState, Encryption, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
 from ..transport.connection import ConnectBudget, GoveeConnection
@@ -64,6 +64,9 @@ _ReadResult = Literal["applied", "stale", "none"]
 # the profile table with one of them; the power-only and power-and-brightness screens (H7004 /
 # H7017, ControllerStrategyConfig.k1) send none. A test pins that each of the others still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
+# The aa 01 keep-alive's command, whose reply a heartbeat_power profile follows
+# (DeviceProfile.heartbeat_power).
+_POWER_BEAT: Final = reassemble.TYPE_SWITCH
 
 # The Device whose read_secret() runs in this task (Device._pairing_read). The connection sets a session up,
 # and so calls Device._unlock_frames, in the task of the operation that opened it, so only the read's own
@@ -124,10 +127,9 @@ def _unhandled(value: Never, field: str) -> Never:
     raise GoveeBleError(f"unsupported {field} {value!r}")
 
 
-def _check_segment_count(count: int) -> None:
-    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= build.MAX_MASK_SEGMENTS:
-        raise GoveeBleInvalidValue(
-            f"segment count must be an integer in 1..{build.MAX_MASK_SEGMENTS}, got {count!r}")
+def _check_segment_count(count: int, cap: int) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= cap:
+        raise GoveeBleInvalidValue(f"segment count must be an integer in 1..{cap}, got {count!r}")
 
 
 def _mask(indices: Sequence[int], segments: int) -> int:
@@ -198,12 +200,36 @@ class Device:
         # A session that read sets up sends no empty check (_unlock_frames), so an operation that overlaps the
         # read waits for it before its own unlock step (_send_pending_unlock), which then sends the check.
         self._pairing_lock = asyncio.Lock()
+        # Held by _send_pending_unlock while it sends a pending 33 b2 check, so an operation that overlaps it
+        # waits for its outcome before going on: a refusal ends the session, and a frame queued on the
+        # connection meanwhile would go out on that link unchecked. The innermost device lock: taken after
+        # every other (_pairing_lock included), before the connection lock, and no device lock under it.
+        self._unlock_lock = asyncio.Lock()
         self._scenes_warm = False        # bundled scene catalog loaded off the loop (update()), and it worked
         # The last scene catalog load's failure (its message), which the sync scene properties raise with no
         # I/O until update() loads the catalog again off the loop (_scene_lookup).
         self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
+        # time.monotonic() of the device read that set _segment_count (_adopt_segment_count); None for a
+        # caller's count (set_segment_count) or none.
+        self._segment_count_read_at: float | None = None
+        # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
+        # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
+        self._polled_color_mode: bool | None = None
+        # This poll's aa 05 report, as (the _mutation_seq it was applied at, the report, the
+        # last_color_temp_kelvin from before it), None until it answers (_read_mode): shown again over the
+        # walk's pieces once they are all in, as the app's colour page shows it
+        # (_fold.apply_mode_over_pieces).
+        self._polled_report: tuple[int, Any, int | None] | None = None
+        # A live-IC status profile's read-back pieces, the count its status read places the TLV 0xA5 groups
+        # over (_adopt_ic: the IC rule's pieces, or the IC itself under color_readback_ic_raw), uncapped;
+        # None until a count is known: segment_count stands in.
+        self._status_count: int | None = None
+        # The last aa 0f read's pieces, unclamped: the aa a5 walk takes them all (_read_light_num).
+        self._light_num_pieces: int | None = None
+        # status_segment_count: the IC the status screen holds (Info4BleIotDevice.q()), from its reads
+        self._status_ic: int | None = None
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -248,8 +274,8 @@ class Device:
         self._link_write = (0, -1)
         # Held by a scene write across its upload and activation, and briefly by every read-back
         # (_read_reply, _query_status), so no poll lands between the two (see set_scene_by_name).
-        # Innermost device lock but _pairing_lock: taken after _scene_lock and _bar_lock, before the
-        # connection lock.
+        # Innermost device lock but _pairing_lock and _unlock_lock: taken after _scene_lock and _bar_lock,
+        # before the connection lock.
         self._read_gate = asyncio.Lock()
         # A session="per_command" profile's writes (the device-list card's taps): held by each of its commits
         # (_commit) and across a _turn_on_taps call's power-on and brightness, so no other write lands between
@@ -257,6 +283,17 @@ class Device:
         # never from inside a connection operation; no other device lock is taken under it.
         self._tap_lock = asyncio.Lock()
         self._discarded_reads = 0        # cumulative count of discarded stale reads
+        # DeviceProfile.heartbeat_power on the aa 01 keep-alive, unzoned: the status read once per link, then
+        # the power from each keep-alive reply (_on_beat_reply). _status_link: the link
+        # (GoveeConnection.link_number) the last status read that brought state back was made on; 0 for none.
+        self._follows_beat = (profile.heartbeat_power and profile.readback == "status"
+                              and profile.heartbeat == _POWER_BEAT and not profile.zones)
+        self._status_link = 0
+        # _power_read_drops when the last keep-alive went out (_on_beat_sent): a reply stamps power_read_at
+        # only if no drop came after its beat. _reread: the running re-read a keep-alive power change started
+        # (DeviceProfile.heartbeat_reread_pieces).
+        self._beat_drops = 0
+        self._reread: asyncio.Task[None] | None = None
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
@@ -290,6 +327,8 @@ class Device:
             # the connection ignores the timing and arms nothing: no beat at all.
             heartbeat=None if profile.heartbeat is None else build.heartbeat(profile.heartbeat),
             heartbeat_timing=profile.heartbeat_timing,
+            heartbeat_reply=self._on_beat_reply if self._follows_beat else None,
+            heartbeat_sent=self._on_beat_sent if self._follows_beat else None,
         )
 
     def _learn_pact(self, pact: tuple[int, int] | None) -> bool:
@@ -449,20 +488,57 @@ class Device:
 
     @property
     def segment_count(self) -> int:
-        """Segments this device addresses: the count it reported at runtime
-        (:meth:`set_segment_count`) if any, else the profile's static ``segments``. Sets the
-        whole-device mask and its byte width (2 bytes up to 16 segments, ceil(n/8) above)."""
+        """Segments this device addresses: the count it reported at runtime if any, else the profile's
+        static ``segments``. Sets the whole-device mask and its byte width (2 bytes up to 16 segments,
+        ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
+        ``section_count_read`` profile (H6062's aa 41), on a ``special_info_read`` one (goodsType 180's
+        ac a1), on a ``color_writes_live_ic`` one (the live pieces of each poll's aa 40 read: H6641, the other
+        IC-sized rows; on a status row, of its status read's TLV 0x40 or the aa 40 reads around it), on a
+        ``light_num_per_unit`` one (each poll's aa 0f string count times the bulbs per string, which may be 0:
+        the h7020 bulb-string rows) and on a ``status_segment_count`` one (each status read's TLV 0xA1, or
+        0x40 without it: H707A / H707B / H707C), as does :meth:`set_segment_count`, until the next such read.
+        A caller that offers one entity per segment reads it after the first :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
     def set_segment_count(self, count: int | None) -> None:
         """Override the profile's segment count with one the device reported (e.g. a
         runtime read of its segment/section count); ``None`` reverts to the profile value.
 
-        Raises GoveeBleInvalidValue unless ``count`` is 1..56 (the widest mask, 7 bytes, the
-        app encodes). Does not touch the connection or any state."""
+        Raises GoveeBleInvalidValue unless ``count`` is between 1 and ``build.piece_cap`` of the profile's
+        colour scheme, the most positions its whole-device write carries: 112 on the 0x15 bodies
+        (``build.MAX_MASK_SEGMENTS``), and on ``h3010`` every piece one 0xA3 colour unit's mask spans, so any
+        :attr:`segment_count` the device reported passes. Does not touch the connection or any state; on a
+        profile whose device reports its count (see :attr:`segment_count`) the next poll's read replaces
+        it."""
         if count is not None:
-            _check_segment_count(count)
+            _check_segment_count(count, build.piece_cap(self.profile.color_scheme))
         self._segment_count = count
+        self._segment_count_read_at = None   # the caller's count, not the device's
+        self._light_num_pieces = None   # the walk takes this count too, until the next aa 0f read
+
+    @property
+    def segment_count_read_at(self) -> float | None:
+        """When a read from the device last gave a usable segment count and set :attr:`segment_count`:
+        ``time.monotonic()`` seconds; None while :attr:`segment_count` is not a device read's.
+
+        Stamped by each such read on this Device: the aa 41 section count, the ac a1 special-info read, the
+        aa 40 live IC, a status read's TLV 0x40 (or the aa 40 reads around it), the aa 0f string count, or a
+        status read's TLV 0xA1 / 0x40 (each profile's read in :attr:`segment_count`), at a poll or in the
+        lazy read before a masked write, including a re-read that reports the same count, but not a status
+        read without TLV 0xA1 whose TLV 0x40 IC is the one already held, which sets no count (the app's
+        lambda writes none: :meth:`_adopt_status_segments`). None for the profile's static count (a new
+        Device until its first such read, and always on a profile whose count is static), after an aa 0f
+        read whose count is negative drops the count, and after :meth:`set_segment_count` (either form)
+        until the next such read. A read that gives no usable count leaves the count and the stamp as they
+        were. No I/O; nothing persists past this Device. A caller that offers one entity per segment sizes
+        them from :attr:`segment_count` while this is set and keeps them while it is None. On the Device,
+        not in :class:`DeviceState`, as :attr:`power_read_at` is."""
+        return self._segment_count_read_at
+
+    def _adopt_segment_count(self, count: int) -> None:
+        """A device read's segment count: it becomes :attr:`segment_count`, stamped now."""
+        self._segment_count = count
+        self._segment_count_read_at = time.monotonic()
 
     @property
     def min_kelvin(self) -> int | None:
@@ -531,10 +607,13 @@ class Device:
         without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 34``
         device-detail read that replaces it on the H6057 (its light flag,
         :attr:`.DeviceProfile.detail_power_read`), the ``aa 36`` bar read of a bar-switch device (in a poll,
-        or before a bar write), and a plug's ``aa 01`` relay read.
-        A read that returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as
-        stale, an advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of
-        the read before it.
+        or before a bar write), a plug's ``aa 01`` relay read, and on a :attr:`.DeviceProfile.heartbeat_power`
+        profile each ``aa 01`` keep-alive reply folded into ``is_on`` (a read issued when its beat went out,
+        so a drop after the beat leaves it unstamped: :meth:`_on_beat_reply`), and the same way each ``ee 30``
+        switch push that comes through its hook on a :attr:`.DeviceProfile.push_power` profile. A read that
+        returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as stale, an
+        advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of the read
+        before it.
 
         Dropped when the device may hold another on/off than ``is_on`` without a read saying so:
 
@@ -741,52 +820,65 @@ class Device:
         (:meth:`_unlock_frames`; never in the read_secret itself). With no secret on an
         :attr:`.DeviceProfile.empty_secret_check` profile, an operation that overlaps a read_secret waits for
         it first (``_pairing_lock``), so its frames never go out ahead of the check on a session the read set
-        up. Without a live session nothing is sent: the next session setup sends it. A rejection ends the
-        session and is a GoveeBleAuthError, as at session setup; an unacked unlock is only logged, as at
-        session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
-        out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
-        calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
-        write retry's reconnect ran out of them) is raised, and the next session setup sends the
-        unlock."""
+        up. Without a live session nothing is sent: the next session setup sends it, and so it is on the
+        session's own link only (``GoveeConnection.send_check``). A rejection ends the session before any
+        other frame goes out on its link, a frame queued by an operation past its own unlock step included (a
+        plug's post-power ``33 b5``), and is a GoveeBleAuthError, as at session setup; an unlock with no ack
+        tears the link down, and the next session's setup sends it, once, where it is only logged unacked, as
+        at session setup (``GoveeConnection._prepare_session``). An operation that overlaps a check in flight
+        waits for its outcome (``_unlock_lock``) rather than skipping it, so none of its frames goes out on a
+        link whose check is then refused: after a refusal the session is gone and its own setup sends the
+        check again. Cancelled while the check waits for the link, it is pending again (it never reached the
+        device); cancelled once it is written, before its outcome, the link is torn down first, as that
+        outcome is unknown, so nothing else goes out on it and the next session's setup sends the check; and
+        the session is down once a refusal came. ``ticket``: the write call it goes out for
+        (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the calling poll's connect
+        limits (:meth:`update`); a timeout that leaves the session down (the reconnect after an
+        unacked check ran out of them) is raised, and the next session setup sends the unlock."""
         pairing = self._pairing_read()
         if (not pairing and not self._secret and self.profile.empty_secret_check
                 and self._pairing_lock.locked()):
             async with self._pairing_lock:   # the read in flight may set a session up without the check
                 pass
-        if not self._unlock_pending or (pairing and not self._secret):
-            return   # a pairing read sends no empty check: it stays pending for the next operation
-        self._unlock_pending = False   # taken: a concurrent operation doesn't send it twice
-        secret = self._secret
-        unlock = self._unlock_frames() if self._conn.is_connected else []
-        if not unlock:
-            return   # the next session setup sends it (or there is none)
-        done = False   # the write finished: acked, rejected, or unacked (treated as sent)
-        try:
-            await self._conn.send(unlock[0], **_budget_kw(budget))
-            done = True
-        except GoveeBleCommandRejected as err:
-            done = True
-            # As a rejection at session setup does (GoveeConnection._connect_locked drops the link), end the
-            # session, so the next operation's setup sends the check again and is refused the same way, as the
-            # app's compose stops at its failed check. An operation that overlaps it can still get a frame out
-            # first (CHANGELOG: known issue, fixed in the next release).
-            await self._conn.disconnect()
-            raise GoveeBleAuthError(
-                f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
-            ) from err
-        except GoveeBleTimeout:
-            if budget is not None and not self._conn.is_connected:
-                raise   # the poll's connect limit ran out on the write retry's reconnect: nothing sent
-            done = True
-            _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
-        finally:
-            # A cancelled or failed write on a session that is still up never reached the device:
-            # pending again, so the next operation sends it first. Once the session is gone the next
-            # setup sends it anyway, and a set_secret() during the write has re-armed it itself.
-            if not done and self._conn.is_connected and self._secret == secret:
-                self._unlock_pending = True
-            if done and ticket is not None:
-                self._wrote(ticket)
+        # One check at a time: an operation that overlaps one in flight waits here for its outcome, where
+        # it skipped it as taken and so could queue a frame on the link before a refusal ended the session.
+        async with self._unlock_lock:
+            if not self._unlock_pending or (pairing and not self._secret):
+                return   # a pairing read sends no empty check: it stays pending for the next operation
+            self._unlock_pending = False   # taken: an operation waiting on _unlock_lock doesn't resend it
+            secret = self._secret
+            link = self._conn.link_number
+            unlock = self._unlock_frames() if self._conn.is_connected else []
+            if not unlock:
+                return   # the next session setup sends it (or there is none)
+            done = False   # the write finished: acked, rejected, or unacked (treated as sent)
+            try:
+                # On that session's link only, which a refusal ends before any other frame goes out, as a
+                # rejection at session setup does (GoveeConnection._connect_locked drops the link): the next
+                # operation's setup sends the check again and is refused the same way, as the app's compose
+                # stops at its failed check. A link that stops acking is set up again, and its setup sends
+                # the check (GoveeConnection.send_check).
+                await self._conn.send_check(unlock[0], on_link=link, **_budget_kw(budget))
+                done = True
+            except GoveeBleCommandRejected as err:
+                done = True
+                raise GoveeBleAuthError(
+                    f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
+                ) from err
+            except GoveeBleTimeout:
+                if budget is not None and not self._conn.is_connected:
+                    raise   # the poll's connect limit ran out on the reconnect after an unacked check
+                done = True
+                _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
+            finally:
+                # A call cancelled before the check went out, or a failed write, on a session that is still
+                # up never reached the device: pending again, so the next operation sends it first. One
+                # cancelled once it is written has ended the session (send_check), whose next setup sends it
+                # anyway, and a set_secret() during the write has re-armed it itself.
+                if not done and self._conn.is_connected and self._secret == secret:
+                    self._unlock_pending = True
+                if done and ticket is not None:
+                    self._wrote(ticket)
 
     def _check_kelvin(self, kelvin: int) -> int:
         """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the
@@ -951,7 +1043,11 @@ class Device:
 
     async def stop(self) -> None:
         """Disconnect and refuse further I/O (the owner is being torn down). To drop the link and keep the
-        Device usable, use :meth:`release`."""
+        Device usable, use :meth:`release`. A keep-alive re-read still running is cancelled first."""
+        task = self._reread
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait({task})   # its end, not its CancelledError: a cancel of this call still raises
         await self._conn.close()
 
     def _mark_authoritative(self) -> None:
@@ -973,6 +1069,141 @@ class Device:
             if since == self._power_unsure_seq:
                 self._power_unsure = False
             self._mark_authoritative()
+
+    def _on_beat_sent(self) -> None:
+        """The ``aa 01`` keep-alive went out (``GoveeConnection``'s ``heartbeat_sent``): its reply is a read
+        issued now, so it may stamp :attr:`power_read_at` only if no drop comes after this
+        (:meth:`_stamp_power_read`)."""
+        self._beat_drops = self._power_read_drops
+
+    def _on_beat_reply(self, reply: bytes) -> None:
+        """A frame notified while no other frame has gone out since the aa 01 keep-alive, on a
+        :attr:`.DeviceProfile.heartbeat_power` profile (``GoveeConnection``'s ``heartbeat_reply``). Read
+        through the spec, the beat's reply gives the power, on at a byte of 1, as the screen takes it from
+        each reply (``ShareVM.N3`` -> ``J3``); any other frame is not an aa 01 reply and is left alone. It is
+        a power read (:meth:`_finish_read`), so the advertised on/off waits, and it stamps
+        :attr:`power_read_at` with the drop count taken when the beat went out (:meth:`_on_beat_sent`), so a
+        drop that came after the beat (an advertisement, a write that changed ``is_on``) leaves it unstamped;
+        it changes ``is_on`` as a read, so it drops nothing. The callbacks fire when it changes ``is_on``
+        (``J3`` acts only on a change) or ends the optimistic state. Where it changes ``is_on`` on a profile
+        with :attr:`.DeviceProfile.heartbeat_reread_pieces`, the screen's re-read follows
+        (``Compose4Off2On``, :meth:`_reread_after_change`); elsewhere the screen sets the switch alone, and
+        the mode and colour stay the link's status read's. An ``ee`` push the profile follows that comes the
+        same way is folded as the screen's notify list folds it (:meth:`_on_push`)."""
+        prof = wire_profile(self.profile)
+        on = parse.parse_light_power(reply, prof, heartbeat=True)
+        if on is None:
+            self._on_push(reply, prof)
+            return
+        self._fold_beat_power(on, reread=bool(self.profile.heartbeat_reread_pieces))
+
+    def _fold_beat_power(self, on: bool, *, reread: bool) -> None:
+        """The power a keep-alive reply or an ``ee 30`` push gave on the held link: a power read
+        (:meth:`_on_beat_reply`), and the screen's re-read on a change where ``reread``."""
+        switched = on != self._state.is_on
+        changed = switched or self._state.optimistic
+        self._state.is_on = on
+        self._stamp_power_read(self._beat_drops)
+        self._finish_read(True, True, self._power_unsure_seq)
+        if changed:
+            self._notify()
+        if switched and reread:
+            self._start_reread()
+
+    def _on_push(self, frame: bytes, prof: Any) -> None:
+        """An ``ee`` push that came through the keep-alive reply's hook (:meth:`_on_beat_reply`), read through
+        the spec (:func:`.parse.parse_notify` under the profile's ``f_ee_30``) and folded as the screen's
+        notify list folds it, the others left alone: an ``ee 20`` brightness on a
+        :attr:`.DeviceProfile.push_brightness` profile sets ``state.brightness`` in the status read's unit
+        (the screen's ``Info4Detail`` brightness setter: straightfloorlamp ``VM4Light.w5:552-564``, h6069
+        ``CubeVM4Light.p5:465-477``, rgbiclight ``VM4Light.S5:387-399``, h7020 ``NewDetailVM.F5:223-234``,
+        h61d3 ``VM4Light.y5:688-700``), raised first to :attr:`.DeviceProfile.push_brightness_min` where the
+        setter raises it (rgbiclight ``OpInfo4Detail.c:192-200``, at least 1), a live field, and the callbacks
+        fire on a change; an ``ee 30`` switch
+        on a :attr:`.DeviceProfile.push_power` profile is a power read, as a keep-alive reply's
+        (:meth:`_fold_beat_power`; straightfloorlamp ``VM4Light.y5:577-589``, h7020
+        ``NewDetailVM.H5:258-270``, h61d3 ``VM4Light.z5:703-797`` -> ``D5:222-259``), with the re-read only
+        where the screen's push handler starts it (:attr:`.DeviceProfile.heartbeat_reread_on_push`). A
+        brightness whose range waits for the advertised pact is not read."""
+        push = parse.parse_notify(frame, prof)
+        if push is None:
+            return
+        if push.level is not None and self.profile.push_brightness:
+            pct = self._brightness_pct(max(push.level, self.profile.push_brightness_min))
+            if pct is None:
+                return
+            changed = pct != self._state.brightness or self._state.optimistic
+            self._state.brightness = pct
+            self._finish_read(True, False, self._power_unsure_seq)
+            if changed:
+                self._notify()
+        elif push.is_on is not None and self.profile.push_power:
+            self._fold_beat_power(push.is_on, reread=self.profile.heartbeat_reread_on_push)
+
+    def _start_reread(self) -> None:
+        """Start the keep-alive power change's re-read on the link that is up. While one runs, the new one is
+        skipped (the reply has set the power already), as the app skips a ``Compose4Off2On`` that comes while
+        a compose is in flight: ``AbsViewMode4Op.doCommController:1074`` ->
+        ``ComposeYieldGuard.skipIncomingIfBusy:21-31`` (``result2Fail``) with ``AbsBle.I:250-261`` true, since
+        ``Compose4Off2On.yieldToInFlightCompose:142-144`` is true; ``J3`` has set the switch before that."""
+        task = self._reread
+        if task is not None and not task.done():
+            _LOGGER.debug("%s (%s): a keep-alive re-read is running; this change's re-read is skipped",
+                          self.address, self._sku)
+            return
+        # A fresh context, not this caller's: the keep-alive reply that starts it comes in whatever context
+        # the transport calls back in, which can be that of the operation that set the session up (its
+        # heartbeat timer and the notify subscription are made there), and a task copies the context it is
+        # created in. After a read_secret() session the re-read would then carry _PAIRING_READ, and its unlock
+        # step (_send_pending_unlock) would skip the empty 33 b2 check as the pairing read does. No profile
+        # has both empty_secret_check and heartbeat_reread_pieces today; this keeps a later one from
+        # inheriting it.
+        self._reread = asyncio.get_running_loop().create_task(
+            self._reread_after_change(self._conn.link_number), context=contextvars.Context())
+
+    async def _reread_after_change(self, link: int) -> None:
+        """The screen's re-read on a keep-alive power change (``J3`` -> ``Compose4Off2On``;
+        :attr:`.DeviceProfile.heartbeat_reread_pieces`), on link ``link`` alone: a link that has gone ends it
+        with no connect. Run in a task of its own; a failure is logged at DEBUG and changes nothing, as the
+        compose's failure changes nothing but the screen's loading dialog (``result2Fail``)."""
+        try:
+            with self._conn.hold_heartbeat():   # the app sends no beat while a compose is in flight
+                await self._reread_once(link)
+        except GoveeBleError as err:
+            _LOGGER.debug("%s (%s): the keep-alive re-read failed: %s", self.address, self._sku, err)
+
+    async def _reread_once(self, link: int) -> None:
+        """One re-read: ``aa 05`` (:meth:`_read_mode`), then, if it was answered, the screen's ``aa a5``
+        groups over the profile's pieces (:func:`._readback.walk_mechanism_a_direct`, ending at the first
+        unanswered group as the compose ends), applied as the poll's walk is where they are the device's
+        segments (SEGMENTS over exactly these pieces) and read and dropped elsewhere. The callbacks fire when
+        either applied."""
+        def read(frame: bytes) -> Awaitable[bytes | None]:
+            return self._read_reply(frame, on_link=link)
+
+        mode = await self._read_mode(on_link=link)
+        if mode == "none":
+            return   # unanswered: the compose ends at a step that fails (onOvertime), before its colour reads
+        pieces = self.profile.heartbeat_reread_pieces
+        apply: Callable[[_readback.Walk], None] = self._apply_segments
+        if Capability.SEGMENTS not in self.profile.capabilities or pieces != self.segment_count:
+            def drop(_walk: _readback.Walk) -> None:
+                _LOGGER.debug("%s (%s): the %d-piece keep-alive re-read's colours are not the device's "
+                              "segments; not applied", self.address, self._sku, pieces)
+            apply = drop
+        walked = await self._read_fresh(
+            "segment colour",
+            lambda: _readback.walk_mechanism_a_direct(self, read, pieces, stop_at_miss=True), apply)
+        if "applied" in (mode, walked):
+            self._notify()
+
+    def _status_on_link(self) -> bool:
+        """Whether this poll's status read is already made: on a :attr:`.DeviceProfile.heartbeat_power`
+        profile, once on the link that is up (it brought state back there), as the screen reads the 0xAC
+        status once per connect and then follows the keep-alive reply (:meth:`_on_beat_reply`). Always False
+        elsewhere."""
+        link = self._conn.link_number
+        return self._follows_beat and link != 0 and link == self._status_link
 
     def _set_power_unsure(self) -> None:
         """``is_on`` may say on for a device that is off (see ``_power_unsure``), so no read vouches for it
@@ -1372,10 +1603,10 @@ class Device:
         COLOR_TEMP) or when the colour scheme can't express it, and for a ``brightness`` while the
         device's brightness range waits for the advertised pact (as :meth:`set_brightness`), before
         any write, so the power-on is not sent either; GoveeBleError if a device that reports its own
-        segment count (H6062) does not answer that read. On a profile whose screen sets colour temperature on
-        its illumination tab (:attr:`.DeviceProfile.kelvin_with_brightness`) a ``kelvin`` goes out as that
-        tab's pair, the Kelvin frame then ``33 04`` (``brightness``, else the held one, read first when
-        unknown: GoveeBleError, before any write, when it stays unknown).
+        segment count (H6062, an IC-sized row) does not answer that read. On a profile whose screen sets
+        colour temperature on its illumination tab (:attr:`.DeviceProfile.kelvin_with_brightness`) a
+        ``kelvin`` goes out as that tab's pair, the Kelvin frame then ``33 04`` (``brightness``, else the
+        held one, read first when unknown: GoveeBleError, before any write, when it stays unknown).
 
         On a ``session="per_command"`` profile each part is a session of its own (:meth:`_turn_on_taps`)."""
         if self.profile.session == "per_command":
@@ -1390,8 +1621,8 @@ class Device:
         # A 33 04 writer, and with a kelvin the illumination pair: under _held_brightness_lock, build to
         # write.
         async with self._held_brightness_lock():
-            # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
-            # heartbeat between them.
+            # A segment-count read and the write it sizes, and as set_power the power write and its re-read:
+            # no heartbeat between them.
             with self._conn.hold_heartbeat():
                 if pick is not None or kelvin is not None:
                     await self._ensure_segment_count()
@@ -1411,9 +1642,9 @@ class Device:
                     frames += self._color_rgb_frames(pick, span)
                 elif kelvin is not None:
                     self._require(Capability.COLOR_TEMP)
-                    frames.append(self._build_or_unsupported(
-                        build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                        pieces=self.profile.segments or None, white_type=self.profile.white_type))
+                    frames += self._build_or_unsupported(
+                        build.color_temp_frames, kelvin, self.profile.color_scheme, self.segment_count,
+                        pieces=self.profile.segments or None, white_type=self.profile.white_type)
                     if pair:
                         self._require(Capability.BRIGHTNESS)
                         level = pct if pct is not None else await self._held_brightness()
@@ -1518,11 +1749,11 @@ class Device:
 
         Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue (before any I/O) unless
         ``rgb`` is an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that reports
-        its own segment count (H6062) does not answer that read."""
+        its own segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.RGB)
         pick = _check_rgb(rgb)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             span = self._kelvin_range()   # once: the frame and the state use the same range
             await self._commit(self._color_rgb_frames(pick, span),
@@ -1532,7 +1763,7 @@ class Device:
         """Set the whole-device colour temperature (clears rgb and active scene).
 
         Raises GoveeBleNotSupported without COLOR_TEMP and GoveeBleInvalidValue for a non-int;
-        GoveeBleError if a device that reports its own segment count (H6062) does not answer
+        GoveeBleError if a device that reports its own segment count (H6062, an IC-sized row) does not answer
         that read. Like the app, an out-of-range value is clamped to the device's Kelvin range
         (:attr:`min_kelvin` / :attr:`max_kelvin`; not rejected) and then rounded to the nearest 100 K,
         the only values the app sends; the Kelvin actually sent is what ``state`` keeps, and the frame
@@ -1545,17 +1776,18 @@ class Device:
         ticket = self._ticket()
         # The pair's 33 04 and its write under one hold, so no brightness write lands between them.
         async with self._held_brightness_lock():
-            with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
                 await self._ensure_segment_count()
-                frame = self._build_or_unsupported(
-                    build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+                built = self._build_or_unsupported(
+                    build.color_temp_frames, sent, self.profile.color_scheme, self.segment_count,
                     pieces=self.profile.segments or None, white_type=self.profile.white_type)
-                frames: bytes | list[bytes] = frame
+                # One frame goes out with send, as before; goodsType 411's 0xA3 unit with send_many.
+                frames: bytes | list[bytes] = built[0] if len(built) == 1 else built
                 level: int | None = None
                 if self.profile.kelvin_with_brightness:
                     # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
                     level = await self._held_brightness()
-                    frames = [frame, self._brightness_frame(level)]
+                    frames = [*built, self._brightness_frame(level)]
 
                 def apply() -> None:
                     _fold.apply_kelvin(self.profile, self._state, sent)
@@ -1593,12 +1825,12 @@ class Device:
 
         Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index or
         unless ``rgb`` is an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that
-        reports its own segment count (H6062) does not answer that read."""
+        reports its own segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.SEGMENTS)
         pick = _check_rgb(rgb)
         r, g, b = pick
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1626,14 +1858,14 @@ class Device:
         Raises GoveeBleNotSupported without SEGMENTS, where the screen has no segment-brightness slider
         (:attr:`.DeviceProfile.segment_brightness`: H61D2-H61D6; :attr:`supports_segment_brightness`), or for
         colour schemes without per-segment brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a
-        non-int ``pct`` or a bad index; GoveeBleError if a device that reports its own segment count (H6062)
-        does not answer that read."""
+        non-int ``pct`` or a bad index; GoveeBleError if a device that reports its own segment count (H6062,
+        an IC-sized row) does not answer that read."""
         self._require(Capability.SEGMENTS)
         if not self.profile.segment_brightness:
             raise GoveeBleNotSupported(f"{self._sku}: no segment brightness on this control screen")
         level = _check_pct(pct)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             pieces = self._brightness_pieces(indices, n)
@@ -1690,13 +1922,14 @@ class Device:
         :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or one that widens to
         whole zones, on the SKUs that field lists), where :attr:`.DeviceProfile.whole_device_kelvin` is set (a
         table profile with it and SEGMENTS has segment_color_temp false too) or for non-maskable schemes;
-        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built profile
-        with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile reaches
-        it: H6062, the one row that reads its segment count, has segment_color_temp false)."""
+        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a device that reports
+        its own segment count (an IC-sized row, or a hand-built profile with
+        :attr:`.DeviceProfile.section_count_read`; H6062, the one row that reads its aa 41 segment count, has
+        segment_color_temp false) does not answer that read."""
         self._require_masked_kelvin(pieces=True)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # a section_count_read aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1826,7 +2059,7 @@ class Device:
         Raises GoveeBleNotSupported without SEGMENTS/RGB or for a zone without segments;
         GoveeBleInvalidValue for an unknown zone (also a GoveeBleNotSupported) or unless ``rgb`` is
         an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that reports its own
-        segment count (H6062) does not answer that read."""
+        segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.RGB)
         z = self._zone(name)
@@ -1868,8 +2101,8 @@ class Device:
         :attr:`.DeviceProfile.whole_device_kelvin` is set (the screen writes colour temperature over the whole
         device only), for a zone without segments or for a colour scheme whose CCT frame carries no segment
         mask; GoveeBleInvalidValue for an unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``;
-        GoveeBleError if a hand-built profile with :attr:`.DeviceProfile.section_count_read` does not answer
-        that read (no zoned table profile reads aa 41)."""
+        GoveeBleError if a hand-built profile that reads its own segment count does not answer that read (no
+        zoned table profile reads one)."""
         self._require_masked_kelvin(pieces=False)
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)
@@ -2055,9 +2288,9 @@ class Device:
           GoveeBleTimeout raised, with the device lock free and the connection ready for the next
           operation. When that wait would run past the operation's ``const.OPERATION_TIMEOUT`` (a
           ``connect_timeout`` above ``OPERATION_TIMEOUT`` - ``DISCONNECT_TIMEOUT``, 40 s, or a later
-          connect of the same operation, such as the pending unlock's write retry), the deadline ends
-          it instead: GoveeBleTimeout ("operation exceeded 45s") is raised at the deadline, and the
-          teardown is left to its abandon at its own ``DISCONNECT_TIMEOUT`` bound, as on any
+          connect of the same operation, such as the pending unlock's reconnect after an unacked check),
+          the deadline ends it instead: GoveeBleTimeout ("operation exceeded 45s") is raised at the
+          deadline, and the teardown is left to its abandon at its own ``DISCONNECT_TIMEOUT`` bound, as on any
           deadline. A call cancelled by its caller during that wait gives the lock up at once,
           leaving the teardown to the same abandon. A connect cancelled inside bleak is cleaned up by
           the BLE backend, which only ``const.OPERATION_TIMEOUT`` bounds (the lock is held until it is
@@ -2071,6 +2304,22 @@ class Device:
 
         Raises GoveeBleInvalidValue, before any I/O, unless ``connect_attempts`` is an integer >= 1
         and ``connect_timeout`` a finite number > 0 (where given).
+
+        On a :attr:`.DeviceProfile.heartbeat_power` profile (a status row on the aa 01 keep-alive) the status
+        read is made once per link, as the screen reads it once per connect: a poll on a link it already
+        brought state back on makes no status read (so nothing is read back after a write there), the power
+        there following each keep-alive reply, which reaches the callbacks; the mode and colour stay the
+        link's status read's and the writes' (a whole-device colour or Kelvin write sets every segment the
+        state holds, as the app's whole-strip pick does), but where a reply changes the power on a profile
+        with :attr:`.DeviceProfile.heartbeat_reread_pieces`, which re-reads them at once as the screen does. A
+        poll on a fresh link returns its status read's power. The brightness and switch there follow the
+        ``ee 20`` and ``ee 30`` pushes the screen follows (:attr:`.DeviceProfile.push_brightness`,
+        :attr:`.DeviceProfile.push_power`), read where a keep-alive reply is: a push that comes after a frame
+        the library sent, before the next beat, is not read, so a brightness or power changed elsewhere in
+        that window shows only at the next push, the next connect's status read, or for the power the next
+        keep-alive reply. On the rows whose screen follows no ``ee 20`` push (H7086, H7076, H3700) a
+        brightness changed elsewhere shows only at the next connect's status read, as on the screen; those
+        three screens follow no ``ee 30`` push either, and take the power from each keep-alive reply.
 
         On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
         nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness
@@ -2101,7 +2350,11 @@ class Device:
                 self._scenes_warm, self._scenes_error = True, None
         state_read = False   # this poll's state read brought a live field back (_finish_read)
         if self.profile.readback == "status":
-            state_read = await self._read_status(budget)
+            if self._status_on_link():
+                _LOGGER.debug("%s (%s): status read once on this link; the power follows the keep-alive",
+                              self.address, self._sku)
+            else:
+                state_read = await self._read_status(budget)
         elif self.profile.readback == "polled":
             state_read = await self._read_polled(budget)
         elif self.profile.readback == "plug":
@@ -2118,7 +2371,8 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b(budget)
         elif self.profile.color_readback == "mechanism_a_direct":
-            if self.profile.section_count_read and self._segment_count is None:
+            if ((self._reads_segment_count or self.profile.light_num_per_unit)
+                    and self._segment_count is None):
                 _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
                               self.address, self._sku)
             else:
@@ -2244,18 +2498,75 @@ class Device:
             lambda: _readback.walk_mechanism_b(self, lambda f: self._read_reply(f, budget)),
             self._apply_segments)
 
-    def _apply_segments(self, segments: list[Segment]) -> None:
-        """Fold a whole segment-colour read-back into state."""
-        self._state.segments = segments
+    def _apply_segments(self, walk: _readback.Walk) -> None:
+        """Fold a segment-colour walk's pieces into state, and show the poll's ``aa 05`` report over them
+        (:func:`._fold.apply_mode_over_pieces`) where the walk brought every piece it walked
+        (:func:`._fold.brought_every_piece`; one that lost a group leaves the report as decoded, as the app's
+        connect read fails there) and no setter applied state since that report."""
+        self._state.segments = walk.segments
+        polled = self._polled_report
+        if (polled is not None and polled[0] == self._mutation_seq
+                and _fold.brought_every_piece(walk.segments, walk.pieces)):
+            _fold.apply_mode_over_pieces(self.profile, self._state, polled[1], walk.segments, polled[2])
 
     async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
-        whole unless a setter raced it."""
+        whole unless a setter raced it, with the colour temperature read from the pieces where the profile
+        takes it from them (:attr:`.DeviceProfile.kelvin_from_pieces`, :func:`._fold.apply_piece_kelvin`),
+        under the mode the poll's aa 05 report showed. On a live-IC profile the poll's one ``aa 40`` read
+        comes first (:meth:`_read_live_ic`); without a count the walk is skipped, or covers the static pieces
+        where the rule sizes the walk alone (:func:`._readback.walk_pieces`). There
+        (``DeviceProfile.color_readback_ic_walk_only``) a walk of other than :attr:`segment_count` pieces is
+        made and not applied: the strip applies a read-back only of its own length (h6609
+        ``H70C456789ColorMode.updateColor`` / ``updateBrightness``). On a ``light_num_per_unit`` profile it
+        walks the last ``aa 0f`` read's pieces, uncapped (:meth:`_read_light_num`). On a
+        :attr:`.DeviceProfile.color_readback_stop_at_miss` profile the walk ends at its first unanswered
+        group, as the screen's connect compose does."""
+        pieces = None
+        apply: Callable[[_readback.Walk], None] = self._apply_segments
+        if self.profile.kelvin_from_pieces:
+            def apply_with_kelvin(walk: _readback.Walk) -> None:
+                self._apply_segments(walk)
+                # the walk's pieces: static or device-reported (_resolve)
+                count = self.profile.color_readback_segments or self.segment_count
+                _fold.apply_piece_kelvin(self._state, count, self._polled_color_mode)
+
+            apply = apply_with_kelvin
+        if self.profile.color_readback_live_ic:
+            pieces = _readback.walk_pieces(self, await self._read_live_ic(budget))
+            if pieces is None:
+                return
+            if self.profile.color_readback_ic_walk_only and pieces != self.segment_count:
+                walked = pieces
+
+                def drop(_walk: _readback.Walk) -> None:
+                    _LOGGER.debug("%s (%s): the %d-piece colour read-back is not applied: the strip holds %d",
+                                  self.address, self._sku, walked, self.segment_count)
+                apply = drop
+        elif self.profile.light_num_per_unit:
+            pieces = self._light_num_pieces   # past the masks' 112, as NewDetailVM.D5 walks them
+        stop = self.profile.color_readback_stop_at_miss   # the screen's compose ends at a lost group
         await self._read_fresh(
             "segment colour",
-            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget)),
-            self._apply_segments)
+            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces,
+                                                      stop_at_miss=stop),
+            apply)
+
+    async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
+        """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a
+        ``color_writes_live_ic`` profile a count of 1 or more becomes :attr:`segment_count`, at most
+        ``build.piece_cap`` (a 0x15 body carries no more than 112: every count above writes the same bytes):
+        the screen's strip takes its count from the IC the read stores (``ColorPieceConfig.c``). The h705a
+        screens resize a built strip when a read changes it (``ColorMode.Y``, ``ColorModeV1.K``); the h61d3
+        and H7067 ones store the count without resizing (``VM4Light.k5`` / ``h5`` / ``Q4``), so in the first
+        app session after the IC changed with no app connected their strip keeps the old count, where the
+        library takes the new one (each row's doc). A device fact, not optimistic state, so it is adopted
+        whatever a setter did meanwhile; no count leaves it as it was."""
+        pieces = await _readback.read_live_ic(self, lambda f: self._read_reply(f, budget))
+        if self.profile.color_writes_live_ic and pieces is not None and pieces >= 1:
+            self._adopt_segment_count(min(pieces, build.piece_cap(self.profile.color_scheme)))
+        return pieces
 
     def _wants_color_groups(self) -> bool:
         """Whether the 0xAC status read asks for the 0xA5 colour groups (``status_color_groups_pact``):
@@ -2286,8 +2597,74 @@ class Device:
                 build.status_query(types=self._status_types()), timeout=STATUS_READ_TIMEOUT,
                 **_budget_kw(budget))
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
-        status = reassemble.parse_status(ac, pieces=self.segment_count, decode=wire_profile(self.profile))
+        tlv_ic = self._status_ic_source() == "tlv"
+        status = reassemble.parse_status(
+            ac, pieces=self._status_pieces(), decode=wire_profile(self.profile),
+            pieces_for_ic=self._status_pieces_for if tlv_ic else None)
+        if tlv_ic and status.ic_count is not None:
+            self._adopt_ic(status.ic_count)
         return status, ac, frames
+
+    def _status_ic_source(self) -> Literal["", "tlv", "aa40"]:
+        """Where a live-IC status profile takes its IC: ``"tlv"``, its status read's TLV 0x40 (H3401's,
+        H3510's: the screen's lambda stores it, ``Info4BleIotDevice.G0``), or ``"aa40"``, the aa 40 reads
+        around that read (:attr:`.DeviceProfile.ic_reads_around_status`; the h7020 4702ABC lambda has no
+        0x40 branch, so a TLV 0x40 there sizes nothing); ``""`` on every other profile."""
+        if self.profile.readback != "status" or not self.profile.color_readback_live_ic:
+            return ""
+        return "aa40" if any(self.profile.ic_reads_around_status) else "tlv"
+
+    def _status_pieces(self) -> int:
+        """The pieces the status read places its TLV 0xA5 colour groups over: a live-IC status profile's
+        read-back count once known (:meth:`_adopt_ic`), else :attr:`segment_count`."""
+        return self._status_count if self._status_count is not None else self.segment_count
+
+    def _status_pieces_for(self, ic: int) -> int | None:
+        """The read-back pieces for an IC count (:meth:`_ic_counts`), None for no count: the status read's
+        ``pieces_for_ic``."""
+        return self._ic_counts(ic)[1]
+
+    def _ic_counts(self, ic: int) -> tuple[int | None, int | None]:
+        """``(write pieces, read-back pieces)`` for a live-IC status profile's IC count, each None for no
+        count (below 1): the IC rule's pieces (:func:`._readback.ic_rule_pieces`) size the writes, and the
+        status read's colour groups too unless :attr:`.DeviceProfile.color_readback_ic_raw` places them over
+        the IC count itself (``Support.getColorPieceSize(gt, IC)``), at most the 0xFFFF pieces the read can
+        place."""
+        pieces = _readback.ic_rule_pieces(self.profile, ic)
+        readback = ic if self.profile.color_readback_ic_raw else pieces
+        return ((pieces if pieces is not None and pieces >= 1 else None),
+                (min(readback, 0xFFFF) if readback is not None and readback >= 1 else None))
+
+    def _adopt_ic(self, ic: int) -> None:
+        """Adopt a live-IC status profile's IC count, as the screen stores it (``Info4BleIotDevice.G0``): its
+        write pieces become :attr:`segment_count` (at most ``build.piece_cap``, as :meth:`_read_live_ic`) and
+        its read-back pieces the status read's (:meth:`_status_pieces`); a count
+        that gives none keeps the counts there are. The screen's colour arrays take the new size
+        (``SubMode4Color.j``), so segments past a smaller read-back count leave the state. A device fact, not
+        optimistic state, so it is adopted whatever a setter did meanwhile."""
+        pieces, readback = self._ic_counts(ic)
+        if pieces is None and readback is None:
+            _LOGGER.debug("%s (%s): IC count %d gives no colour pieces; keeping the counts", self.address,
+                          self._sku, ic)
+        if pieces is not None:
+            self._adopt_segment_count(min(pieces, build.piece_cap(self.profile.color_scheme)))
+        if readback is not None:
+            self._status_count = readback
+            self._state.segments = [seg for seg in self._state.segments if seg.index < readback]
+
+    async def _read_status_ic(self, budget: ConnectBudget | None = None) -> bool:
+        """One of the aa 40 reads around the status read (:attr:`.DeviceProfile.ic_reads_around_status`;
+        h7020 ``Controller4IcNumber``, the checking one-count reader): its count adopted (:meth:`_adopt_ic`).
+        False when the read failed or its reader stores no count (a count of 0x1000 or more throws in it)."""
+        reply = await self._read_reply(build.ic_count_query(), budget)
+        ic = parse.parse_ic_count(reply) if reply else None
+        count = None if ic is None else ic.ic_count_checked
+        if count is None:
+            _LOGGER.debug("%s (%s): the aa 40 read around the status read gave no IC count", self.address,
+                          self._sku)
+            return False
+        self._adopt_ic(count)
+        return True
 
     async def _read_status(self, budget: ConnectBudget | None = None) -> bool:
         # `applied` (returned): a live field came back (state no longer optimistic). `power_read`:
@@ -2310,6 +2687,21 @@ class Device:
         # trusted to rule a wake out either (_power_unsure).
         applied = power_read = False
         since, drops = self._power_unsure_seq, self._power_read_drops
+        before, after = self.profile.ic_reads_around_status
+        if before and not await self._read_status_ic(budget):
+            # The aa 40 read is a mandatory step of the app's connect read, ahead of the 0xAC read
+            # (Compose4BaseInfoSingleRead.Companion.c): a timeout or a count its reader throws on fails the
+            # whole read (AbsComposeControllerWithOpResult.onOvertime), and the 0xAC read is never sent.
+            _LOGGER.debug("%s (%s): no IC count from the aa 40 read; skipping the status read, as the app's "
+                          "connect read stops there", self.address, self._sku)
+            return False
+        bursts: list[reassemble.StatusReply] = []
+
+        async def burst() -> reassemble.StatusReply:
+            st = await _readback.status_burst(self, lambda: self._query_status(budget))
+            bursts.append(st)
+            self._adopt_status_segments(st)   # a device fact: adopted whatever a setter did meanwhile
+            return st
 
         def apply(st: reassemble.StatusReply) -> None:
             nonlocal applied, power_read
@@ -2326,9 +2718,14 @@ class Device:
 
         # The burst is the whole poll, as the app's connect read is: its 0x05 TLV carries the mode
         # (_fold.apply_status), so no aa 05 read follows it.
-        await self._read_fresh(
-            "status", lambda: _readback.status_burst(self, lambda: self._query_status(budget)), apply)
+        await self._read_fresh("status", burst, apply)
         self._finish_read(applied, power_read, since)
+        if applied:
+            self._status_link = self._conn.link_number   # the link this read was made on (_status_on_link)
+        if after and bursts and bursts[-1].is_on is not None:
+            # The screen's success callback reads aa 40 again (NewDetailVM.s5 from
+            # NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o); a read that failed runs no s5.
+            await self._read_status_ic(budget)
         return applied
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
@@ -2380,19 +2777,35 @@ class Device:
             if await self._read_bar_switch(budget) == "applied":
                 applied = power_read = True   # the bars set is_on (device on iff either bar is on)
                 since = bars_since
-        if self.profile.section_count_read:
-            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
-            await self._read_section_count(budget)
+        if self._reads_segment_count:
+            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O); on goodsType
+            # 180 the ac a1 special-info read, among the extras before aa 05 (VM4Light.i5 -> x5).
+            await self._read_segment_count(budget)
+        elif self.profile.light_num_per_unit:
+            # Between aa 01 and aa 05, as the h7020 Compose4InfoBle / Compose4InfoBleIot connect places the
+            # s5 reads (NewDetailVM.s5: aa 0f, then the aa 41 power-off memory the library leaves out).
+            await self._read_light_num(budget)
         if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode(budget) == "applied":
             applied = True
         self._finish_read(applied, power_read, since)
         return applied
 
-    async def _read_mode(self, budget: ConnectBudget | None = None) -> _ReadResult:
-        """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
+    async def _read_mode(self, budget: ConnectBudget | None = None, *,
+                         on_link: int | None = None) -> _ReadResult:
+        """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`), and keep whether it showed the
+        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) and the report itself for the
+        poll's walk (:meth:`_apply_segments`). ``on_link``: on that link only (:meth:`_read_reply`)."""
         prof = wire_profile(self.profile)
+        self._polled_color_mode = self._polled_report = None
+
+        def apply(m: Any) -> None:
+            remembered = self._state.last_color_temp_kelvin
+            _fold.apply_mode(self.profile, self._state, m)
+            self._polled_color_mode = parse.mode_color(m) is not None
+            self._polled_report = (self._mutation_seq, m, remembered)
+
         return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
-                                        lambda m: _fold.apply_mode(self.profile, self._state, m), budget)
+                                        apply, budget, on_link=on_link)
 
     async def _read_section_count(self, budget: ConnectBudget | None = None) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
@@ -2404,23 +2817,134 @@ class Device:
             _LOGGER.debug("%s (%s): aa 41 section-count read gave no usable count (%s)",
                           self.address, self._sku, None if sc is None else sc.section_num)
             return False
-        self._segment_count = sc.section_num
+        self._adopt_segment_count(sc.section_num)
         return True
+
+    async def _read_special_info(self, budget: ConnectBudget | None = None) -> bool:
+        """Read the segment count the device reports in its 0xAC special-info reply (``ac a1``, sub
+        ``segment_ic``: ``reassemble.parse_segment_ic``) and adopt it as :attr:`segment_count`, as the
+        goodsType 180 screen does on every connect (``VM4Light.x5`` -> ``Info4Detail.z0``). Returns False
+        (state left as it was) when the burst is incomplete or the count is one the masks cannot carry.
+        The app keeps one count for all its devices (``SegmentIcDataConfig``, one persisted store); the
+        library keeps each device's own."""
+        async with self._read_gate:   # never between a scene's upload and its activation
+            await self._send_pending_unlock(budget)
+            frames = await self._conn.query(
+                build.special_info_query(), timeout=STATUS_READ_TIMEOUT,
+                burst_command=reassemble.SPECIAL_INFO_COMMAND, burst_sub=reassemble.SEGMENT_IC_SUB,
+                **_budget_kw(budget))
+        count = reassemble.parse_segment_ic([f for f in frames if f and f[0] == build.PRO_MULTI_AC])
+        if count is None or not 1 <= count <= build.MAX_MASK_SEGMENTS:
+            _LOGGER.debug("%s (%s): ac a1 special-info read gave no usable segment count (%s)",
+                          self.address, self._sku, count)
+            return False
+        self._adopt_segment_count(count)
+        return True
+
+    @property
+    def _reads_segment_count(self) -> bool:
+        """Whether the device reports its own segment count (the aa 41 section count or the ac a1
+        special-info read), which then sizes every mask and the colour walk."""
+        return self.profile.section_count_read or self.profile.special_info_read
+
+    async def _read_segment_count(self, budget: ConnectBudget | None = None) -> bool:
+        """The profile's segment-count read: :meth:`_read_section_count` or :meth:`_read_special_info`."""
+        if self.profile.special_info_read:
+            return await self._read_special_info(budget)
+        return await self._read_section_count(budget)
+
+    async def _read_light_num(self, budget: ConnectBudget | None = None) -> bool:
+        """Read the bulb-string count (``aa 0f``) and take count x ``light_num_per_unit`` as the pieces,
+        which the h7020 screen stores as its IC on every connect with no bound (``NewDetailVM.u5`` ->
+        ``Info4BleIotDevice.G0``): its colour strip takes that count at each pick (``ColorPieceConfig.c``)
+        and ``NewDetailVM.D5`` walks ``ceil(pieces / group)`` aa a5 groups, none below 1. Pieces of 0 or
+        more become :attr:`segment_count`, at most ``build.MAX_MASK_SEGMENTS``: the 0x15 colour bodies cut
+        the mask at 7 bytes (``Bytes.h`` / ``Bytes.r``), so every count above writes the app's bytes, and
+        the walk takes all of them (:meth:`_read_mechanism_a_direct`). A count of 0 is the app's empty pick
+        (``ColorModeUtil.e`` over IC 0: the two zero mask bytes, and no walk). A negative count (a Java
+        byte of 0x80 or more), on which the app's pick throws (``ColorModeUtil.e``'s ``new int[n]``) and
+        sends nothing, leaves no count: the walk is skipped and the next masked write reads aa 0f again
+        (:meth:`_ensure_segment_count`). Returns whether a count of 0 or more came back; no reply leaves the
+        count as it was, as the app keeps the IC it stored. A device fact, not optimistic state, so it is
+        adopted whatever a setter did meanwhile."""
+        reply = await self._read_reply(build.light_num_query(), budget)
+        count = parse.parse_light_num(reply) if reply else None
+        if count is None or count < 0:
+            _LOGGER.debug("%s (%s): aa 0f string-count read gave no usable count (%s)",
+                          self.address, self._sku, count)
+            if count is not None:
+                self._segment_count = self._light_num_pieces = self._segment_count_read_at = None
+            return False
+        self._light_num_pieces = count * self.profile.light_num_per_unit
+        self._adopt_segment_count(min(self._light_num_pieces, build.MAX_MASK_SEGMENTS))
+        return True
+
+    def _adopt_status_segments(self, st: reassemble.StatusReply) -> None:
+        """On a ``status_segment_count`` profile, adopt a status read's segment count as
+        :attr:`segment_count` (at most ``build.MAX_MASK_SEGMENTS``: every larger count writes the same bytes),
+        as the H707A screen sizes its colour page by it (``H707AColorMode.X`` over ``SegmentIcDataCache``,
+        which the reply's lambda writes: ``H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l`` ->
+        ``n6``). The count is TLV 0xA1's (``H707AInfo4Detail.G0``), which the lambda writes on every read,
+        after TLV 0x40's in the screen's request order, so it wins; in a reply without 0xA1, TLV 0x40's
+        segment byte, which the lambda writes only where the 0x40 IC differs from the IC the screen holds
+        (each read's 0x40 IC and 0xA1 IC sum; before the first read, none). A count of 0 or below, which the
+        page skips, or a read without either leaves it as it was."""
+        if not self.profile.status_segment_count:
+            return
+        count = None
+        if st.ic_segment is not None and st.ic_segment[0] != self._status_ic:
+            self._status_ic, count = st.ic_segment   # info.G0(ic); n6(segment, ic)
+        if st.segment_count is not None:
+            self._status_ic, count = st.segment_ic_total, st.segment_count   # G0 keeps the IC sum; n6
+        if count is not None and count >= 1:
+            self._adopt_segment_count(min(count, build.MAX_MASK_SEGMENTS))
 
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
-        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
-        ``section_count_read`` does the same lazily here and sends nothing if the device does not
-        answer, rather than guessing a mask. A no-op on every other profile and once the count is
-        known. Every caller holds the heartbeat across this read and the write it sizes
-        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
-        in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
-        if (self.profile.section_count_read and self._segment_count is None
-                and not await self._read_section_count()):
+        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read; the ac a1 read's
+        ``isTempTryComm`` is false), so a profile with ``section_count_read`` (aa 41), ``special_info_read``
+        (ac a1), ``light_num_per_unit`` (aa 0f, the string count), ``color_writes_live_ic`` (aa 40; on
+        either of the last two the pieces the strip and so every pick's position set take; on a status row
+        the status read that carries its TLV 0x40, or the aa 40 read that starts it:
+        :meth:`_status_ic_source`) or ``status_segment_count`` (the 0xAC status read's TLV 0xA1 or 0x40) does
+        the same lazily here and sends nothing if the device gives no usable count, rather than guessing a
+        mask. A no-op on every other profile and once the count is known. Every caller holds the heartbeat
+        across this read and the write it sizes (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds
+        its reads: the app reads the count in its connect read, during which it sends none (``ShareVM.R`` ->
+        ``updateSkipHeart``)."""
+        if (self._reads_segment_count and self._segment_count is None
+                and not await self._read_segment_count()):
+            read = "ac a1" if self.profile.special_info_read else "aa 41"
             raise GoveeBleError(
-                f"{self._sku}: the device did not report its segment count (aa 41); "
+                f"{self._sku}: the device did not report its segment count ({read}); "
                 "not sending a colour frame with a guessed segment mask")
+        if (self._segment_count is None and self.profile.light_num_per_unit
+                and not await self._read_light_num()):
+            raise GoveeBleError(
+                f"{self._sku}: the device did not report a usable string count (aa 0f); "
+                "not sending a colour frame with a guessed segment mask")
+        if self._segment_count is None and self.profile.color_writes_live_ic:
+            # A status row's IC comes with its status read, the TLV 0x40 (the app's connect read), or from the
+            # aa 40 read that starts that read; any other IC-sized row's from its aa 40 read.
+            source = self._status_ic_source()
+            if source == "tlv":
+                await self._read_status()
+            elif source == "aa40":
+                await self._read_status_ic()
+            else:
+                await self._read_live_ic()
+            if self._segment_count is None:
+                read = "the status read's TLV 0x40" if source == "tlv" else "aa 40"
+                raise GoveeBleError(
+                    f"{self._sku}: the device did not report a usable IC count ({read}); "
+                    "not sending a colour frame with a guessed segment mask")
+        if self._segment_count is None and self.profile.status_segment_count:
+            self._adopt_status_segments(await _readback.status_burst(self, self._query_status))
+            if self._segment_count is None:
+                raise GoveeBleError(
+                    f"{self._sku}: the device did not report its segment count (0xAC TLV 0xA1 / 0x40); "
+                    "not sending a colour frame with a guessed segment mask")
 
     async def _read_fresh(
         self, what: str, read: Callable[[], Awaitable[_T | None]], apply: Callable[[_T], None]
@@ -2441,23 +2965,26 @@ class Device:
     async def _read_command(
         self, what: str, frame: bytes,
         parser: Callable[[bytes], _T | None], apply: Callable[[_T], None],
-        budget: ConnectBudget | None = None,
+        budget: ConnectBudget | None = None, *, on_link: int | None = None,
     ) -> _ReadResult:
         """:meth:`_read_fresh` of one ``aa`` read: the reply to ``frame``, decoded by ``parser`` (None: not
-        a usable reply)."""
+        a usable reply). ``on_link``: on that link only (:meth:`_read_reply`)."""
         async def read() -> _T | None:
-            reply = await self._read_reply(frame, budget)
+            reply = await self._read_reply(frame, budget, on_link=on_link)
             return None if reply is None else parser(reply)
 
         return await self._read_fresh(what, read, apply)
 
-    async def _read_reply(self, frame: bytes, budget: ConnectBudget | None = None) -> bytes | None:
+    async def _read_reply(self, frame: bytes, budget: ConnectBudget | None = None, *,
+                          on_link: int | None = None) -> bytes | None:
         """Send one ``aa`` read and return its reply - the ``aa`` frame with the request's own command
         (:func:`.parse.request_command`) - or None after ``INFO_READ_TIMEOUT``. A single-reply read:
-        ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait
-        short to the burst idle gap. ``budget``: the calling poll's connect limits (:meth:`update`), or
-        None for the transport's. GoveeBleNotSupported on a ``session="per_command"`` profile, before any I/O:
-        the app's device-list card reads nothing over GATT."""
+        ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait short
+        to the burst idle gap. ``budget``: the calling poll's connect limits (:meth:`update`), or None for the
+        transport's. ``on_link`` (a :attr:`.GoveeConnection.link_number`): sent on that link only, else None
+        with nothing sent and no connect (``GoveeConnection.query``). GoveeBleNotSupported on a
+        ``session="per_command"`` profile, before any I/O: the app's device-list card reads nothing over GATT.
+        """
         if self.profile.session == "per_command":
             raise GoveeBleNotSupported(f"{self._sku}: the device-list card's session reads nothing over GATT")
         command_type = parse.request_command(frame)
@@ -2468,7 +2995,7 @@ class Device:
             await self._send_pending_unlock(budget)   # a secret set on the live session goes first
             frames = await self._conn.query(
                 frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT,
-                idle_gap=None, **_budget_kw(budget))
+                idle_gap=None, on_link=on_link, **_budget_kw(budget))
         return parse.find_reply(frames, command_type)
 
     async def read_secret(self) -> bytes | None:

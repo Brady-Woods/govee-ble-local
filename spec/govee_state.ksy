@@ -38,6 +38,7 @@ seq:
         'govee_common::command::mode': mode_report(decode)
         'govee_common::command::soft_version': govee_common::version_text
         'govee_common::command::device_info': device_info_record(source)
+        'govee_common::command::light_num': light_num_state
         'govee_common::command::cmd_12': cmd_12_state(profile.forms.f_12)
         'govee_common::command::cmd_13': cmd_13_state(profile.forms.f_13)
         'govee_common::command::cmd_14': cmd_14_state(profile.forms.f_14)
@@ -53,6 +54,8 @@ seq:
         'govee_common::command::ic_num': ic_count
         'govee_common::command::cmd_41': >-
           cmd_41_state(profile.forms.f_41, source)
+        'govee_common::command::cmd_a1': >-
+          cmd_a1_state(profile.forms.f_a1, source)
         'govee_common::command::color_group_rgb': >-
           cmd_a2_state(profile.forms.f_a2, profile.group, source)
         'govee_common::command::gradual': gradual_state
@@ -84,6 +87,7 @@ instances:
       or command == govee_common::command::cmd_36
       or command == govee_common::command::ic_num
       or command == govee_common::command::cmd_41
+      or command == govee_common::command::cmd_a1
       or command == govee_common::command::gradual
       or command == govee_common::command::color_group
     doc: TLV tags whose value has a traced app reader; other tags stay in rest
@@ -125,6 +129,8 @@ instances:
       and profile.forms.f_36 == govee_common::form_36::bar_index)
       or (command == govee_common::command::cmd_41
       and profile.forms.f_41 == govee_common::form_41::power_memory)
+      or (command == govee_common::command::cmd_a1
+      and profile.forms.f_a1 == govee_common::form_a1::segment_info)
       or (command == govee_common::command::color_group
       and profile.forms.f_a5 == govee_common::form_a5::color_group)
       ) : (
@@ -136,7 +142,8 @@ instances:
       and profile.forms.f_40 == govee_common::form_40::ic_pair
       and body.as<ic_count>.app_pair_fails)
       or (command == govee_common::command::ic_num
-      and profile.forms.f_40 == govee_common::form_40::one_count
+      and (profile.forms.f_40 == govee_common::form_40::one_count
+      or profile.forms.f_40 == govee_common::form_40::one_count_u16)
       and body.as<ic_count>.is_short)
       or (command == govee_common::command::color_group
       and profile.forms.f_a5 == govee_common::form_a5::color_group
@@ -204,8 +211,11 @@ types:
           ((power.relay_on_mask == 0 and power.light_heartbeat_nonzero) ? state != 0 : is_on)
         doc: |
           on in the aa 01 heartbeat: by relay_heartbeat_on_mask when set, a
-          light's at != 0 under light_heartbeat_nonzero, else as is_on
+          light's at != 0 under light_heartbeat_nonzero, else as is_on (a
+          newdetail light's at == 1: ShareVM.N3 sets the switch from it)
         doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47
+          - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1012
           - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:216-217
           - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:331-332
           - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:85-90
@@ -1259,6 +1269,49 @@ types:
         if: >-
           form != govee_common::form_41::section_count
           or source == source::read_reply
+  cmd_a1_state:
+    doc: |
+      Command 0xA1 under form_a1; segment_info is the status TLV only (the
+      screen reads no aa a1 reply).
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_a1
+      - id: source
+        type: u1
+        enum: source
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_a1::segment_info': segment_info
+        if: source == source::status_tlv
+  segment_info:
+    doc: |
+      TLV 0xA1 (form_a1 segment_info): the device's segment count, then each
+      segment's IC count, every byte unsigned (BleUtils.L). The H707A screen
+      takes the count as the device info's segment count (Info4BleIotDevice.P0,
+      read back by J()) and its colour page's piece count (SegmentIcDataCache,
+      the page's resize on deviceInfoChanged), which sizes every colour,
+      colour-temperature and segment-brightness mask; it writes the cache on
+      every read, after TLV 0x40's segment byte, so in a full reply its count
+      wins. A count of 0 leaves the page as it is. The IC counts sum to the
+      device's IC count.
+    doc-ref:
+      - split_h7075/com/govee/h7075/h707A/H707AInfo4Detail.java:311-357
+      - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:59-79,94-105
+      - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:856-861
+      - split_h7075/com/govee/h7075/h707A/setting/SegmentIcDataCache.java:74-117
+      - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:83-111,128-139,231-273
+    seq:
+      - id: segment_count
+        type: u1
+        doc: the segment count, the colour page's piece count
+      - id: segment_ics
+        type: u1
+        repeat: eos
+        doc: each segment's IC count, in order
   cmd_a2_state:
     doc: |
       Command 0xA2 under form_a2; color_group_rgb always has 3-byte records.
@@ -1282,7 +1335,7 @@ types:
   cmd_a5_state:
     doc: |
       Command 0xA5 under form_a5 (the reply does not say which); bulb_batch_v2
-      is reply only.
+      is reply only, single_record status TLV only.
     params:
       - id: form
         type: u1
@@ -1300,9 +1353,12 @@ types:
             'govee_common::form_a5::color_group': >-
               color_group(group, source, group.has_brightness)
             'govee_common::form_a5::bulb_batch_v2': bulb_batch_v2
+            'govee_common::form_a5::single_record': color_single_record(group)
         if: >-
-          form != govee_common::form_a5::bulb_batch_v2
-          or source == source::read_reply
+          (form != govee_common::form_a5::bulb_batch_v2
+          or source == source::read_reply)
+          and (form != govee_common::form_a5::single_record
+          or source == source::status_tlv)
   cmd_b0_state:
     doc: Command 0xB0 under form_b0 (plug_delay -> plug_delay_state).
     params:
@@ -1362,9 +1418,17 @@ types:
       places_by_group:
         value: >-
           checks_group or (source == source::status_tlv
-          and group.rule == govee_common::group_count_rule::fixed
+          and (group.rule == govee_common::group_count_rule::fixed
+          or group.rule == govee_common::group_count_rule::whole_groups)
           and group.num_pieces != 0)
         doc: the TLV screen places records by the group byte; piece count known
+      drops_past_whole:
+        value: >-
+          places_by_group
+          and group.rule == govee_common::group_count_rule::whole_groups
+        doc: |
+          the screen drops a group past the whole groups instead of placing it
+          (group_count_rule whole_groups)
       num_records_wanted:
         value: >-
           group.rule == govee_common::group_count_rule::from_len
@@ -1388,17 +1452,51 @@ types:
         value: >-
           places_by_group and (group_index == 0
           or (checks_group and group_index >= 0x80)
-          or (not is_last_group
+          or (not drops_past_whole and not is_last_group
           and (group_index - 1) * group.num_per_group > group.num_pieces))
         doc: the app throws (group 0, past the last piece, >= 0x80 on H60A6)
       is_placed:
         value: >-
-          not places_by_group or is_last_group
-          or (group_index - 1) * group.num_per_group != group.num_pieces
-        doc: false when the group starts exactly at the end (nothing is copied)
+          drops_past_whole
+          ? group_index * group.num_per_group <= group.num_pieces
+          : (not places_by_group or is_last_group
+          or (group_index - 1) * group.num_per_group != group.num_pieces)
+        doc: |
+          false when the group starts exactly at the end (nothing is copied), or
+          under whole_groups lies past the whole groups (it is dropped)
       app_read_fails:
         value: places_by_group and (is_short or app_rejects_group)
         doc: the TLV screen's colour-group parse throws on this group
+  color_single_record:
+    doc: |
+      Form single_record of TLV 0xA5 (the H703A / H703B status screen,
+      goodsType 263): one [brightness][r][g][b] record at bytes 1-4. The
+      screen reads it only from a value of 5 bytes or more, never reads byte
+      0, and never fails the status read on it; it hands the one record to
+      SubMode4Color.l, which replaces the piece colours only when the piece
+      count is 1 (H61D3Support.e gives 263 one piece).
+    doc-ref:
+      - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:100-104,114-124
+      - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201
+      - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1160-1161,1326-1328,1340-1342
+    params:
+      - id: group
+        type: govee_profile::color_group_form
+    seq:
+      - id: unread
+        size: 1
+        if: is_read
+        doc: byte 0, which the screen never reads
+      - id: record
+        type: govee_common::bri_rgb
+        if: is_read
+    instances:
+      is_read:
+        value: _io.size >= 5
+        doc: the screen reads the record only from a value of 5 bytes or more
+      app_applies:
+        value: is_read and group.num_pieces == 1
+        doc: SubMode4Color.l takes its one record only at a piece count of 1
   bulb_batch_v1:
     doc: |
       Form bulb_batch_v1 of 0xA2: the H61A8 batch [batch_seq][4 x rgb],
@@ -1430,6 +1528,21 @@ types:
         type: govee_common::bri_rgb
         repeat: expr
         repeat-expr: 3
+  light_num_state:
+    doc: |
+      AA 0F reply: the bulb-string count. The h7020 bulb-string screens read it
+      at connect (NewDetailVM.s5 on every goodsType without the aa 40 IC read)
+      and store count x the bulbs per string as the IC, the colour strip's piece
+      count, or on goodsType 149 the count itself (NewDetailVM.u5). Not a TLV the
+      status read types.
+    doc-ref:
+      - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46
+      - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:678-702,832-850,1432-1463
+      - split_h7050/com/govee/h7020/pact/Support.java:364-381
+    seq:
+      - id: count
+        type: s1
+        doc: byte 0, read as a Java byte (a count of 0x80 or more is negative)
   ic_count:
     doc: |
       AA 40 reply / TLV 0x40: [ic_count s16be][segment], then a second
@@ -1458,6 +1571,18 @@ types:
       segment_signed:
         value: 'segment >= 0x80 ? segment - 0x100 : segment'
         if: _io.size >= 3
+        doc: |
+          the segment byte read as a Java byte, the IC-pair reader's second value
+          (ControllerIcNum.e). The H707A status screen takes it as its colour
+          page's piece count where the TLV's IC differs from the one it holds
+          (its reply lambda's 0x40 branch -> n6 -> SegmentIcDataCache); a TLV
+          0xA1 later in the reply overwrites it, and a value of 0 or below
+          leaves the page as it is (H707AColorMode.X).
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:140-156
+          - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:53-79,94-105
+          - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:856-861
+          - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:231-273
       segment_2_signed:
         value: 'segment_2 >= 0x80 ? segment_2 - 0x100 : segment_2'
         if: _io.size >= 6
@@ -1494,11 +1619,21 @@ types:
         doc: the IC pair reader (TLV form_40 ic_pair) throws on this value
         doc-ref:
           - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,141-161
+      ic_count_u16:
+        value: 'ic_count < 0 ? ic_count + 0x10000 : ic_count'
+        if: _io.size >= 2
+        doc: |
+          bytes 0-1 read unsigned, as the TLV form_40 one_count_u16 reader
+          returns them (SegmentSettingController.Companion.b,
+          BleUtil.getSignedInt(bytes, true)), with no byte-order check
+        doc-ref:
+          - split_h7050/com/govee/h7020/newDetail/controller/SegmentSettingController.java:34-37
+          - base-classes10/com/govee/base2light/ble/BleUtil.java:285-302
       is_short:
         value: _io.size < 2
         doc: |
           fewer than 2 bytes: no 16-bit IC count (the one-count readers throw;
-          TLV form_40 one_count)
+          TLV form_40 one_count and one_count_u16)
         doc-ref:
           - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:98-103
       ic_count_byte_order_suspect:

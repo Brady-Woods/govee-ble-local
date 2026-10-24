@@ -16,7 +16,7 @@ This package is rooted at `spec/`. The **machine artifacts** (`*.ksy`, `devices.
 |---|---|
 | **`GOVEE_BLE_GATT_PROTOCOL.md`** | The specification — GATT profile, framing, opcodes, modes, scenes, encryption, per-device matrix, advertisement. Start here. §17.2 indexes the machine artifacts. |
 | **`../govee_ble_frame.ksy`** | Kaitai Struct grammar for one GATT write / notification value (every direction, proType and overload), parametrised by `direction` and the device `govee_profile`. |
-| **`../govee_status_stream.ksy`**, **`../govee_upload.ksy`** | The joined multi-frame values: the `0xAC` status TLV stream, and the `0xA1`/`0xA3`/`0xA4` upload values and cloud scene blobs. |
+| **`../govee_status_stream.ksy`**, **`../govee_upload.ksy`** | The joined multi-frame values: the `0xAC` replies (the status TLV stream, the special-info segment IC record), and the `0xA1`/`0xA3`/`0xA4` upload values and cloud scene blobs. |
 | **`../govee_manufacturer_data.ksy`**, **`../govee_scan_record.ksy`**, **`../govee_bgc_info.ksy`** | The other channels: the `0xFF` manufacturer AD payload, the raw scan record, and the GATT `2b12` value. |
 | **`../govee_state.ksy`**, **`../govee_profile.ksy`**, **`../govee_common.ksy`** | Shared: the `aa` reply / status-TLV state record, the per-device context, and the shared enums and leaf types. |
 | **`../devices.yaml`** | Machine-readable device registry: goodsTypes, SKUs, opcodes, per-family specs, `client_profile`. |

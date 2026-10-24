@@ -182,7 +182,8 @@ def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
 
     ``sub`` (byte 6) must equal the reader's d() (AbsController4BleSingleSendMultiBack.f): 0 for the
     H60A6 status read (Compose4BaseInfoSingleRead builds a ControllerSingleRead with d() left at 0),
-    which is what the H60A6 sends."""
+    which is what the H60A6 sends; 0x0B under ``cmd`` 0xA1 for the special-info read's segment IC record
+    (ControllerReadSpecialInfoMultiBack.Companion.k, govee_ble_frame status_sub segment_ic)."""
     if len(tlv) <= _AC_FIRST_LEN:  # single packet: lastLen bytes @7, no further frames
         return [append_bcc(bytes([0xAC, 0x00, 1, 0, len(tlv), cmd, sub]) + tlv)]
     rest = tlv[_AC_FIRST_LEN:]
@@ -202,8 +203,9 @@ def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
 # Import the ksc-generated parser. Kept lazy so the framing helpers above work even before you compile it.
 # ksc writes one module per .ksy file (govee_ble_frame, govee_status_stream, govee_state, govee_profile,
 # govee_common, ...). The six roots: govee_ble_frame(direction, profile) for one GATT value,
-# govee_status_stream(profile) for a joined 0xAC burst, govee_upload(kind, form) for a joined upload value
-# or a cloud blob, govee_manufacturer_data / govee_scan_record for adverts, govee_bgc_info for GATT 2b12.
+# govee_status_stream(profile, reader) for a joined 0xAC burst, govee_upload(kind, form) for a joined
+# upload value or a cloud blob, govee_manufacturer_data / govee_scan_record for adverts, govee_bgc_info for
+# GATT 2b12.
 
 _READER_MODULES = (
     "govee_ble_frame",                              # a fresh `ksc -t python *.ksy` on sys.path
@@ -242,7 +244,7 @@ def _stream(buf: bytes) -> Any:
 
 
 _FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_34", "f_36", "f_40", "f_41",
-                 "f_a2", "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30",
+                 "f_a1", "f_a2", "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30",
                  "f_ee_40")
 # govee_profile struct -> its params, each with the govee_common enum it takes (None: a plain number)
 _LEAVES: Final[dict[str, dict[str, str | None]]] = {
@@ -316,12 +318,13 @@ def parse_frame(frame: bytes, direction: str = "rx", profile: Any = None) -> Any
     return f
 
 
-def parse_status(tlv_buffer: bytes, profile: Any = None) -> Any:
-    """A joined 0xAC buffer -> GoveeStatusStream: ``tlvs`` (status_tlv: tag, len_value, value =
-    govee_state) while 3 or more bytes remain, then the 0-2 byte ``tail``, as the app's walk (tag 0 is an
-    ordinary TLV). ``profile`` as for parse_frame."""
+def parse_status(tlv_buffer: bytes, profile: Any = None, reader: int = 0x03) -> Any:
+    """A joined 0xAC buffer -> GoveeStatusStream, read by ``reader`` (the request's status_command): for the
+    status read (0x03) ``tlvs`` (status_tlv: tag, len_value, value = govee_state) while 3 or more bytes
+    remain, then the 0-2 byte ``tail``, as the app's walk (tag 0 is an ordinary TLV); for the special-info
+    read (0xA1) its ``segment_ic`` record. ``profile`` as for parse_frame."""
     stream_cls = _module("govee_status_stream").GoveeStatusStream
-    return _ready(stream_cls(make_profile() if profile is None else profile, _stream(tlv_buffer)))
+    return _ready(stream_cls(make_profile() if profile is None else profile, reader, _stream(tlv_buffer)))
 
 
 # ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
@@ -434,12 +437,21 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     return out
 
 
-def _version(text: str | None) -> tuple[int, ...] | None:
-    """modeColorVersion 'a.bb.cc' as a tuple compared field by field; None for an empty or unparsable one."""
+def _parse_version(text: str | None) -> int:
+    """PROCEDURAL: a firmware version as the app's numeric compares parse it (BleUtil.parseVersion,
+    base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121, UtilSku / NumberUtil.parseVersion; and
+    BleUtils.q0, base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074, the same function): the text
+    with its dots removed, as one int (1.06.00 is 10600, 1.6.0 is 160), 0 when it is empty or
+    Integer.parseInt refuses it (an optional sign, then decimal digits, within 32 bits)."""
+    digits = str(text or "").replace(".", "")
+    sign = digits[:1] in ("+", "-")
+    if not digits[sign:].isdecimal():
+        return 0
     try:
-        return tuple(int(f) for f in str(text).split(".")) if text else None
-    except ValueError:
-        return None
+        value = int(digits)
+    except ValueError:   # more digits than int() takes from a str
+        return 0
+    return value if -(2**31) <= value < 2**31 else 0
 
 
 def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str | None = None,
@@ -452,10 +464,14 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     family specs. With the device's ``sku``, a range the row lacks (kelvin_range, brightness_range) comes
     from the SKU's client_profile.by_model entry before the family specs, and that entry's by_firmware
     items carry it too, ahead of the row's items. The row's own range wins over the model's and its
-    branches (the library refuses a by_model range under it). The SKU's connect_writes replace the row's
-    (the screen's split by SKU within one goodsType). Only those: the by_model colour report is not resolved
-    here. Versions compare field by field, but a kelvin_range item's gate is a string compare, as the app's
-    (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+    branches (the library refuses a by_model range under it). The SKU's connect_reads, connect_writes,
+    ic_pieces and support replace the row's (the screen's split by SKU within one goodsType), and a pact
+    branch's support the row's at that pact (clientBranch support: dreamcolorlightv2 21 at (2,1)). Only those:
+    the by_model colour report is not resolved here. Versions compare as the app's BleUtil.parseVersion
+    (_parse_version: 1.6.0 is below 1.06.00), but a kelvin_range item's gate compares as its compare says:
+    by default a string compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0),
+    and with compare numeric BleUtils.isHigherVersion's (KelvinConfig.Config.Y2: q0(versionHard) >=
+    q0("1.04.03"), BleUtils.java:74-79,327-335).
 
     Known difference: where several kelvin_range items hold, the last in list order wins here, while the
     library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items
@@ -467,8 +483,8 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     ranges = {k for k in ("kelvin_range", "brightness_range") if k not in row}   # the model's to give
     out = {k: v for k, v in row.items() if k not in ("by_pact", "by_firmware", "doc", "doc-ref")}
     out.update({k: model[k] for k in ranges if k in model})
-    if "connect_writes" in model:
-        out["connect_writes"] = model["connect_writes"]
+    out.update({k: model[k] for k in ("connect_reads", "connect_writes", "ic_pieces", "support")
+                if k in model})
     for k in ("scene_versions", "kelvin_range", "brightness_range"):
         if k not in out and k in (fam.get("specs") or {}):
             out[k] = fam["specs"][k]
@@ -480,14 +496,15 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     def holds(gate: str, dev: str | None, as_string: bool) -> bool:
         if as_string:
             return bool(dev) and str(dev) >= gate
-        need, got = _version(gate), _version(dev)
-        return need is not None and got is not None and got >= need
+        return dev is not None and _parse_version(dev) >= _parse_version(gate)
 
-    items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges}
+    items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges or k == "compare"}
                for item in model.get("by_firmware") or []), *(row.get("by_firmware") or [])]
     for item in items:
-        if all(holds(v, have[k], "kelvin_range" in item) for k, v in item.items() if k.startswith("min_")):
-            out.update({k: v for k, v in item.items() if not k.startswith("min_") and k != "doc"})
+        as_string = "kelvin_range" in item and item.get("compare", "string") == "string"
+        if all(holds(v, have[k], as_string) for k, v in item.items() if k.startswith("min_")):
+            out.update({k: v for k, v in item.items()
+                        if not k.startswith("min_") and k not in ("doc", "compare")})
     return out
 
 
@@ -574,6 +591,12 @@ def _selftest(*, strict: bool = False) -> int:
               == [([0, 1, 2, 3], [2000, 9000]), ([0, 1, 2, 3], [2700, 6500]), ([0, 1, 2, 3], [2000, 9000])]
               and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000]
               and [r["scene_versions"] for r in h6168] == [[0, 1, 2, 3], [0, 1, 2], [0, 1, 2]])
+        h60a1 = {hard: client_row(reg, "h60ax", 235, hard=hard)["kelvin_range"]
+                 for hard in ("1.04.03", "1.10.00", "1.04.02", "1.02.00", "1.4.3", "", "abc")}
+        check("H60A1 Kelvin (compare numeric, KelvinConfig.Config.Y2 / BleUtils.q0): [2700, 6500] from hard "
+              "1.04.03 and at 1.10.00, else [2200, 6500]: 1.4.3 (143), empty and unparsable below it",
+              h60a1 == {"1.04.03": [2700, 6500], "1.10.00": [2700, 6500],
+                        **{hard: [2200, 6500] for hard in ("1.04.02", "1.02.00", "1.4.3", "", "abc")}})
         check("H60A6 pact (1,1): no 0xA5 in the status read; H7070 adds 0x42 at (1,2) / (2,1); with the pact "
               "unknown the row's own applies",
               client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]
@@ -626,9 +649,24 @@ def _selftest(*, strict: bool = False) -> int:
     check("0xAC status: 3 TLVs (power/brightness/colour-group)", len(reals) == 3)
     check("0xAC status: colour group 3x4B",  # status_tlv.value = govee_state -> cmd_a5_state -> color_group
           reals[2].tag == command.color_group and len(reals[2].value.body.body.records) == 3)
+    single = make_profile(f_a5="single_record", num_pieces=1)
+    one, short = (parse_status(bytes([0xA5, len(v), *v]), single).tlvs[0].value.body.body
+                  for v in ((0xFF, 0x40, 0x11, 0x22, 0x33), (0x00, 0x40, 0x11, 0x22)))
+    two = parse_status(bytes([0xA5, 5, 0xFF, 0x40, 0x11, 0x22, 0x33]),
+                       make_profile(f_a5="single_record", num_pieces=2)).tlvs[0].value.body.body
+    check("0xAC status: single_record TLV 0xA5 (H703A) is one record at bytes 1-4 from a 5-byte value, "
+          "byte 0 unread, applied at one piece only; a shorter one reads none",
+          one.app_applies and (one.record.brightness, one.record.r, one.record.b) == (0x40, 0x11, 0x33)
+          and two.is_read and not two.app_applies
+          and not short.is_read and getattr(short, "record", None) is None)
     padded = parse_status(tlv + bytes(7), status_profile)
     check("0xAC status: trailing zero padding reads as type-0 TLVs and a 1-byte tail",
           len([t for t in padded.tlvs if t.tag != 0]) == 3 and padded.tail == b"\x00")
+    segs = parse_status(bytes([0xA1, 0, 0xA1, 4, 3, 54, 54, 36]), make_profile(f_a1="segment_info")).tlvs
+    check("0xAC status: TLV 0xA1 segment_info [count][IC per segment]; an empty one fails the app's read",
+          segs[0].app_read_fails and not segs[1].app_read_fails
+          and segs[1].value.body.body.segment_count == 3
+          and list(segs[1].value.body.body.segment_ics) == [54, 54, 36])
 
     def group_reply(has_brightness: bool, records: Sequence[int]) -> Any:
         prof = make_profile(f_a5="color_group", rule="fixed", num_per_group=2, has_brightness=has_brightness)
@@ -647,6 +685,40 @@ def _selftest(*, strict: bool = False) -> int:
           ic_reply(0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08).section_sum == 18
           and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
           and ic_reply(0x10, 0x00, 0x05).section_sum is None)
+    ic40 = parse_status(bytes([0x40, 3, 0x9C, 0x40, 0x00]), make_profile(f_40="one_count_u16")).tlvs[0]
+    check("TLV 0x40: bytes 0-1 signed in ic_count (getSignedShort), unsigned in ic_count_u16 "
+          "(SegmentSettingController.b)",
+          (ic40.value.body.ic_count, ic40.value.body.ic_count_u16) == (0x9C40 - 0x10000, 0x9C40)
+          and not ic40.app_read_fails)
+    upload = _module("govee_upload").GoveeUpload
+    multi = _ready(upload(upload.UploadKind.color_multi, upload.UploadForm.wire,
+                          _stream(bytes.fromhex("01ffffff0fa0ffd5a1ff7f")), None, None))
+    acks = [parse_frame(raw, "rx").body for raw in (
+        append_bcc(bytes([0xA3, 0x6E, 0x00, 0x01]) + bytes(15)), append_bcc(bytes([0xA3, 0x6E, 0x00, 0x00])),
+        bytes([0xA3, 0x6E, 0x00, 0x00, 0xA3 ^ 0x6E]))]   # a refused byte 3, a whole ack, a short frame
+    check("0xA3 colour value (Config.gu: Bytes.t over 15 pieces) and the unit ack: byte 3 of a whole 20-byte "
+          "frame (MultiController, AbsControllerNoEvent4Multi.onResult)",
+          (multi.value.kelvin, multi.value.tint.g, multi.value.mask.bits[14:17], multi.value.len_value)
+          == (4000, 0xD5, [True, False], 11)
+          and multi.value.is_cct and acks[0].multi_result == 1 and acks[0].is_ok
+          and [a.is_multi_ok for a in acks] == [False, True, False])
+    whole = make_profile(f_a5="color_group", rule="whole_groups", num_per_group=4, has_brightness=True,
+                         num_pieces=10)
+    placed = [parse_status(bytes([0xA5, 17, g, *([1] * 16)]), whole).tlvs[0].value.body.body
+              for g in (2, 3, 4)]
+    check("whole_groups (VM4LightH351011): only the groups whole within num_pieces are placed, the rest "
+          "dropped without failing the read",
+          [g.is_placed for g in placed] == [True, False, False] and not any(g.app_read_fails for g in placed))
+
+    seg = parse_status(reassemble_ac(chunk_ac(bytes([12] + [5] * 12), 0xA1, 0x0B)), reader=0xA1).segment_ic
+    check("ac a1 special-info reply (sub 0x0B): two packets join to [12][IC x 12] (the stream's segment_ic, "
+          "no TLVs); an empty payload fails the app's read",
+          seg.num_segments == 12 and seg.ic_per_segment == [5] * 12 and not seg.app_read_fails
+          and parse_status(b"", reader=0xA1).segment_ic.app_read_fails)
+
+    check("aa 0f reply: the string count is byte 0 read as a Java byte (Controller4BulbNum.Companion.d)",
+          [parse_frame(append_bcc(bytes([0xAA, 0x0F, n])), "rx").body.state.body.count for n in (2, 0x80)]
+          == [2, -128])
 
     def detail_reply(*data: int) -> Any:
         prof = make_profile(f_34="device_detail")
@@ -669,11 +741,11 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
           (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
-    v5 = parse_frame(build_op15_color_v5(0x12, 0x34, 0x56, (1 << 23) - 1, mask_bytes=3), "tx",
-                     make_profile(f_15_01="kelvin", num_segments=23)).body.params.params.data
-    check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 23 panels",
+    v5 = parse_frame(build_op15_color_v5(0x12, 0x34, 0x56, (1 << 20) - 1, mask_bytes=3), "tx",
+                     make_profile(f_15_01="kelvin", num_segments=20)).body.params.params.data
+    check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 20 panels",
           (v5.color.r, v5.color.g, v5.color.b, v5.kelvin) == (0x12, 0x34, 0x56, 0) and not v5.is_cct
-          and v5.mask.bits[:24] == [True] * 23 + [False])
+          and v5.mask.bits[:24] == [True] * 20 + [False] * 4)
 
     from govee_commands import build_color_legacy
 
