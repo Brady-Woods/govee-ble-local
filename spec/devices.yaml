@@ -168,7 +168,17 @@ timing:
         reply came on (never another: no connect for it), with the beat held, as a compose in flight holds the app's
         (AbsBle.I), leaving out the timer, sleep and wake reads, ending at the first unanswered read as the compose ends
         (AbsComposeControllerWithOpResult.onOvertime), and applying the groups' colours only where they are the row's
-        segments. The follow-up: fold ee 30 pushes through the same hook.
+        segments. The ee pushes such a screen's notify list follows go through the same hook (a frame notified with
+        nothing sent since the beat), where the app takes every push: the ee 20 brightness on a row that says
+        brightness_live push_20 (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, the six h7020 rows, h61d3
+        263), and the ee 30 switch, read by the wire f_ee_30, on a row whose power_live has push_30 (69, the h7020
+        rows, 263), a power read as the reply is, with the re-read only where the screen's push handler starts it
+        (h61d3 263, whose handler is J3's, D5: heartbeat_reread push_on). A push that comes after a frame the library sent,
+        before the next beat, stays in the receive queue, so a change made elsewhere in that window shows at the
+        next push, the next connect's status read, or for the power the next reply. h7086 293, h7076 313 and h3700
+        383 follow no push, as their screens register none (ShareVM.Z3's Wi-Fi parser and, on 293, the
+        capacitive-calibration one), so a brightness set elsewhere shows there only at the next connect, as on the
+        screen.
       - >-
         PROCEDURAL (govee-ble-local): one write without response, bounded at 1 s and not retried, and cut short by
         a disconnect or an operation that wants the link (above), where the app's runs to its end beside its command
@@ -2583,7 +2593,8 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
-          heartbeat_reread: { pieces: 1 }
+          heartbeat_reread: { pieces: 1, push_on: true }
+          brightness_live: [push_20]
           doc: >-
             H703A / H703B. Model.t opens H703ADetailActivity (VM4Light) for H61D3Support.l0, and VM4Light.d0 takes Y4: the
             connect is the 0xAC status read alone, ext types {0x41, 0xA5, 0x40, 0x16}, with no aa 01 / aa 05 / aa a5. TLV
@@ -2601,7 +2612,11 @@ families:
             command is in flight (x0().I()), where the library's re-read waits behind the read gate. MODELLED for a
             gap of its own: the re-read's group is read and not applied (one piece, no segments), where the app shows
             that piece's colour, so on a link that stays up the colour is the link's status read's and the library's own
-            writes. Not modelled either: the ee 30 push. One note holds on every status row, the
+            writes. Its screen's pushes are read through the keep-alive reply's hook (brightness_live; power_live push_30):
+            the ee 20 brightness (VM4Light.Z3:953-977 -> y5:688-700) and the ee 30 switch (z5:703-797, bit 0 of frame byte
+            3, which on 263 runs D5:222-259 300 ms later, H61D3Support.l0; the library folds it at once), whose change
+            starts the same re-read as J3's (D5 -> Compose4Off2On; heartbeat_reread push_on).
+            One note holds on every status row, the
             app_traced ones included (straightfloorlamp 69, h7076 313, h7020 296, the h7057 rows), and sets no row's
             level: the request names only extra TLV types (here the four above), and whether the firmware returns TLVs
             0x01 / 0x04 / 0x05 unasked is not in the app (the H60A6 and H6076 benches do; no unit of this row is on the
@@ -4847,6 +4862,7 @@ families:
           heartbeat: power
           heartbeat_power: true
           heartbeat_reread: { pieces: 140 }
+          brightness_live: [push_20]
           doc: >-
             H6069 (goodsType 284: KmpGoodsType, H6069SceneConfig.match, Support.changeGoodsType4Sku) on the cubelight
             screen; pacts (1,1) and (2,1) (Support.addSupportPact). Connect (CubeVM4Light.d0 -> x5, supportSingleReadInfoDevice
@@ -4854,7 +4870,9 @@ families:
             / aa a5 and no 0xB2 (account_lock false; the secret is pairing-only, ConnectDialog extends AbsConnectDialog4Secret).
             TLV 0x01 is the power, 0x04 the brightness, 0x05 the mode (CubeNewDetailsConfig.f -> CubeNewInfo4Detail.U: 0x0d
             [r, g, b][kelvin s16be], rgb_kelvin_0d), 0x41 the power-off memory. Keep-alive: I3 true -> ConnectHeartbeat
-            type 1 = aa 01, its reply byte 2 the live switch (ShareVM.N3 -> CubeVM4Light.J3). One switch: switchTrigger
+            type 1 = aa 01, its reply byte 2 the live switch (ShareVM.N3 -> CubeVM4Light.J3), and the live brightness
+            the ee 20 push (CubeVM4Light.Z3:650-664 -> p5:465-477), which the library reads through the keep-alive
+            reply's hook (brightness_live); the screen has no ee 30 parser. One switch: switchTrigger
             writes 33 01 (ControllerSwitch.d), no zone TLV or 0x30 frame (zones none). Colour tab: 1 piece
             (ColorPieceConfig.o; no CubeColorModeV2 canvas for 284); Config.x[284] = 2 -> Config.J[2] = bu: RGB Bytes.f, a
             Kelvin-tint pick or the colour-temperature slider (ColorViewModel.U, Config.I[284][4] on) Bytes.p in the
@@ -8800,6 +8818,7 @@ families:
           heartbeat: power
           heartbeat_power: true
           heartbeat_reread: { pieces: 15 }
+          brightness_live: [push_20]
           doc: >-
             H617G (goodsType 351: KmpGoodsType; the SubLib key, so BLE only) on the rgbiclight AcNewDetail screen
             (add/Model.t) with VM4Light. Pacts (1,1) / (1,2) (SupportV2.Companion.a; the scan check VM4Light.n4 ->
@@ -8811,8 +8830,9 @@ families:
             no SKU branch, the bytecode agrees, so 15). No aa 01 / aa 05 reads, no 0xB1 / 0xB2. Power 33 01
             (switchTrigger -> ControllerSwitch.d). The keep-alive is aa 01 (I3 true: ConnectHeartbeat type 1), and its
             reply is the screen's live power (ShareVM.N3 -> J3, which also queues the Compose4Off2On re-read on every
-            change, off as well as on); the screen has no ee 30 parser (Z3 adds only brightness and IC-count pushes,
-            not modelled). The library follows the keep-alive as the screen does (heartbeat_power, the user's decision
+            change, off as well as on); the screen has no ee 30 parser (Z3:1054-1076 adds the brightness push, S5:387-399,
+            which the library reads through the keep-alive reply's hook, brightness_live, and the IC-count push, not
+            modelled). The library follows the keep-alive as the screen does (heartbeat_power, the user's decision
             17): the status read once per link, then the switch from each aa 01 reply, and on a change J3's re-read
             (heartbeat_reread): Compose4Off2On's aa 05 (VM4Light.G5 -> OpInfo4Detail.parseModeValidBytes), then O5 ->
             N5's aa a5 groups 1-4 of 4 four-byte [brightness, R, G, B] records over 15 pieces (Support.b: no
@@ -8897,6 +8917,7 @@ families:
           heartbeat: power
           heartbeat_power: true
           heartbeat_reread: { pieces: 15 }
+          brightness_live: [push_20]
           doc: >-
             H618G (goodsType 352: KmpGoodsType; BLE + Wi-Fi, SubLib4BleIot -> Model4BleIot.t -> AcNewDetail) with
             VM4Light, the screen and facts of 351 (H617G): pacts (1,1) / (1,2) (SupportV2.Companion.a; Support.b() puts
@@ -10514,6 +10535,7 @@ families:
           heartbeat: power
           heartbeat_power: true
           heartbeat_reread: { pieces: 7 }
+          brightness_live: [push_20]
           doc: >-
             H6076 / H8076 at goodsType 69 (H6076Maker.getGoodsType; the screen keys on goodsType, SubLib.keys over
             Support.l) on the straightfloorlamp AcNewDetail / VM4Light screen. The catalogue snapshot
@@ -10551,7 +10573,10 @@ families:
             call sends the colour tab's single frame. Colour-strip palettes at (2,1) go out as the 0xA3 multi-packet
             (Config.C[69]); the library sends no palettes. Kelvin: KelvinConfig.Config.N2, version 2 = [2700, 6500] at
             pactType 2 ([2200, 6500] at (1,1)). Keep-alive: aa 01 (VM4Light.I3), fixed rate; live power is its reply
-            and the ee 30 push (the family's power_live). The library follows the keep-alive as the screen does
+            and the ee 30 push (the family's power_live), and live brightness the ee 20 push (VM4Light.Z3:709-728: w5:552-564
+            for 0x20, y5:577-589 for the sub-switch 0x30, whose main switch is bit 0 of frame byte 3 and which sets the switch
+            alone). The library reads both pushes through the keep-alive reply's hook (brightness_live; push_30, wire
+            f_ee_30 generic_flags). The library follows the keep-alive as the screen does
             (heartbeat_power, the user's decision 17): the status read once per link, then the switch from each aa 01
             reply (ShareVM.N3 -> VM4Light.J3), and on a change J3's re-read (heartbeat_reread): Compose4Off2On's aa 05
             (VM4Light.p5 folds it), then t5's aa a5 groups 1 and 2 of 4 four-byte [brightness, R, G, B] records over
@@ -19104,6 +19129,7 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
+          brightness_live: [push_20]
           doc: >-
             H7025 (KmpGoodsType 296; H7025SceneConfig.match) on the h7020 NewDetailVM screen (SubLib4BleIot -> Model4BleIot.t;
             n4 = Support.isSupportNewDetail, goodsType only; pact (1,1)). H8025 (catalogue goodsType 296) is named nowhere in
@@ -19114,7 +19140,9 @@ families:
             (ConnectHeartbeat type 1); live power is that reply (ShareVM.N3 -> J3) and the ee 30 push (bit 0 of
             value[1], makeSwitchNotifyParser), the family's power_live. The library follows the reply as the screen does
             (heartbeat_power, the user's decision 17): the status read once per link, then each reply's switch
-            (NewDetailVM.J3 sets it alone, no re-read); the ee 30 push is not read. Power: switchTrigger writes the one
+            (NewDetailVM.J3 sets it alone, no re-read); it reads the ee 30 push (NewDetailVM.Z3:853-881 -> H5:258-270, sets
+            the switch alone) and the ee 20 brightness push (F5:223-234) through the same hook (power_live push_30;
+            brightness_live). Power: switchTrigger writes the one
             ControllerSwitch (33
             01), zones none. Colour: DelegateColorV2's All tab (F0 colour, G0 Kelvin) writes over ColorModeUtil.a ->
             ColorPieceConfig.c = 15 pieces whatever the account says (ColorPieceConfig.j's fallback; no LightCapabilitySpec is
@@ -19253,6 +19281,7 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
+          brightness_live: [push_20]
           doc: >-
             H7026 (KmpGoodsType 318; Support.isGoodsTypeH7026) and H8026 (Support.r, catalogue 318: the same BLE path and
             pieces, as ColorPieceConfig names no SKU; only Support.getBulbStringMaxNum = 23, the Wi-Fi colour parse and the
@@ -19288,7 +19317,8 @@ families:
             Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
             sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
             2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, its TLV 0x40 IC
-            count with it, then each reply's switch; the ee 30 push is not read.
+            count with it, then each reply's switch, and the ee 30 switch and ee 20 brightness
+            pushes through the same hook, as on 296.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19334,6 +19364,7 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
+          brightness_live: [push_20]
           doc: >-
             H7027 (KmpGoodsType 337; Support.isGoodsTypeH7027) on the h7020 NewDetailVM screen, as 318: the 0xAC status read
             ac 03 03 40 41 a5 alone, the TLV 0x40 IC count (unsigned, f_40 one_count_u16, stored unclamped) sizing the 0xA5
@@ -19351,7 +19382,8 @@ families:
             Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
             sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
             2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, its TLV 0x40 IC
-            count with it, then each reply's switch; the ee 30 push is not read.
+            count with it, then each reply's switch, and the ee 30 switch and ee 20 brightness
+            pushes through the same hook, as on 296.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19398,6 +19430,7 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
+          brightness_live: [push_20]
           doc: >-
             H702A / H702B / H702C (KmpGoodsType 316; Support.isGoodsTypeH702ABC) on the h7020 NewDetailVM screen, as 296, with
             the 4702ABC connect (NewDetailVM.d0 -> h5 -> afterConnectedSingleReadDeviceInfo4702ABC$1): one connect read that
@@ -19432,7 +19465,8 @@ families:
             Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
             sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
             2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, with the aa 40
-            reads the row makes around it, then each reply's switch; the ee 30 push is not read.
+            reads the row makes around it, then each reply's switch, and the ee 30 switch and ee 20 brightness
+            pushes through the same hook, as on 296.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19481,6 +19515,7 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
+          brightness_live: [push_20]
           doc: >-
             H30D0 (KmpGoodsType 391; Support.isGoodsTypeH30D01; H30D1, catalogue 391, named nowhere in the app, routes here by
             its goodsType alone) on the h7020 NewDetailVM screen with the 4702ABC connect, as 316: aa 40 (a mandatory step;
@@ -19503,7 +19538,8 @@ families:
             Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
             sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
             2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, with the aa 40
-            reads the row makes around it, then each reply's switch; the ee 30 push is not read.
+            reads the row makes around it, then each reply's switch, and the ee 30 switch and ee 20 brightness
+            pushes through the same hook, as on 296.
             Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
@@ -19551,6 +19587,7 @@ families:
           connect_writes: []
           heartbeat: power
           heartbeat_power: true
+          brightness_live: [push_20]
           doc: >-
             H3010 / H3011 / H3012 / H3013 (Support.t / u / v / w; Support.isGoodsTypeH3010123; H3010 is catalogue 411 and
             the default of getBulbStringMaxNum, H3011-H3013 its 30 / 45 / 60) on the h7020 NewDetailVM screen with the
@@ -19585,7 +19622,8 @@ families:
             Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3:735-742 true, J3:744-756
             sets it alone, no re-read, as on 296), and the library follows it (heartbeat_power, the user's decision 26,
             2026-10-22, which extends decision 17 to 296's sibling rows): the status read once per link, with the aa 40
-            reads the row makes around it, then each reply's switch; the ee 30 push is not read.
+            reads the row makes around it, then each reply's switch, and the ee 30 switch and ee 20 brightness
+            pushes through the same hook, as on 296.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:62-65,96-166,313-362,383-385,477-479,595-597,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31

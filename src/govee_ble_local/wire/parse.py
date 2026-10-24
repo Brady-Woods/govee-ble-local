@@ -643,20 +643,23 @@ def parse_soft_version(frame: bytes) -> str | None:
 @dataclass(frozen=True)
 class Notify:
     """One decoded ``0xEE`` device push (:func:`parse_notify`). ``sub_type`` is the push sub-type
-    byte; only the field that sub-type carries is set."""
+    byte; only the fields that sub-type carries are set."""
     sub_type: int
     level: int | None = None                      # 0x20 brightness push (raw reported value)
     wifi_connected: bool | None = None            # 0x11 (status byte == 0)
     zone_flags: tuple[int, int, int] | None = None  # 0x30 flag bytes (family-interpreted)
+    is_on: bool | None = None                     # 0x30 power by the profile's f_ee_30 (None: form unknown)
 
 
-def parse_notify(frame: bytes) -> Notify | None:
-    """0xEE push (``notify``). Types the three sub-payloads the curated SKUs emit (0x20/0x11/0x30);
-    other (cross-category) sub-types return None.
+def parse_notify(frame: bytes, prof: Any = _spec.PLAIN) -> Notify | None:
+    """0xEE push (``notify``), read under ``prof`` (``devices.profile.wire_profile``; its ``f_ee_30`` form
+    reads the 0x30 switch push). Types the three sub-payloads the curated SKUs emit (0x20/0x11/0x30);
+    other (cross-category) sub-types return None. A 0x30 push's ``is_on`` is the spec's ``notify_30.is_on``
+    under that form, None where the form is unknown (the plain profile's).
 
-    Spec surface for tools and tests: Device does not consume 0xEE pushes (it polls), so nothing
-    in the library calls this yet."""
-    f = _spec.try_read_frame(frame, _spec.RX, _spec.PLAIN)
+    ``Device`` reads the 0x20 brightness and 0x30 switch pushes on a held link where the profile follows
+    them (``DeviceProfile.push_brightness`` / ``push_power``); tools and tests read the rest."""
+    f = _spec.try_read_frame(frame, _spec.RX, prof)
     if f is None or f.pro_type != _C.ProType.notify:
         return None
     sub = f.body.sub
@@ -666,5 +669,7 @@ def parse_notify(frame: bytes) -> Notify | None:
     if sub == _C.NotifySub.wifi_connect:
         return Notify(sub_type=int(sub), wifi_connected=bool(d.is_connected))   # wifi_status: status == 0
     if sub == _C.NotifySub.switch_zone:
-        return Notify(sub_type=int(sub), zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)))
+        known = int(prof.forms.f_ee_30) != int(_C.FormEe30.unknown)
+        return Notify(sub_type=int(sub), zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)),
+                      is_on=bool(d.is_on) if known else None)
     return None

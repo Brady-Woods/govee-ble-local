@@ -581,9 +581,11 @@ class Device:
         :attr:`.DeviceProfile.detail_power_read`), the ``aa 36`` bar read of a bar-switch device (in a poll,
         or before a bar write), a plug's ``aa 01`` relay read, and on a :attr:`.DeviceProfile.heartbeat_power`
         profile each ``aa 01`` keep-alive reply folded into ``is_on`` (a read issued when its beat went out,
-        so a drop after the beat leaves it unstamped: :meth:`_on_beat_reply`). A read that returned no on/off
-        (an unanswered poll, a brightness or mode reply), a read discarded as stale, an advertisement and an
-        acked write stamp nothing: a poll that read nothing leaves the stamp of the read before it.
+        so a drop after the beat leaves it unstamped: :meth:`_on_beat_reply`), and the same way each ``ee 30``
+        switch push that comes through its hook on a :attr:`.DeviceProfile.push_power` profile. A read that
+        returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as stale, an
+        advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of the read
+        before it.
 
         Dropped when the device may hold another on/off than ``is_on`` without a read saying so:
 
@@ -1055,10 +1057,18 @@ class Device:
         (``J3`` acts only on a change) or ends the optimistic state. Where it changes ``is_on`` on a profile
         with :attr:`.DeviceProfile.heartbeat_reread_pieces`, the screen's re-read follows
         (``Compose4Off2On``, :meth:`_reread_after_change`); elsewhere the screen sets the switch alone, and
-        the mode and colour stay the link's status read's."""
-        on = parse.parse_light_power(reply, wire_profile(self.profile), heartbeat=True)
+        the mode and colour stay the link's status read's. An ``ee`` push the profile follows that comes the
+        same way is folded as the screen's notify list folds it (:meth:`_on_push`)."""
+        prof = wire_profile(self.profile)
+        on = parse.parse_light_power(reply, prof, heartbeat=True)
         if on is None:
+            self._on_push(reply, prof)
             return
+        self._fold_beat_power(on, reread=bool(self.profile.heartbeat_reread_pieces))
+
+    def _fold_beat_power(self, on: bool, *, reread: bool) -> None:
+        """The power a keep-alive reply or an ``ee 30`` push gave on the held link: a power read
+        (:meth:`_on_beat_reply`), and the screen's re-read on a change where ``reread``."""
         switched = on != self._state.is_on
         changed = switched or self._state.optimistic
         self._state.is_on = on
@@ -1066,8 +1076,36 @@ class Device:
         self._finish_read(True, True, self._power_unsure_seq)
         if changed:
             self._notify()
-        if switched and self.profile.heartbeat_reread_pieces:
+        if switched and reread:
             self._start_reread()
+
+    def _on_push(self, frame: bytes, prof: Any) -> None:
+        """An ``ee`` push that came through the keep-alive reply's hook (:meth:`_on_beat_reply`), read through
+        the spec (:func:`.parse.parse_notify` under the profile's ``f_ee_30``) and folded as the screen's
+        notify list folds it, the others left alone: an ``ee 20`` brightness on a
+        :attr:`.DeviceProfile.push_brightness` profile sets ``state.brightness`` in the status read's unit
+        (the screen's ``Info4Detail`` brightness setter: straightfloorlamp ``VM4Light.w5:552-564``, h6069
+        ``CubeVM4Light.p5:465-477``, rgbiclight ``VM4Light.S5:387-399``, h7020 ``NewDetailVM.F5:223-234``,
+        h61d3 ``VM4Light.y5:688-700``), a live field, and the callbacks fire on a change; an ``ee 30`` switch
+        on a :attr:`.DeviceProfile.push_power` profile is a power read, as a keep-alive reply's
+        (:meth:`_fold_beat_power`; straightfloorlamp ``VM4Light.y5:577-589``, h7020
+        ``NewDetailVM.H5:258-270``, h61d3 ``VM4Light.z5:703-797`` -> ``D5:222-259``), with the re-read only
+        where the screen's push handler starts it (:attr:`.DeviceProfile.heartbeat_reread_on_push`). A
+        brightness whose range waits for the advertised pact is not read."""
+        push = parse.parse_notify(frame, prof)
+        if push is None:
+            return
+        if push.level is not None and self.profile.push_brightness:
+            pct = self._brightness_pct(push.level)
+            if pct is None:
+                return
+            changed = pct != self._state.brightness or self._state.optimistic
+            self._state.brightness = pct
+            self._finish_read(True, False, self._power_unsure_seq)
+            if changed:
+                self._notify()
+        elif push.is_on is not None and self.profile.push_power:
+            self._fold_beat_power(push.is_on, reread=self.profile.heartbeat_reread_on_push)
 
     def _start_reread(self) -> None:
         """Start the keep-alive power change's re-read on the link that is up. While one runs, the new one is
@@ -2241,7 +2279,14 @@ class Device:
         link's status read's and the writes' (a whole-device colour or Kelvin write sets every segment the
         state holds, as the app's whole-strip pick does), but where a reply changes the power on a profile
         with :attr:`.DeviceProfile.heartbeat_reread_pieces`, which re-reads them at once as the screen does. A
-        poll on a fresh link returns its status read's power.
+        poll on a fresh link returns its status read's power. The brightness and switch there follow the
+        ``ee 20`` and ``ee 30`` pushes the screen follows (:attr:`.DeviceProfile.push_brightness`,
+        :attr:`.DeviceProfile.push_power`), read where a keep-alive reply is: a push that comes after a frame
+        the library sent, before the next beat, is not read, so a brightness or power changed elsewhere in
+        that window shows only at the next push, the next connect's status read, or for the power the next
+        keep-alive reply. On the rows whose screen follows no ``ee 20`` push (H7086, H7076, H3700) a
+        brightness changed elsewhere shows only at the next connect's status read, as on the screen; those
+        three screens follow no ``ee 30`` push either, and take the power from each keep-alive reply.
 
         On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
         nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness

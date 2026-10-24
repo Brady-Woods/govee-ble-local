@@ -623,7 +623,10 @@ class DeviceProfile:
     poll returns on a fresh link is its status read's, whose TLV 0x01 stands in for the reply, and a poll on a
     warm link reads nothing back. Where a reply changes ``state.is_on``, the screen's re-read follows on a
     profile with :attr:`heartbeat_reread_pieces`; elsewhere the mode and colour on a link that stays up are
-    the status read's and the library's own writes, as the screen's (it sets the switch alone). Set by a
+    the status read's and the library's own writes, as the screen's (it sets the switch alone). The ``ee``
+    pushes the screen follows go through the same hook (:attr:`push_brightness`, :attr:`push_power`); a row
+    whose screen follows none (h7086 293, h7076 313, h3700 383) shows a brightness set elsewhere only after
+    the next connect's status read, as the screen does. Set by a
     devices.yaml status row's ``heartbeat_power: true``: straightfloorlamp 69, h6069 284, rgbiclight 351 /
     352, h7086 293, h7020 296, h7076 313 and h3700 383 (the user's decision 17), h7020 316 / 318 / 337 / 391 /
     411, on 296's screen (the user's decision 26), and h61d3 263 (behind ``allow_modelled``). False (the
@@ -649,6 +652,42 @@ class DeviceProfile:
     ``Compose4Off2On`` that comes while a compose is in flight (``ComposeYieldGuard.skipIncomingIfBusy``). A
     devices.yaml status row's ``heartbeat_reread: { pieces }``: 7 on straightfloorlamp 69, 140 on h6069 284,
     15 on rgbiclight 351 / 352 and 1 on h61d3 263."""
+    heartbeat_reread_on_push: bool = field(default=False, kw_only=True)
+    """With :attr:`heartbeat_reread_pieces` and :attr:`push_power`: an ``ee 30`` switch push that changes the
+    switch starts the same re-read, as the screen's push handler does (h61d3 263, ``H703ADetailActivity``'s
+    ``VM4Light``: ``z5:703-797`` -> ``D5:222-259``, 300 ms later on 263, ``H61D3Support.l0:1340-1342``, the
+    handler ``J3:827-829`` runs; the library folds the push at once; a devices.yaml row's
+    ``heartbeat_reread: { push_on: true }``). False (the default): a push sets the switch alone
+    (straightfloorlamp 69: ``VM4Light.y5:577-589``; h7020: ``NewDetailVM.H5:258-270``), so the next keep-alive
+    reply finds no change and starts none, as ``J3`` tests the switch the push set."""
+    push_brightness: bool = field(default=False, kw_only=True)
+    """With :attr:`heartbeat_power`: follow the screen's ``ee 20`` brightness push on a held link, as its
+    notify list does (``DefParser.makeBrightnessNotifyParser`` -> ``p:195-199``, frame byte 2 unsigned:
+    ``AbsNotify.parse:33-41`` -> ``d:17-31`` -> ``AbsNotifyParse.e:23-32``), into the brightness the status
+    read's TLV 0x04 sets, in its raw unit: straightfloorlamp 69 (``VM4Light.Z3:709-728`` -> ``w5:552-564``),
+    h6069 284 (``CubeVM4Light.Z3:650-664`` -> ``p5:465-477``), rgbiclight 351 / 352 (``VM4Light.Z3:1054-1076``
+    -> ``S5:387-399``), h7020 296 / 316 / 318 / 337 / 391 / 411 (``NewDetailVM.Z3:853-881`` -> ``F5:223-234``)
+    and h61d3 263 (``H703ADetailActivity``'s ``VM4Light.Z3:953-977`` -> ``y5:688-700``): a devices.yaml status
+    row's ``brightness_live: [push_20]``. A push is read where the keep-alive reply is (``GoveeConnection``'s
+    ``heartbeat_reply``: a frame notified while no other frame has gone out since the beat), so one that comes
+    after a frame the library sent, before the next beat, stays in the receive queue, which the next operation
+    drains; it sets ``state.brightness`` (a live field, so the state is no longer optimistic) and reaches the
+    callbacks when it changes it. A push whose brightness range waits for the advertised pact is not read.
+    False (the default): no ``ee 20`` push is read."""
+    push_power: str = field(default="", kw_only=True)
+    """With :attr:`heartbeat_power`: follow the screen's ``ee 30`` switch push on a held link, read under this
+    ``f_ee_30`` form (govee_common ``form_ee_30``; the spec's ``notify_30.is_on``), as its notify list does:
+    straightfloorlamp 69 (``generic_flags``: ``DefParser.makeSubSwitchNotifyParser`` -> ``M:76-81``, frame
+    byte 3 bit 0 the main switch, ``VM4Light.y5:577-589``), h7020 296 / 316 / 318 / 337 / 391 / 411 and h61d3
+    263 (``main_bit0_a``: ``DefParser.makeSwitchNotifyParser`` -> ``O:83-87``, frame byte 3 bit 0;
+    ``NewDetailVM.H5:258-270``, H3001's 361 alone taking another parser, ``Support.isGoodsTypeH3001:591-593``;
+    h61d3 ``VM4Light.z5:703-797``): set where a devices.yaml heartbeat_power row's ``power_live`` has
+    ``push_30``, with its wire ``f_ee_30``. It is read where the keep-alive reply is
+    (:attr:`push_brightness`) and folds as the reply does: a power read that sets ``state.is_on``, stamps
+    :attr:`~.device.Device.power_read_at` as the reply does and reaches the callbacks on a change; the re-read
+    follows only with :attr:`heartbeat_reread_on_push`. ``""`` (the default): no ``ee 30`` push is read (h6069
+    284 and rgbiclight 351 / 352, whose screens have no switch parser, and every row the library does not
+    follow on a held link)."""
     ic_reads_around_status: tuple[bool, bool] = field(default=(False, False), kw_only=True)
     """``readback="status"`` with :attr:`color_readback_live_ic`: the poll's ``aa 40`` reads ``(before,
     after)`` the 0xAC status read, which give the live IC in place of a TLV 0x40 (a devices.yaml status row's
@@ -844,6 +883,9 @@ class DeviceProfile:
         if isinstance(reread, bool) or not isinstance(reread, int) or reread < 0:
             raise GoveeBleInvalidValue(
                 f"{where}: heartbeat_reread_pieces={reread!r} (0, no re-read, or more)")
+        push = self.push_power
+        if push and (push not in _C.FormEe30.__members__ or push == "unknown"):
+            raise GoveeBleInvalidValue(f"{where}: push_power={push!r} (a form_ee_30 form, or \"\")")
         per_unit = self.light_num_per_unit
         if isinstance(per_unit, bool) or not isinstance(per_unit, int) or per_unit < 0:
             raise GoveeBleInvalidValue(
@@ -1255,9 +1297,10 @@ def wire_profile(profile: DeviceProfile) -> Any:
     :attr:`DeviceProfile.relay_on_mask`, as the aa 01 heartbeat rule the library's poll follows:
     ``power_state.is_on_heartbeat``; else a light's,
     masks 0, with :attr:`DeviceProfile.light_nonzero`, the poll's rule, as both ``light_nonzero`` and
-    ``light_heartbeat_nonzero``), and on a ``readback="status"`` profile the 0xAC reply's decode
+    ``light_heartbeat_nonzero``), on a ``readback="status"`` profile the 0xAC reply's decode
     (:attr:`DeviceProfile.status_decode`: its forms and colour-group form, and the TLV 0x05's music layout and
-    empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with.
+    empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with,
+    and the ``ee 30`` push's ``f_ee_30`` where the profile follows it (:attr:`DeviceProfile.push_power`).
     Cached per set of facts (``_spec.profile``)."""
     status = profile.mode_color_parse_status
     mode_status = None if status is None else _decode(profile, status)
@@ -1279,6 +1322,8 @@ def wire_profile(profile: DeviceProfile) -> Any:
     # (masks 0, govee_profile power_rule); each is already the rule the poll follows, so it fills both the
     # connect-read and the heartbeat params.
     mask = profile.relay_on_mask if profile.readback == "plug" else 0
+    if profile.push_power:   # the ee 30 switch push the profile follows (DeviceProfile.push_power)
+        reads["f_ee_30"] = int(_C.FormEe30[profile.push_power])
     return _spec.profile(**_decode(profile, profile.mode_color_parse),
                          mode_status=None if mode_status is None else tuple(sorted(mode_status.items())),
                          relay_on_mask=mask, relay_heartbeat_on_mask=mask,

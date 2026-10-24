@@ -136,6 +136,11 @@ async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follow
             assert [s.rgb for s in dev.state.segments] == [tint_for_kelvin(3000)] * held
             await dev.set_rgb((1, 2, 3))
             assert [s.rgb for s in dev.state.segments] == [(1, 2, 3)] * held
+            # The ee pushes the screen follows come through the same hook (its Z3 notify list): every row here
+            # takes the ee 20 brightness, and the ee 30 switch where it has the parser (not H617G's screen).
+            for push in (frame(0xEE, 0x20, 50), frame(0xEE, 0x30, 0x00, 0x01)):
+                dev._on_beat_reply(push)
+            assert (dev.state.brightness, dev.state.is_on) == (50, bool(dev.profile.push_power))
         await dev.release()
         with _span(fake) as fresh:
             await dev.update()

@@ -224,10 +224,15 @@ the row lacks fails the build: nothing defaults silently.
   h61d3 263. Such a row's ``heartbeat_reread`` (only with ``heartbeat_power``, and with the wire group's
   ``num_per_group``, the re-read's group size: it becomes ``DeviceProfile.color_readback_per_batch``) is the
   screen's re-read on a power change (``J3`` -> ``Compose4Off2On``: aa 05, then the screen's aa a5 groups over
-  its ``pieces``, ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. The
-  library folds no other keep-alive reply and no ee 30 push into state: the poll's own power read stands in
-  for them, aa 01 on a polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on
-  either), the aa 36 bar read for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``.
+  its ``pieces``, ``DeviceProfile.heartbeat_reread_pieces``); a row without it sets the switch alone. On such
+  a row the ee pushes its screen follows go through the reply's hook: the ee 20 brightness where the row says
+  ``brightness_live: [push_20]`` (only with ``heartbeat_power``; ``DeviceProfile.push_brightness``), and the
+  ee 30 switch where its ``power_live`` has ``push_30``, read by the wire ``f_ee_30``
+  (``DeviceProfile.push_power``), whose change starts the re-read where ``heartbeat_reread`` says ``push_on``
+  (``DeviceProfile.heartbeat_reread_on_push``). The library folds no other keep-alive reply and no other push
+  into state: the poll's own read stands in for them, aa 01 on a polled row and the status read's TLV 0x01
+  on a status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
+  ``push_30`` with its wire ``f_ee_30``.
 - The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
@@ -342,8 +347,10 @@ class IcPair(TypedDict):
 
 
 class HeartbeatReread(TypedDict):
-    """``clientRow.heartbeat_reread``: the pieces the screen's keep-alive re-read walks."""
+    """``clientRow.heartbeat_reread``: the pieces the screen's keep-alive re-read walks, and whether an ee 30
+    push that turns the switch on starts it too."""
     pieces: int
+    push_on: NotRequired[bool]
 
 
 class LightNumPieces(TypedDict):
@@ -392,6 +399,7 @@ class Row(TypedDict, total=False):
     power_read: str
     power_write: str
     power_live: tuple[str, ...]
+    brightness_live: tuple[str, ...]
     heartbeat: str
     heartbeat_timing: str
     heartbeat_power: bool
@@ -513,6 +521,7 @@ class ClientProfile(TypedDict, total=False):
     color_scheme: str
     power_read: str
     power_live: tuple[str, ...]
+    brightness_live: tuple[str, ...]
     mode_color_parse: str
     mode_color_parse_status: str
     relay_power: str
@@ -1545,6 +1554,17 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
         if not (_is_int(per_group) and per_group >= 1):
             fail("heartbeat_reread needs the wire group num_per_group (the size of its aa a5 groups)")
         reread_pieces = int(walked)
+    # The ee pushes the screen follows on the held link (DeviceProfile.push_brightness / push_power), read
+    # through the keep-alive reply's hook: on a heartbeat_power row only, where the poll reads nothing more.
+    pushes = tuple(row.get("brightness_live", cp.get("brightness_live")) or ())
+    if pushes and not beat_power:
+        fail(f"brightness_live {list(pushes)} without heartbeat_power (the library reads the ee 20 push on a "
+             "held link only; elsewhere the poll's own brightness read stands in)")
+    push_power = forms["f_ee_30"] if beat_power and "push_30" in lives else ""
+    push_on = bool(reread.get("push_on", False)) if isinstance(reread, dict) else False
+    if push_on and not push_power:
+        fail("heartbeat_reread push_on without an ee 30 push the library reads (power_live push_30 with the "
+             "wire f_ee_30)")
     _check_mode(w, readback, fail)
     # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
     nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]
@@ -1648,6 +1668,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Mapping[str, ModeColorS
         out["empty_secret_check"] = True
     if reread_pieces:
         out["heartbeat_reread_pieces"] = reread_pieces
+    if push_on:
+        out["heartbeat_reread_on_push"] = True
+    if "push_20" in pushes:
+        out["push_brightness"] = True
+    if push_power:
+        out["push_power"] = push_power
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         if status_by_pact:
