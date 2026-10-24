@@ -334,8 +334,10 @@ model, from which the shipped readers are generated).
     `segment_readback_count`), so night and read-only runs keep it.
   - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
     verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`, where a write step
-    nothing verified, a skipped one, a device skipped for its connect or a Ctrl-C keeps a device from `pass`;
-    totals count the skipped devices) beside each device's
+    nothing verified, a skipped one, a device skipped for its connect, a device whose row needs a secret
+    tested without one (`no_secret`: every plug, allow-listed or not, since its `33 b2` unlock is then never
+    sent) or a Ctrl-C keeps a device from `pass`; totals count the skipped and the `no_secret` devices)
+    beside each device's
     report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug secrets are scrubbed
     from every file. `--library checkout` / `installed` and `--expect-version` pick and pin the library under test;
     `installed` refuses a source tree or an editable install. `TOOL_VERSION` is 3.
@@ -345,7 +347,7 @@ model, from which the shipped readers are generated).
     completed run and 1 for one that could not complete (a device skipped for its connect among them);
     `--all` exits with its gate: 0 `pass`, 1 `fail` (a failed step, an aborted device, a partial or failed
     restore), 4 `incomplete` (a device not reached or skipped, a write skipped by the window or not verified,
-    a plug without a secret). Both exit 2 with nothing to test, 3 when refused and 130 when interrupted
+    a device whose row needs a secret, every plug, tested without one). Both exit 2 with nothing to test, 3 when refused and 130 when interrupted
     (`tools/README.md`'s exit-code table).
   - The test suite sets `GOVEE_FIELD_TEST_NO_SCAN` (the tool's scans then raise instead of reaching bleak's
     real scanner) and a session ref key for every test (`tests/conftest.py`).

@@ -46,10 +46,12 @@ def unverified_writes(dev: dict[str, Any]) -> int:
 
 
 def device_passed(dev: dict[str, Any]) -> bool:
-    """Completed, nothing failed, every write step ran and was verified (by a read-back or the tester), and no
-    Ctrl-C reached it (one during its restore lets the restore finish, but the tester stopped the run)."""
+    """Completed, nothing failed, every write step ran and was verified (by a read-back or the tester), its
+    row's unlock was sent where the row needs a secret (``no_secret``: every plug, tested without its
+    secret, is not a pass), and no Ctrl-C reached it (one during its restore lets the restore finish, but the
+    tester stopped the run)."""
     return (device_completed(dev) and not device_failed(dev) and not dev.get("counts", {}).get("skipped", 0)
-            and not unverified_writes(dev) and not dev.get("interrupted"))
+            and not unverified_writes(dev) and not dev.get("no_secret") and not dev.get("interrupted"))
 
 
 def device_skipped(dev: dict[str, Any]) -> bool:
@@ -70,13 +72,15 @@ def totals(data: dict[str, Any]) -> dict[str, int]:
     tested_refs = {d.get("ref") for d in devices}
     return {"heard": len(data.get("heard", [])), "tested": len(tested), "passed": len(passed),
             "failed": len(failed), "unverified": len([d for d in tested if unverified_writes(d)]),
+            "no_secret": len([d for d in tested if d.get("no_secret")]),
             "not_reached": len(tested) - len(reached), "skipped": len(skipped), "not_run": len(not_run),
             "listed_only": len([h for h in data.get("heard", []) if h.get("ref") not in tested_refs])}
 
 
 def gate_verdict(data: dict[str, Any]) -> str:
     """``fail`` (a step failed, a device aborted, a restore partial or failed), ``incomplete`` (a device not
-    reached, not run or skipped, a write skipped or unverified, a Ctrl-C, nothing tested), else ``pass``."""
+    reached, not run or skipped, a write skipped or unverified, a device whose row needs a secret tested
+    without one, a Ctrl-C, nothing tested), else ``pass``."""
     devices = data.get("devices", [])
     if any(device_failed(d) for d in devices):
         return "fail"

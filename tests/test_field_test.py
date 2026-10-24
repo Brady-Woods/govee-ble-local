@@ -333,7 +333,8 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     (the H6047 plan's segment read-back too), even once the window opens during the run, writes no relay of a
     plug that is not allow-listed, and connects to no H14A1, whose every connect sends 33 25 (an effect stop):
     --list and the summary mark it skipped, as does a read-only run by day, and the run exits 4 (incomplete).
-    Inside the window it connects as normal; --force-hours lifts the window. A Ctrl-C (the main task
+    Inside the window it connects as normal; a plug tested without its secret (its unlock never sent) keeps
+    the gate incomplete (exit 4) on its own. --force-hours lifts the window. A Ctrl-C (the main task
     cancelled, as asyncio.run does) as the H6047's restore begins lets that restore finish and marks the
     devices after it not run; one after the first write went out, before its ack, still restores the H6047.
     Modelled and unsupported devices are listed only. A write step nothing verified keeps the gate
@@ -447,6 +448,7 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert bulb.establish_calls == 0 and night["totals"]["skipped"] == 1
     assert {s["step"]: s["verdict"] for s in night["devices"][2]["steps"]} == {
         "session_setup": "unverifiable", "relay_read": "pass"}            # no secret: no unlock sent
+    assert night["devices"][2]["no_secret"] and night["totals"]["no_secret"] == 1
     assert (sim.on, sim.bars, sim.pct, sim.gradual) == start[:4]
     assert "write_tx power" not in plug.sim.requests()
     assert night["devices"][0]["restore"]["result"] == "not_needed"
@@ -459,6 +461,8 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     rc, lit, lit_out = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
     assert lit["devices"][0]["result"] == "completed" and bulb.establish_calls >= 1
     assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
+    rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref)   # the plug alone, no secret
+    assert rc == 4 and lone["gate"] == "incomplete" and lone["devices"][0]["result"] == "completed"
 
     # --force-hours lifts the window; a Ctrl-C as the H6047's restore begins: it is restored all the same,
     # and the run stops after it

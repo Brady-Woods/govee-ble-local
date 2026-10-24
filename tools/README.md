@@ -79,17 +79,19 @@ never at the same time.
    --toggle-plugs <ref>[,<ref>] --out gate-X.Y.Z` (add `--allow-modelled` to include the opt-in rows).
    The tool lists every device, asks what each allow-listed plug powers and whether to toggle it (the
    answer is never stored), asks for its secret unless `--secrets-file` (JSON `{ref: hex}`, mode 0600)
-   has it, then asks once before the first visible change. That answer (or `--yes`) is the whole run's:
-   a run started before the window opens without `--yes` stays read-only to its end, even once the window
-   opens. Each device then runs over its own connection, one at a time, and is restored before the next
+   has it (every other device whose row needs a secret, every plug among them, takes it from that file
+   only, and without one it can't pass), then asks once before the first visible change. That answer (or
+   `--yes`) is the whole run's: a run started before the window opens without `--yes` stays read-only to
+   its end, even once the window opens. Each device then runs over its own connection, one at a time, and is restored before the next
    starts. With `--ask unverifiable` (the `--all` default) the tester answers only where nothing was read
    back.
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
    was partial or failed) or `incomplete` (a device not reached, a device skipped because its connect
    writes visibly, a write skipped by the window, a write step nothing verified: no read-back and no
-   answer, as with `--no-prompt` or an `s`; a plug without a secret, an interrupted run). Only `pass`
-   clears the gate; the exit code says which ([Exit codes](#exit-codes)).
+   answer, as with `--no-prompt` or an `s`; a device whose row needs a secret tested without one: every
+   plug, allow-listed or not, since its `33 b2` unlock is then never sent; an interrupted run). Only
+   `pass` clears the gate; the exit code says which ([Exit codes](#exit-codes)).
 
 Notes:
 
@@ -124,7 +126,7 @@ Notes:
 | 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, or a partial or failed restore. |
 | 2 | No device found, or no plan for it. | Nothing to test. |
 | 3 | Refused: the wrong library or version, a bad `--secrets-file`. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
-| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a plug without a secret. |
+| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one. |
 | 130 | Interrupted (Ctrl-C). | Interrupted (Ctrl-C), whatever the gate. |
 
 ## Capturing a BLE session (for ground-truth traffic)

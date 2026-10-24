@@ -782,7 +782,7 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     rec: dict[str, Any] = {"ref": target.ref, "sku": sku, "tier": target.tier, "kind": target.kind,
                            "plan": target.plan, "result": None, "counts": counts([]), "steps": [],
                            "restore": None, "report": report_path.name, "frames": frames_path.name,
-                           "errors": []}
+                           "no_secret": False, "errors": []}
 
     def save() -> None:
         # Every string in the report passes the scrubber once more on the way out (a backstop: the
@@ -835,6 +835,9 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
     profile = getattr(dev, "profile", None)
     kind = device_kind(profile) if profile is not None else "light"
     rec["kind"], rec["plan"] = kind, "generic" if is_generic else "hand"
+    # A row that needs a secret (every plug) tested without one: its 33 b2 unlock is never sent, so the
+    # device can't pass the gate (summary.device_passed), whatever its read steps say.
+    rec["no_secret"] = bool(getattr(profile, "requires_secret", False)) and not secret
     report.update(kind=kind, plan={"sku": plan.sku, "title": plan.title}, plan_kind=rec["plan"],
                   ref=target.ref, device={"address": mask_address(address), "name": mask_name(target.name)})
     codes: dict[str, int] = {}
@@ -928,8 +931,8 @@ def _base_summary(args: argparse.Namespace, policy: Policy, lib: dict[str, Any])
 def _exit_code(data: dict[str, Any], interrupted: bool) -> int:
     """``--all``: the summary's gate as the exit code: 0 ``pass``, 1 ``fail`` (a failed step, an aborted
     device, a partial or failed restore), 4 ``incomplete`` (a device not reached or skipped, a write skipped
-    by the window or not verified, a plug without a secret); 130 when interrupted, 2 when nothing was
-    tested."""
+    by the window or not verified, a device whose row needs a secret, every plug, tested without one); 130
+    when interrupted, 2 when nothing was tested."""
     if interrupted:
         return EXIT_INTERRUPTED
     if not data.get("devices"):
