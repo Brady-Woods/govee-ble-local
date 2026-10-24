@@ -7,6 +7,7 @@ import dataclasses
 import importlib
 import json
 import os
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -45,7 +46,7 @@ def _identifying(text: str) -> list[str]:
     forms: list[str] = []
     for mac in (ADDR.lower(), WIFI.lower()):
         tail = mac.split(":")[3:]
-        forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", "")]
+        forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", ""), "".join(tail[1:])]
     return [f for f in forms if f in text.lower()]
 
 
@@ -63,7 +64,7 @@ def _identifying(text: str) -> list[str]:
 def test_mask_text_masks_the_address_in_every_form(masking: ModuleType, text: str) -> None:
     out = masking.mask_text(text, ADDR)
     assert _identifying(out) == [], out
-    assert "5E" in out.upper()   # the vendor prefix stays, for diagnosis
+    assert "00005E" in re.sub(r"[:_-]", "", out.upper())   # the vendor prefix stays, for diagnosis
 
 
 def test_mask_text_masks_any_mac_shaped_token_and_the_macos_uuid(masking: ModuleType) -> None:
@@ -260,7 +261,7 @@ def test_redaction_drops_every_wire_field_and_status_burst_payloads(
     assert out[4]["plain"] == "ac000200060302" + "0" * 26 and out[4]["redacted"] == "status-burst payload"
     assert out[5]["plain"] == "acff" + "0" * 36
     raw = frames.read_text().lower()
-    assert "abab" not in raw and "cdcd" not in raw and "1122334455" not in raw and "0053d0" not in raw
+    assert "abab" not in raw and "cdcd" not in raw and "1122334455" not in raw and "53d0" not in raw
 
 
 def test_redaction_never_writes_through_a_planted_temp_file_symlink(

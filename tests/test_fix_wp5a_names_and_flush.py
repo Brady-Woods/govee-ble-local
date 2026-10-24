@@ -45,7 +45,7 @@ def _identifying(text: str) -> list[str]:
     forms = ["a2d1"]
     for mac in (ADDR.lower(), WIFI.lower()):
         tail = mac.split(":")[3:]
-        forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", "")]
+        forms += [*(sep.join(tail) for sep in (":", "-", "_")), mac.replace(":", ""), "".join(tail[1:])]
     return [f for f in forms if f in text.lower()]
 
 
