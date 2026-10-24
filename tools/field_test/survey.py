@@ -20,6 +20,8 @@ import hmac
 import os
 import secrets
 import stat
+import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -122,33 +124,105 @@ def no_radio() -> Iterator[None]:
             setattr(connection, "establish_connection", real)  # noqa: B010
 
 
+class NotPrivate(Exception):
+    """A secrets file or ref key the tool won't read (:func:`read_private`). ``why``: ``"type"`` (not a
+    regular file), ``"mode"`` (group or others have a permission bit), ``"acl"`` (macOS: an ACL entry) or
+    ``"acl?"`` (macOS: ``ls`` could not tell); ``mode``: its permission bits. The caller words the refusal by
+    the path alone, never a value."""
+
+    def __init__(self, why: str, mode: int) -> None:
+        super().__init__(why)
+        self.why = why
+        self.mode = stat.S_IMODE(mode)
+
+    @property
+    def acl(self) -> str:
+        """The ACL refusal (``why`` ``"acl"`` or ``"acl?"``), in words without the path."""
+        if self.why == "acl?":
+            return "its ACL could not be checked (/bin/ls -le failed)"
+        return ("it has an ACL entry (ls -le lists it), which can let others read it whatever its mode: "
+                "remove it with chmod -N (and any inheritable one on its folder)")
+
+
+def _acl(path: Path) -> str | None:
+    """macOS only: ``"acl"`` when ``/bin/ls -led`` lists an ACL entry for ``path`` (any line after the file's
+    own, such as `` 0: group:everyone inherited allow read``; ``-q`` keeps a name on one line), ``"acl?"``
+    when ``ls`` can't say, else None. The mode bits don't show an ACL, and one inherited from a folder
+    (``everyone allow read,file_inherit``) lets others read a 0600 file. Elsewhere None: a Linux POSIX ACL
+    entry shows in the group bits (the ACL mask), which the mode check already refuses."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        done = subprocess.run(["/bin/ls", "-ledq", "--", str(path)],  # noqa: S603 - fixed argv, absolute ls
+                              capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return "acl?"
+    lines = done.stdout.decode(errors="replace").splitlines()
+    if done.returncode != 0 or not lines:
+        return "acl?"
+    return "acl" if any(line.strip() for line in lines[1:]) else None
+
+
+def read_private(path: Path) -> bytes:
+    """``path``'s bytes, when it is the tester's own: opened without following a symlink or waiting for a
+    FIFO's writer (``O_NOFOLLOW | O_NONBLOCK``), then judged on that descriptor (``fstat``) before a byte is
+    read: a regular file whose mode gives group and others no permission at all (``mode & 0o077`` is 0:
+    0600, 0400) and, on macOS, with no ACL entry (:func:`_acl`). The descriptor is closed on every path.
+    ``FileNotFoundError`` when there is none, :class:`NotPrivate` when it is refused, another ``OSError``
+    when it can't be opened (a symlink: ``ELOOP``)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            raise NotPrivate("type", mode)
+        if mode & 0o077:
+            raise NotPrivate("mode", mode)
+        acl = _acl(path)
+        if acl:
+            raise NotPrivate(acl, mode)
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 1 << 16):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 def _ref_key_path() -> Path:
     return Path(os.environ.get(REF_KEY_ENV) or _DEFAULT_REF_KEY).expanduser()
 
 
+def _ref_key_refused(path: Path, err: NotPrivate) -> str:
+    if err.why == "type":
+        return f"{path} is not a regular file"
+    if err.why == "mode":
+        return (f"{path}: the ref key is readable by group or others (mode {err.mode:04o}); delete it to "
+                "make a new one (mode 0600)")
+    return f"{path}: the ref key is not private; {err.acl}"
+
+
 def _ref_key(path: Path) -> bytes:
-    """The ref key at ``path``: created 0600 (its folder 0700) on first use; one group or others can read is
-    refused (its refs are no longer private), as is one that is not a regular file or is too short."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    with contextlib.suppress(FileNotFoundError):
-        fd = os.open(path, flags)
-        with os.fdopen(fd, "rb") as fh:
-            mode = os.fstat(fh.fileno()).st_mode
-            if not stat.S_ISREG(mode):
-                raise OSError(f"{path} is not a regular file")
-            if mode & 0o077:
-                raise OSError(f"{path}: the ref key is readable by group or others (mode "
-                              f"{stat.S_IMODE(mode):04o}); delete it to make a new one (mode 0600)")
-            key = fh.read()
-        if len(key) >= 16:
-            return key
-        raise OSError(f"{path}: the ref key is too short; delete it to make a new one")
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    key = secrets.token_bytes(32)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(key)
-    return key
+    """The ref key at ``path``: created 0600 (its folder 0700) on first use. One :func:`read_private`
+    refuses (not a regular file, group or others have a permission bit, an ACL entry on macOS: its refs are
+    no longer private), a new one its folder gave an ACL entry, and one too short are an ``OSError`` that
+    names the path."""
+    try:
+        key = read_private(path)
+    except FileNotFoundError:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        key = secrets.token_bytes(32)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(key)
+        acl = _acl(path)   # one its folder passes on (inherited) is in no mode bit
+        if acl:
+            raise OSError(_ref_key_refused(path, NotPrivate(acl, 0o600))) from None
+        return key
+    except NotPrivate as err:
+        raise OSError(_ref_key_refused(path, err)) from None
+    if len(key) >= 16:
+        return key
+    raise OSError(f"{path}: the ref key is too short; delete it to make a new one")
 
 
 _KEYS: dict[Path, bytes] = {}

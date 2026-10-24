@@ -246,7 +246,9 @@ def test_runner_reports_not_found_and_unplanned_sku(
     assert "no test plan" in json.loads((tmp_path / "fieldtest-report-U.json").read_text())["result"]
 
     # the secrets file: none there (the session's) is no failure; one group or others can read is refused,
-    # saying why and printing no value; the ref key is made 0600 and refused once wider
+    # saying why and printing no value; the ref key is made 0600 and refused once wider. A folder, a FIFO
+    # (opened O_NONBLOCK: no wait for a writer) or JSON nested past the parser's depth is refused too, by the
+    # path alone (exit 3), its descriptor closed; on macOS so is an ACL entry, which no mode bit shows
     from fake_ble import ble_device
 
     from govee_ble_local import GoveeBleError, create_device
@@ -261,6 +263,47 @@ def test_runner_reports_not_found_and_unplanned_sku(
     secrets.chmod(0o600)
     assert runner._read_secrets(str(secrets)) == {"AA:BB:CC:DD:EE:11": bytes.fromhex("0011aabbccddeeff")}
     assert "aabbcc" not in capsys.readouterr().out.lower()
+    folder, fifo, deep = tmp_path / "folder", tmp_path / "fifo", tmp_path / "deep.json"
+    folder.mkdir(mode=0o700)
+    os.mkfifo(fifo, 0o600)
+    deep.write_text("[" * 100_000)
+    deep.chmod(0o600)
+    fds = len(os.listdir("/dev/fd"))
+    for path, why in ((folder, "not a regular file"), (deep, "not JSON")):
+        with pytest.raises(runner.Refused) as refused:
+            runner._read_secrets(str(path))
+        assert str(refused.value) == f"--secrets-file {path}: {why}"
+    with pytest.raises(OSError, match=r" is not a regular file$"):
+        survey._ref_key(folder)
+    assert len(os.listdir("/dev/fd")) == fds
+    assert runner.main(["--all", "--secrets-file", str(folder), "--out", str(tmp_path / "odd")]) == (
+        runner.EXIT_REFUSED)
+    assert f"Refused: --secrets-file {folder}: not a regular file" in capsys.readouterr().out
+    for argv, env, shown in (   # in a child, so a FIFO that blocks times out instead of hanging the suite
+            (["--list"], {survey.REF_KEY_ENV: str(fifo)}, f"Refused: {fifo} is not a regular file"),
+            (["--all", "--secrets-file", str(fifo)], {},
+             f"Refused: --secrets-file {fifo}: not a regular file")):
+        r = subprocess.run(  # noqa: S603 - fixed argv, sys.executable; the radio is off in the child too
+            [sys.executable, str(TOOLS / "field_test"), *argv, "--out", str(tmp_path / "odd")],
+            capture_output=True, text=True, timeout=60, env={**os.environ, **env})
+        assert r.returncode == runner.EXIT_REFUSED and shown in r.stdout, r.stdout + r.stderr
+    if sys.platform == "darwin":   # an ACL entry: the file's own, or one a new ref key's folder passes on
+        acl = "it has an ACL entry (ls -le lists it), which can let others read it whatever its mode"
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read", str(secrets)], check=True)  # noqa: S603
+        with pytest.raises(runner.Refused) as refused:
+            runner._read_secrets(str(secrets))
+        assert str(refused.value).startswith(f"--secrets-file {secrets}: {acl}")
+        subprocess.run(["/bin/chmod", "-N", str(secrets)], check=True)  # noqa: S603
+        assert runner._read_secrets(str(secrets))
+        shared = tmp_path / "shared"
+        shared.mkdir(mode=0o700)
+        subprocess.run(["/bin/chmod", "+a", "everyone allow read,file_inherit", str(shared)],  # noqa: S603
+                       check=True)
+        for _made_then_read in range(2):
+            with pytest.raises(OSError) as refused_key:
+                survey._ref_key(shared / "ref.key")
+            assert str(refused_key.value).startswith(
+                f"{shared / 'ref.key'}: the ref key is not private; {acl}")
     key = tmp_path / "keys" / "ref.key"
     assert len(survey._ref_key(key)) == 32 and key.stat().st_mode & 0o777 == 0o600
     key.chmod(0o640)

@@ -35,7 +35,6 @@ import json
 import os
 import platform
 import signal
-import stat
 import sys
 import threading
 import time
@@ -466,34 +465,37 @@ def secrets_path(given: str | None) -> Path:
 def _read_secrets(given: str | None) -> dict[str, bytes]:
     """``{ref or address (upper): secret}`` from the 0600 JSON file of hex secrets (:func:`secrets_path`;
     read once, no value ever printed or logged). No file: none, never a failure (a device that needs one
-    and is given none stays read-only, its gate incomplete). One group or others can read is refused."""
+    and is given none stays read-only, its gate incomplete). One :func:`.survey.read_private` refuses (not a
+    regular file, group or others have a permission bit, an ACL entry on macOS), one it can't open (a
+    symlink) and one that is not JSON (or is nested past the parser's depth) are refused, by the path alone
+    (exit 3)."""
     if not (given or os.environ.get(SECRETS_ENV)) and os.environ.get("PYTEST_CURRENT_TEST"):
         return {}   # a test never reads the tester's own file
     path = secrets_path(given)
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        raw = _survey.read_private(path)
     except FileNotFoundError:
         _say(f"No secrets file at {path}: a device that needs a secret and is given none stays read-only")
         return {}
+    except _survey.NotPrivate as err:
+        why = ("not a regular file" if err.why == "type" else
+               f"group or others can read it (mode {err.mode:04o}); chmod 600 it" if err.why == "mode" else
+               err.acl)
+        raise Refused(f"--secrets-file {path}: {why}") from None
     except OSError as err:
         raise Refused(f"--secrets-file {path}: cannot open it ({err.strerror})") from None
-    with os.fdopen(fd, encoding="utf-8") as fh:
-        st = os.fstat(fh.fileno())
-        if not stat.S_ISREG(st.st_mode):
-            raise Refused(f"--secrets-file {path}: not a regular file")
-        if st.st_mode & 0o077:
-            raise Refused(f"--secrets-file {path}: group or others can read it (mode "
-                          f"{stat.S_IMODE(st.st_mode):04o}); chmod 600 it")
-        try:
-            data = json.load(fh)
-        except ValueError:
-            raise Refused("--secrets-file is not JSON") from None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):   # not UTF-8, not JSON, or nested past the parser's depth
+        raise Refused(f"--secrets-file {path}: not JSON") from None
     if not isinstance(data, dict):
         raise Refused("--secrets-file must hold {ref or address: hex secret}")
     out: dict[str, bytes] = {}
     for n, (key, value) in enumerate(data.items(), 1):
         try:
-            secret = bytes.fromhex(str(value))
+            if not isinstance(value, str):   # never str() a nested value
+                raise ValueError
+            secret = bytes.fromhex(value)
         except ValueError:
             raise Refused(f"--secrets-file: entry {n} is not hex") from None
         if len(secret) != 8:

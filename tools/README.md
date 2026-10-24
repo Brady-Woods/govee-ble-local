@@ -99,13 +99,19 @@ never at the same time.
    git-ignored for that case): JSON `{"<ref or address>": "<16 hex digits>"}`, on each host that runs the
    tool, owner-only. Make it with
    `install -d -m 700 ~/.config/govee-ble-local && install -m 600 /dev/null ~/.config/govee-ble-local/field-test-secrets.json`,
-   then edit it. A file group or others can read is refused (exit 3; the message gives the path and
-   mode, never a value: `chmod 600` it), and no value is ever printed or written to a report. No file is
-   no failure: a device that needs a secret and is given none stays read-only and the gate is
-   `incomplete`. The device refs are keyed by `~/.cache/govee-ble-local/field-test-ref.key`
-   (`$GOVEE_FIELD_TEST_REF_KEY` elsewhere), made 0600 in a 0700 folder on first use; one group or others
-   can read is refused before any scan (exit 3, the path and mode): delete it to make a new one (every
-   ref changes, so run `--list` again).
+   then edit it. What is checked, on the open file itself (never through a symlink, and a FIFO is never
+   waited on): it is a regular file, its mode gives group and others no permission at all (`mode & 077` is
+   0: 0600 or 0400; 0640, 0604 or 0610 are refused: `chmod 600` it), and on macOS it has no ACL entry
+   (`ls -le` lists none; an ACL, such as an `everyone allow read` its folder passes on, is in no mode bit:
+   `chmod -N` removes it). On Linux a POSIX ACL entry shows in the group bits, so the mode check covers it.
+   Its owner and its folder's permissions are not checked. Anything else (a symlink, a folder, a FIFO, a
+   file that isn't JSON) is refused (exit 3; the message gives the path, and the mode or the ACL, never a
+   value), and no value is ever printed or written to a report. No file is no failure: a device that needs
+   a secret and is given none stays read-only and the gate is `incomplete`. The device refs are keyed by
+   `~/.cache/govee-ble-local/field-test-ref.key` (`$GOVEE_FIELD_TEST_REF_KEY` elsewhere), made 0600 in a
+   0700 folder on first use; the same checks refuse it before any scan (exit 3, the path and why; a new
+   one too, when its folder passes an ACL entry on): delete it to make a new one (every ref changes, so run
+   `--list` again).
 4. Attach `gate-X.Y.Z/fieldtest-summary-<time>.json` (and any failing device's report and frame
    capture) to the release PR. Its `gate` is `pass`, `fail` (a step failed, a device aborted, a restore
    was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close
@@ -189,7 +195,7 @@ Notes:
 | 0 | The plan completed (its verdicts are in the report and the summary). | `gate` `pass`. |
 | 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, a partial or failed restore, or an unverified restore after a write it can never put back. |
 | 2 | No device found, or no plan for it. | Nothing to test. |
-| 3 | Refused: the wrong library or version, a bad `--secrets-file`, a ref key group or others can read. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
+| 3 | Refused: the wrong library or version, a bad `--secrets-file` or ref key (not a regular file, any group or others bit in its mode, an ACL entry on macOS; a secrets file that isn't JSON). | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
 | 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
 | 130 | Interrupted (Ctrl-C, SIGHUP, SIGTERM). | Interrupted (Ctrl-C, SIGHUP, SIGTERM), whatever the gate. |
 
