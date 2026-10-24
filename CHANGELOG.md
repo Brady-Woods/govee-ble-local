@@ -786,11 +786,12 @@ model, from which the shipped readers are generated).
 
   Each other one resolves to the same profile, field by field (every new field at its default), at every pact
   its rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged.
-  Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H615A-E the profile
-  H6159 heads, H611A / H6143 / H6144 at (2,1) the H617C one, H70A1-3's H6176 / H61BC profile thirteen
-  dreamcolorlightv1 71 / 123 SKUs. Each profile a SKU 1.7.0 admits by default keeps its first SKU but H70B6's,
-  which the h70b3 SKUs join with H6810 first, so a `Device` built from that profile without `sku=` names itself
-  H6810 (`create_device` and `make_device` always pass the SKU).
+  Where a SKU this release adds or promotes has another's facts it joins that SKU's profile
+  (`DeviceProfile.skus`): H615A-E join the profile H6159 heads, and thirteen dreamcolorlightv1 71 / 123 SKUs the
+  H6176 / H61BC / H70A1-3 one; H611A / H6143 / H6144, promoted, join the H617C one at (2,1). Each profile a SKU
+  1.7.0 admits by default keeps its first SKU but H70B6's, which the h70b3 SKUs join with H6810 first, so a
+  `Device` built from that profile without `sku=` names itself H6810 (`create_device` and `make_device` always
+  pass the SKU).
   SKU-specific changes outside the profile: H6113 at its BK pacts keeps an RGB pick of a Kelvin tint colour as
   that colour (the `legacy_02` entry, below); H6118 / H6194 / H6179 follow a later advert's pact to the row it
   routes them to (`reroute`, Added); a whole-device colour or Kelvin write sets every segment the state holds,
