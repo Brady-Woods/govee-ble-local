@@ -56,11 +56,13 @@ def device_passed(dev: dict[str, Any]) -> bool:
     """Completed, nothing failed, every write step ran and was verified (by a read-back or the tester), its
     row's unlock was sent where the row needs a secret (``no_secret``: every plug, tested without its
     secret, is not a pass), its restore put back everything the run wrote (a ``close`` restore that left
-    a colour, brightness or power changed for good is not a pass), and no Ctrl-C reached it (one during its
-    restore lets the restore finish, but the tester stopped the run)."""
+    a colour, brightness or power changed for good is not a pass) and was verified (by a read-back or the
+    tester's yes: an ``unverified`` restore, a card row's nobody answered for, is not a pass), and no Ctrl-C
+    reached it (one during its restore lets the restore finish, but the tester stopped the run)."""
+    restore = (dev.get("restore") or {}).get("result")
     return (device_completed(dev) and not device_failed(dev) and not dev.get("counts", {}).get("skipped", 0)
             and not unverified_writes(dev) and not dev.get("no_secret") and not dev.get("interrupted")
-            and not left_changed(dev))
+            and not left_changed(dev) and restore != "unverified")
 
 
 def device_skipped(dev: dict[str, Any]) -> bool:
@@ -91,8 +93,8 @@ def totals(data: dict[str, Any]) -> dict[str, int]:
 def gate_verdict(data: dict[str, Any]) -> str:
     """``fail`` (a step failed, a device aborted, a restore partial or failed, or unverified after the run
     wrote what it can never put back), ``incomplete`` (a device not reached, not run or skipped, a write
-    skipped or unverified, a device whose row needs a secret tested without one, a close restore that left a
-    write in place for good, a Ctrl-C, nothing tested), else ``pass``."""
+    skipped or unverified, a restore nothing verified, a device whose row needs a secret tested without one,
+    a close restore that left a write in place for good, a Ctrl-C, nothing tested), else ``pass``."""
     devices = data.get("devices", [])
     if any(device_failed(d) for d in devices):
         return "fail"

@@ -20,7 +20,11 @@ model, from which the shipped readers are generated).
     colour / Kelvin, the first catalog scene, the gradual flag, and the refusals the library must make before
     any I/O (`set_segment_color_temp` where `segment_color_temp` is False, among others) as passes when
     `GoveeBleNotSupported` is raised with nothing sent. Hand-written plans still win for their SKUs
-    (`--generic` forces the generic one).
+    (`--generic` forces the generic one). A card row (one session per command, 1.8's
+    `DeviceProfile.session == "per_command"`) gets power off and on only: its brightness is not exercised,
+    since nothing reads a start level to put back (a run left it at 100 % for good, so it could never
+    pass); the tester is asked at each of its steps and at its restore, with `--ask unverifiable` too, and a
+    yes on the restore clears it.
   - **Verdicts without false passes** (`readback.py`): each step's fields are compared with what the library
     intended (`Device.snapshot()` after the action) only where the row reads that field back, a reply
     carrying it came back in that poll, as seen on the `govee_ble_local.frames` logger (a status burst's TLV
@@ -99,7 +103,8 @@ model, from which the shipped readers are generated).
     runs keep it.
   - **Output:** one masked `fieldtest-summary-<time>.json` per run (per device: SKU, tier, steps with
     verdicts, restore result, errors; the gate verdict `pass` / `fail` / `incomplete`, where a write step
-    nothing verified, a skipped one, a device skipped for its connect, a device whose row needs a secret
+    nothing verified, a skipped one, a restore nothing verified (`unverified`: a card row's nobody answered
+    for), a device skipped for its connect, a device whose row needs a secret
     tested without one (`no_secret`: every plug, allow-listed or not, since its `33 b2` unlock is then never
     sent; not a row whose connect sends the app's empty `33 b2` check, once that check is acked) or a Ctrl-C
     keeps a device from `pass`; totals count the skipped and the `no_secret` devices)
@@ -118,7 +123,8 @@ model, from which the shipped readers are generated).
     completed run and 1 for one that could not complete (a device skipped for its connect among them);
     `--all` exits with its gate: 0 `pass`, 1 `fail` (a failed step, an aborted device, a partial or failed
     restore), 4 `incomplete` (a device not reached or skipped, a write skipped by the window or not verified,
-    a device whose row needs a secret, every plug, tested without one). Both exit 2 with nothing to test, 3
+    a restore nothing verified, a device whose row needs a secret, every plug, tested without one). Both exit
+    2 with nothing to test, 3
     when refused and 130 when interrupted (`tools/README.md`'s exit-code table).
   - **Secrets and the ref key stay owner-only, outside the checkout.** The secrets file (JSON `{ref or
     address: hex secret}`) defaults to `~/.config/govee-ble-local/field-test-secrets.json` (`--secrets-file`

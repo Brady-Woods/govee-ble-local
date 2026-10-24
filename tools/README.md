@@ -123,7 +123,8 @@ never at the same time.
    was partial or failed, or unverified after a write it can never put back) or `incomplete` (a close
    restore of such a write, a device not reached, a device skipped because its connect
    writes visibly, a write skipped by the window, a write step nothing verified: no read-back and no
-   answer, as with `--no-prompt` or an `s`; a device whose row needs a secret tested without one: every
+   answer, as with `--no-prompt` or an `s`; a restore nothing verified, such as a card row's nobody
+   answered for; a device whose row needs a secret tested without one: every
    plug, allow-listed or not, since its `33 b2` unlock is then never sent; an interrupted run). Only
    `pass` clears the gate; the exit code says which ([Exit codes](#exit-codes)).
 
@@ -165,8 +166,12 @@ Notes:
   window closes on it while connected, the tool polls it no more (a link it dropped would be re-opened,
   connect writes and all), so its remaining read steps are skipped, but its restore still runs. Nothing
   else is sent outside the window.
-- A card row (one session per command, no read-back: H70B2) is read back from its next advertisement for
-  power only; its brightness and its restore rest on the tester's answers.
+- A card row (one session per command, no read-back: H70B2, from 1.8) gets power off and on only: its
+  brightness is not exercised, since nothing reads its start level, so a run could never put it back. Its
+  power steps are read back from its next advertisement where that carries the on/off, and the tester is
+  asked at every step and at the restore, with `--ask unverifiable` too: a "no" fails it, and a "yes" on
+  the restore clears it (`close`, nothing left changed). With nobody to answer (`--no-prompt`) its restore
+  is `unverified`, which keeps the gate `incomplete`.
 - A step passes on a read-back only where the step's poll set the field in the library's state: a reply
   the library dropped (a bad checksum) or rejected (a status stream the app's read fails on) proves
   nothing, whatever frames arrived. A write step's field intended as it already was proves nothing by
@@ -211,7 +216,7 @@ Notes:
 | 1 | It could not complete: not reached, aborted, or skipped (its connect writes visibly and writes aren't allowed). | `gate` `fail`: a failed step, an aborted device, a partial or failed restore, or an unverified restore after a write it can never put back. |
 | 2 | No device found, or no plan for it. | Nothing to test. |
 | 3 | Refused: the wrong library or version, a bad `--secrets-file` or ref key (not a regular file, any group or others bit in its mode, an ACL entry on macOS; a secrets file that isn't JSON), `GOVEE_FIELD_TEST_NO_SCAN` set outside the test suite. | Refused: the same, a declined start, or a run with visible writes and neither prompts nor `--yes`. |
-| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
+| 4 | Not used. | `gate` `incomplete`: a device not reached or skipped, a write skipped by the window or not verified, a restore nothing verified (a card row's nobody answered for), a device whose row needs a secret (every plug) tested without one, a close restore of a write it can never put back. |
 | 130 | Interrupted (Ctrl-C, SIGHUP, SIGTERM). | Interrupted (Ctrl-C, SIGHUP, SIGTERM), whatever the gate. |
 
 ## Capturing a BLE session (for ground-truth traffic)

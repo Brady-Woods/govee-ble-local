@@ -697,6 +697,14 @@ async def _card_readback(run: _Run) -> tuple[Any, dict[str, str | None]]:
     return SimpleNamespace(is_on=on), {"is_on": reason}
 
 
+def _asks(policy: Policy, verdict: str, kind: str) -> bool:
+    """Whether a step's question is asked: every one with ``--ask all``; with ``--ask unverifiable``, a step
+    nothing read back, and every step of a card row (one session per command, no read-back of its own: the
+    tester's y/n judges it, its power read from the next advertisement or not)."""
+    return policy.ask == "all" or (policy.ask == "unverifiable"
+                                   and (verdict == "unverifiable" or kind == "card"))
+
+
 async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     """Send one step, read the state back, judge it, maybe ask the tester: the step's record."""
     dev, policy = run.dev, run.policy
@@ -781,8 +789,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
 
     final = verdict_with(None)
     observed = None
-    ask = policy.ask == "all" or (policy.ask == "unverifiable" and final.verdict == "unverifiable")
-    if rec["sent"] == "ok" and step.question and ask:
+    if rec["sent"] == "ok" and step.question and _asks(policy, final.verdict, run.kind):
         observed = await _ask(step.question, policy.prompts, step.free_text)
         if observed is not None:
             final = verdict_with(observed)
@@ -1262,8 +1269,8 @@ def _base_summary(args: argparse.Namespace, policy: Policy, lib: dict[str, Any])
 def _exit_code(data: dict[str, Any], interrupted: bool) -> int:
     """``--all``: the summary's gate as the exit code: 0 ``pass``, 1 ``fail`` (a failed step, an aborted
     device, a partial or failed restore), 4 ``incomplete`` (a device not reached or skipped, a write skipped
-    by the window or not verified, a device whose row needs a secret, every plug, tested without one); 130
-    when interrupted, 2 when nothing was tested."""
+    by the window or not verified, a restore nothing verified, a device whose row needs a secret, every plug,
+    tested without one); 130 when interrupted, 2 when nothing was tested."""
     if interrupted:
         return EXIT_INTERRUPTED
     if not data.get("devices"):

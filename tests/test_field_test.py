@@ -478,6 +478,17 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
                 if not dimmed <= set(step.touched):
                     bad.append(f"{sku} {step.name}: dims {sorted(dimmed)}, judges {step.touched} alone")
     assert len(routes) > 100 and not bad, bad[:20]
+    # a card row (one session per command: 1.8's DeviceProfile.session) exercises no brightness, whose start
+    # nothing reads, and its tester's y/n judges every step, under --ask unverifiable too
+    card = SimpleNamespace(capabilities=("power", "brightness"), set_power=generic._nothing,
+                           set_brightness=generic._nothing, profile=SimpleNamespace(session="per_command"))
+    seen_on = restore.StartState(SimpleNamespace(), frozenset(), "card", advertised_on=True)
+    assert [s.name for s in generic.generic_steps(ft.PlanContext(card, "H70B2", {}, kind="card",
+                                                                 start=seen_on))] == [
+        "advert_state", "power_off", "power_on"]
+    runner = importlib.import_module("field_test.runner")
+    unverifiable = runner.Policy(guard.Window(), ask="unverifiable")
+    assert [runner._asks(unverifiable, "pass", k) for k in ("light", "card")] == [False, True]
     kelvin = ft.Step("color_temp_5500", generic._nothing, None, "", fields=("color_temp_kelvin", "rgb_color"))
     was, want = (SimpleNamespace(rgb_color=None, color_temp_kelvin=k) for k in (2000, 5500))
     blind = {"rgb_color": None, "color_temp_kelvin": "the mode reply carries no Kelvin"}   # a _nocct decode
@@ -529,7 +540,6 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     # gradual flag nobody read is noted
     from govee_ble_local.models import DeviceState
 
-    runner = importlib.import_module("field_test.runner")
     watch = readback.FrameWatch("AA:BB:CC:DD:EE:01")
     relay: list[bool] = []
 
@@ -1033,10 +1043,13 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert lost == ["colour: not read", "relay: unknown"]
     close, blind = ({**ok, "restore": {"result": r, "unrestorable_written": lost}}
                     for r in ("close", "unverified"))
-    kept = {**ok, "restore": {"result": "close", "unrestorable_written": []}}
-    cases = (ok, unverified, failed, close, blind, kept)
+    # a close restore that left nothing changed for good passes (a card row's, on the tester's yes); one
+    # nothing verified (a card row's nobody answered for) keeps the gate incomplete
+    kept, unseen = ({**ok, "restore": {"result": r, "unrestorable_written": []}}
+                    for r in ("close", "unverified"))
+    cases = (ok, unverified, failed, close, blind, kept, unseen)
     assert [summary.gate_verdict({"devices": [d]}) for d in cases] == [
-        "pass", "incomplete", "fail", "incomplete", "fail", "pass"]
+        "pass", "incomplete", "fail", "incomplete", "fail", "pass", "incomplete"]
     assert [runner._exit_code({"devices": [d]}, False) for d in (ok, unverified, failed)] == [0, 4, 1]
     # a restore a second Ctrl-C abandoned after the run wrote is NOT RESTORED, with what the writes changed
     abandoned = restore.RestoreCheck("abandoned")

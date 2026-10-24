@@ -19,7 +19,10 @@ list and the pact are known. Each step is one command, then a read-back where th
    refuses it (``segment_color_temp`` False, no segment brightness, ``gradual_read_only``, a brightness range
    that waits for the pact): pass when ``GoveeBleNotSupported`` is raised and nothing was sent.
 
-A plug gets only read steps unless the tester allowed its relay to toggle (``--toggle-plugs`` and the
+A card row (one session per command, no read-back: ``DeviceProfile.session == "per_command"``) gets its
+start power from the advertisement (or the tester), then power off and on; its brightness is not exercised,
+since nothing reads a start level that could be put back. The tester's y/n judges its steps and its
+restore. A plug gets only read steps unless the tester allowed its relay to toggle (``--toggle-plugs`` and the
 run-time confirmation), and then one toggle and back. A 2- or 3-outlet plug's power write sets every outlet
 at once (``33 01 FF / F0``, the ``33 02`` total switch), so it toggles only when the first poll read every
 outlet in the same state (its aa 01 relay bits); from a mixed start the toggle is skipped, since nothing
@@ -211,11 +214,8 @@ def _card_steps(ctx: PlanContext) -> list[Step]:
                        fields=("is_on",), note=note, skip=skip),
                   Step("power_on", partial(dev.set_power, True), None, "Is it ON again?",
                        fields=("is_on",), note=note, skip=skip)]
-    if "brightness" in caps:
-        steps += [Step("brightness_25", partial(dev.set_brightness, 25), None, "Is it at about a QUARTER?",
-                       note="no read-back on a card row: the tester's answer decides", skip=skip),
-                  Step("brightness_100", partial(dev.set_brightness, 100), None, "Is it at FULL brightness?",
-                       note="no read-back on a card row: the tester's answer decides", skip=skip)]
+    # No brightness step: nothing reads a card row's start level, so a run would leave it where its last
+    # step put it, for good.
     return steps
 
 
