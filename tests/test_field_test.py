@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import errno
 import importlib
+import io
 import json
+import os
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -336,10 +340,13 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     Inside the window it connects as normal; when the window closes during its turn, it gets no connect after
     (in its re-scan) or no poll after (once connected). A plug tested without its secret (its unlock never
     sent) keeps the gate incomplete (exit 4) on its own. --force-hours lifts the window. A Ctrl-C (the main
-    task cancelled, as asyncio.run does) as the H6047's restore begins lets that restore finish and marks the
-    devices after it not run; one after the first write went out, before its ack, still restores the H6047.
-    Modelled and unsupported devices are listed only. A write step nothing verified keeps the gate
-    incomplete (exit 4). Every file the runs write is masked."""
+    task cancelled, as asyncio.run does) as the H6047's restore begins, with the terminal gone (every write to
+    it fails), lets that restore finish and marks the devices after it not run; a SIGHUP after the first
+    write went out, before its ack, still restores the H6047 and leaves no raw capture. With no terminal on
+    stdin, --all writes nothing visible unless --unattended. Modelled and unsupported devices are listed only.
+    A write step nothing verified keeps the gate incomplete (exit 4). A capture a killed run left raw is
+    redacted at the next start; GOVEE_FIELD_TEST_NOW pins the clock under pytest only. Every file the runs
+    write is masked."""
     from fake_ble import FakeGovee, FirmwareGovee, ble_device, frame, virtual_time
     from test_h6047_field_test import _Sim
 
@@ -348,6 +355,8 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
 
     survey = importlib.import_module("field_test.survey")
     guard = importlib.import_module("field_test.guard")
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
+    real_now = guard.now
     sim = _Sim()
     sim.bars, sim.gradual = [True, False], True                 # start: left bar on, right bar off
     sim.rgb.update({i: (9, 8, 7) for i in range(5, 10)})
@@ -407,11 +416,12 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
         with virtual_time():
             return int(await runner.run_all(args, out, "T", runner._window(args), {"version": "test"}))
 
-    def run_all(*argv: str) -> tuple[int, dict[str, Any], Path]:
+    def run_all(*argv: str, signals: bool = False) -> tuple[int, dict[str, Any], Path]:
         out = tmp_path / str(len(list(tmp_path.iterdir())))
         out.mkdir()
         args = runner.parse_args([*argv, "--settle", "0", "--out", str(out)])
-        rc = asyncio.run(on_virtual_time(args, out))
+        run = on_virtual_time(args, out)
+        rc = runner._main_with_signals(run) if signals else asyncio.run(run)
         summary = out / "fieldtest-summary-T.json"
         return rc, json.loads(summary.read_text()) if summary.exists() else {}, out
 
@@ -419,15 +429,25 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     # the H14A1 marked as --all would leave it now
     clock = {"now": datetime.datetime(2026, 10, 23, 5, 0)}
     monkeypatch.setattr(guard, "now", lambda: clock["now"])
-    rc, _, listed = run_all("--list")
+    with monkeypatch.context() as m:   # outside the suite an exported pin is ignored
+        m.delenv("PYTEST_CURRENT_TEST")
+        assert guard.pinned_clock_ignored() and real_now() != datetime.datetime(2026, 10, 23, 12, 0)
+    listed = tmp_path / "listed"
+    listed.mkdir()
+    left = listed / ".h6047-01-frames-X.jsonl.raw"   # what a killed run leaves: redacted at the next start
+    left.write_text(json.dumps({"ts": 1, "addr": "AA:BB:CC:DD:EE:47", "dir": "tx", "plain": "3301",
+                                "wire": "e701ab", "enc": "none"}) + "\n")
+    rc = runner.main(["--list", "--out", str(listed)])
     shown = capsys.readouterr().out
     assert rc == 0 and light.establish_calls == plug.establish_calls == bulb.establish_calls == 0
     assert f"{entries[1].ref} H5083 ihoment_H5083_xxxx AA:BB:CC:xx:xx:xx 1 outlet" in shown
     assert f"ihoment_H14A1_xxxx AA:BB:CC:xx:xx:xx  ({no_effect_stop})" in shown
-    rows = json.loads((listed / "fieldtest-list-T.json").read_text())["heard"]
+    rows = json.loads(next(listed.glob("fieldtest-list-*.json")).read_text())["heard"]
     assert [(h["tier"], h["skip"]) for h in rows] == [
         ("default", None), ("default", None), ("modelled", None), ("unsupported", None),
         ("default", no_effect_stop)]
+    assert not left.exists() and json.loads((listed / "h6047-01-frames-X.jsonl").read_text())["addr"] == (
+        "AA:BB:CC:xx:xx:xx")
 
     # 05:00: read steps only, though the window opens before the first device's turn (no --yes); nothing
     # visible is written, the plug's relay least of all, and the H14A1 is not connected to
@@ -459,8 +479,15 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert rc == 4 and ro["devices"][0]["result"] == no_effect_stop.replace("outside the window",
                                                                             "on a read-only run")
     assert bulb.establish_calls == 0
-    rc, lit, lit_out = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
+    with monkeypatch.context() as m:   # no terminal on stdin: nothing visible without --unattended
+        m.setattr(runner, "_on_a_terminal", lambda: False)
+        rc, alone, _ = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
+        assert rc == 4 and alone["devices"][0]["result"] == no_effect_stop.replace("outside the window",
+                                                                                   "with no terminal")
+        assert bulb.establish_calls == 0 and alone["options"]["unattended"] is False
+        rc, lit, lit_out = run_all("--all", "--no-prompt", "--yes", "--unattended", "--only", entries[4].ref)
     assert lit["devices"][0]["result"] == "completed" and bulb.establish_calls >= 1
+    assert lit["options"]["unattended"] is True
     assert any(f[:3] == b"\x33\x25\x01" for f in bulb.received)
     rc, lone, _ = run_all("--all", "--no-prompt", "--only", entries[1].ref)   # the plug alone, no secret
     assert rc == 4 and lone["gate"] == "incomplete" and lone["devices"][0]["result"] == "completed"
@@ -481,7 +508,8 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
         clock["now"] = datetime.datetime(2026, 10, 23, 21, 59, 50)
         calls, stops, real = bulb.establish_calls, effect_stops(), getattr(module, name)
         monkeypatch.setattr(module, name, at_2200(real))
-        rc, edge, edge_out = run_all("--all", "--no-prompt", "--yes", "--only", entries[4].ref)
+        rc, edge, edge_out = run_all("--all", "--no-prompt", "--yes", "--unattended", "--only",
+                                     entries[4].ref)
         monkeypatch.setattr(module, name, real)
         report = json.loads((edge_out / edge["devices"][0]["report"]).read_text())
         assert rc == 4 and edge["devices"][0]["result"] == result and "final_state" not in report
@@ -490,17 +518,29 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
         "step": "readback_baseline", "kind": "read", "verdict": "skipped", "basis": None,
         "reason": no_effect_stop.removeprefix("skipped: ")}
 
-    # --force-hours lifts the window; a Ctrl-C as the H6047's restore begins: it is restored all the same,
-    # and the run stops after it
+    # --force-hours lifts the window; a Ctrl-C as the H6047's restore begins, the terminal gone with it (every
+    # write to it fails, the "restoring" line first): it is restored all the same, and the run stops after it
     real_restore = runner.restore_start
+    gone = {"tty": False}
 
-    async def ctrl_c_then_restore(*a: Any, **k: Any) -> Any:
+    class Tty(io.StringIO):
+        def write(self, s: str) -> int:
+            if gone["tty"]:
+                raise OSError(errno.EIO, "Input/output error")
+            return len(s)
+
+    def ctrl_c_then_restore(*a: Any, **k: Any) -> Any:
         main["task"].cancel()
-        return await real_restore(*a, **k)
+        gone["tty"] = True
+        return real_restore(*a, **k)
 
     monkeypatch.setattr(runner, "restore_start", ctrl_c_then_restore)
-    rc, day, out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes")
+    with monkeypatch.context() as m:
+        m.setattr(sys, "stdout", Tty())
+        rc, day, out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes", "--unattended")
     monkeypatch.setattr(runner, "restore_start", real_restore)
+    assert runner._CONSOLE.dead
+    monkeypatch.setattr(runner, "_CONSOLE", runner._Console())
     assert rc == 130 and day["gate"] == "fail" and day["window"]["forced"] is True
     bars, *rest = day["devices"]
     assert bars["result"] == "completed" and bars["interrupted"]
@@ -515,20 +555,27 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
     assert set(day) >= {"tool_version", "route", "library", "window", "options", "heard", "devices", "totals"}
 
-    # a Ctrl-C once the first write (power off) reached the light, before its ack: the H6047 is restored
-    def ctrl_c_before_the_ack(client: Any, plain: bytes) -> None:
+    # the terminal closes (SIGHUP) once the first write (power off) reached the light, before its ack: the
+    # H6047 is restored as on a Ctrl-C, and its capture is redacted into its own name (no raw file left)
+    def hang_up_before_the_ack(client: Any, plain: bytes) -> None:
         if plain[:3] != b"\x33\x01\x00" or main.get("cut"):
             return answer(client, plain)
         main["cut"] = True
         sim.write(plain)
-        main["task"].cancel()
+        os.kill(os.getpid(), signal.SIGHUP)
 
-    light.on_write = ctrl_c_before_the_ack
-    rc, cut, _ = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes",
-                         "--only", entries[0].ref)
+    light.on_write = hang_up_before_the_ack
+    hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)   # never the suite's death, if no handler took it
+    try:
+        rc, cut, cut_out = run_all("--all", "--generic", "--force-hours", "--no-prompt", "--yes",
+                                   "--unattended", "--only", entries[0].ref, signals=True)
+    finally:
+        signal.signal(signal.SIGHUP, hup)
     assert rc == 130 and main["cut"] and cut["devices"][0]["result"] == "interrupted"
+    assert runner._CONSOLE.stopped_by == "SIGHUP"
     assert cut["devices"][0]["restore"]["result"] == "exact"
     assert (sim.on, sim.bars, sim.pct, sim.gradual, sim.rgb, sim.kelvin) == start
+    assert sorted(p.name for p in cut_out.iterdir() if "frames" in p.name) == ["h6047-01-frames-T.jsonl"]
 
     # the gate: a write step nothing verified (no read-back carried it, no answer) leaves it incomplete
     summary = importlib.import_module("field_test.summary")
@@ -538,7 +585,7 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     assert [summary.gate_verdict({"devices": [d]}) for d in (ok, unverified, failed)] == [
         "pass", "incomplete", "fail"]
     assert [runner._exit_code({"devices": [d]}, False) for d in (ok, unverified, failed)] == [0, 4, 1]
-    for path in (*out.iterdir(), *listed.iterdir(), *lit_out.iterdir()):
+    for path in (*out.iterdir(), *listed.iterdir(), *lit_out.iterdir(), *cut_out.iterdir()):
         text = path.read_text()
         assert "DD:EE" not in text and "1A2B" not in text, path.name
         assert '"wire": "' not in text, path.name

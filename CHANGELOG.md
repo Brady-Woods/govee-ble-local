@@ -313,8 +313,10 @@ model, from which the shipped readers are generated).
     `failed`, `unverified` or `not_needed`. One Ctrl-C restores the device wherever it lands: in a step (also
     between a command's frame and its ack, so the device counts as written to before the send), during the
     restore, which carries on in a task of its own, or at the restore's question; the device is kept in the
-    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`). The restore polls
-    first, since a write cut short applies nothing to the library's state.
+    summary and the run stops after it. A second Ctrl-C abandons the restore (`abandoned`). SIGHUP (a closed
+    terminal, a dropped SSH session) and SIGTERM do what the first Ctrl-C does, and nothing is asked after
+    either (nothing printed after SIGHUP); console output never raises, so a closed tty or a broken pipe can't
+    skip a restore. The restore polls first, since a write cut short applies nothing to the library's state.
   - **Plugs** toggle their relay only when allow-listed (`--toggle-plugs REF[,REF]`), confirmed at run time
     (what it powers is asked and never stored) and given a secret (`--secrets-file`, mode 0600, or a hidden
     prompt); every other plug gets read-only steps (connect, unlock, time sync, relay read). A 2- or 3-outlet
@@ -342,7 +344,10 @@ model, from which the shipped readers are generated).
     tested without one (`no_secret`: every plug, allow-listed or not, since its `33 b2` unlock is then never
     sent) or a Ctrl-C keeps a device from `pass`; totals count the skipped and the `no_secret` devices)
     beside each device's report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug
-    secrets are scrubbed from every file. `--library checkout` / `installed` and `--expect-version` pick and
+    secrets are scrubbed from every file. The library writes each capture under a hidden `.….jsonl.raw` name
+    that only its redaction turns into the capture, so a killed run leaves no raw capture under an attachable
+    name, and the next start redacts any it left. `--all` with no terminal on stdin writes nothing visible
+    unless `--unattended` (recorded in the summary). `--library checkout` / `installed` and `--expect-version` pick and
     pin the library under test; `installed` refuses a source tree or an editable install. `TOOL_VERSION`
     is 3.
   - **Changes for one device:** with no hand-written plan for the SKU (and none heard without `--sku`), the
@@ -354,7 +359,9 @@ model, from which the shipped readers are generated).
     a device whose row needs a secret, every plug, tested without one). Both exit 2 with nothing to test, 3
     when refused and 130 when interrupted (`tools/README.md`'s exit-code table).
   - The test suite sets `GOVEE_FIELD_TEST_NO_SCAN` (the tool's scans then raise instead of reaching bleak's
-    real scanner) and a session ref key for every test (`tests/conftest.py`).
+    real scanner), a session ref key and `GOVEE_FIELD_TEST_NOW` (the clock at midday) for every test
+    (`tests/conftest.py`); the clock pin is honoured only while pytest runs a test (`PYTEST_CURRENT_TEST`), and a
+    real run that finds it exported says it is ignored.
   - Tests: `test_the_generic_plan_follows_every_profile` (one property over every routed profile, the modelled
     rows too; the visible connect write the tool reads is what the library's connect sends) and
     `test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrupt` (the fake BLE: an H6047

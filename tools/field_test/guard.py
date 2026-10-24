@@ -26,10 +26,26 @@ CONNECT_WRITES: tuple[tuple[str, str], ...] = (
 VISIBLE_CONNECT_WRITES: dict[str, str] = {"light_effect_stop": "33 25 (effect stop)"}
 
 
+PINNED_NOW_ENV = "GOVEE_FIELD_TEST_NOW"
+
+
+def _pinned() -> str | None:
+    """``GOVEE_FIELD_TEST_NOW`` while a pytest test runs (pytest sets ``PYTEST_CURRENT_TEST``), else None: an
+    exported shell variable never moves a real run's window."""
+    pinned = os.environ.get(PINNED_NOW_ENV)
+    return pinned if pinned and os.environ.get("PYTEST_CURRENT_TEST") else None
+
+
+def pinned_clock_ignored() -> bool:
+    """``GOVEE_FIELD_TEST_NOW`` is set outside the test suite, where it is ignored (the runner says so)."""
+    return bool(os.environ.get(PINNED_NOW_ENV)) and _pinned() is None
+
+
 def now() -> _dt.datetime:
-    """Local wall-clock time (a function, so a test can fake the hour). ``GOVEE_FIELD_TEST_NOW`` (an ISO 8601
-    time, which the test suite sets) pins it, so the suite's runs don't depend on the hour they run at."""
-    pinned = os.environ.get("GOVEE_FIELD_TEST_NOW")
+    """Local wall-clock time (a function, so a test can fake the hour). Under pytest only,
+    ``GOVEE_FIELD_TEST_NOW`` (an ISO 8601 time, which the suite sets) pins it, so the suite's runs don't
+    depend on the hour they run at."""
+    pinned = _pinned()
     return _dt.datetime.fromisoformat(pinned) if pinned else _dt.datetime.now()
 
 
@@ -86,14 +102,15 @@ def visible_connect(profile: Any) -> str | None:
     return ", ".join(seen) or None
 
 
-def connect_skip(visible: str | None, *, read_only: bool, writes_allowed: bool) -> str | None:
+def connect_skip(visible: str | None, *, read_only: bool, writes_allowed: bool,
+                 off: str = "outside the window") -> str | None:
     """Why a device whose connect sends ``visible`` (:func:`visible_connect`) is not connected to: writes are
-    not allowed now (outside the window, or a run started there without ``--yes``), or the run is read-only.
-    None: it connects as any other device."""
+    not allowed now (``off``: outside the window, or a run started there without ``--yes``; with no terminal),
+    or the run is read-only. None: it connects as any other device."""
     if not visible:
         return None
     if not writes_allowed:
-        where = "outside the window"
+        where = off
     elif read_only:
         where = "on a read-only run"
     else:

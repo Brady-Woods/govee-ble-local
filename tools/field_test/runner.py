@@ -34,6 +34,7 @@ import getpass
 import json
 import os
 import platform
+import signal
 import stat
 import sys
 import threading
@@ -45,7 +46,14 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from . import survey as _survey
 from .generic import device_kind, generic_plan, generic_steps
-from .guard import Window, connect_skip, parse_hhmm, visible_connect
+from .guard import (
+    PINNED_NOW_ENV,
+    Window,
+    connect_skip,
+    parse_hhmm,
+    pinned_clock_ignored,
+    visible_connect,
+)
 from .masking import (
     describe_error,
     json_default,
@@ -54,7 +62,9 @@ from .masking import (
     mask_text,
     mask_text_all,
     name_without_mac_tail,
-    redact_frames,
+    raw_capture,
+    redact_capture,
+    redact_leftovers,
     snapshot,
     write_text_atomic,
 )
@@ -80,6 +90,7 @@ CARD_RESCAN_SECONDS = 4.0
 KIND_ORDER = {"light": 0, "card": 1, "plug": 2}
 EXIT_OK, EXIT_FAIL, EXIT_NOTHING, EXIT_REFUSED, EXIT_INCOMPLETE, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
 SURVEY_SECONDS = 20.0   # --list / --all
+NO_TERMINAL = "no terminal on stdin: read steps only this run (--unattended allows visible writes)"
 # What single-device discovery scans with, set by run() for its own call only (--scan-seconds, --generic).
 DISCOVER_OPTIONS: dict[str, Any] = {}
 
@@ -94,6 +105,37 @@ class Refused(Exception):
 class ConnectSkipped(Exception):
     """A connect attempt not made: the device's connect writes visibly and writes are not allowed now
     (``Policy.connect_skip_reason``, the message)."""
+
+
+# -- the console ----------------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class _Console:
+    """The tester's terminal. Output never raises: the first write that fails (a closed tty, a broken pipe
+    through ``| tee``) silences the rest, so no console write can stand between a device write and its
+    restore. After SIGHUP or SIGTERM (:func:`_main_with_signals`) nobody is asked anything either."""
+
+    dead: bool = False             # a write failed: nothing more is printed
+    stopped_by: str | None = None  # "SIGHUP" / "SIGTERM": the run is stopping on that signal
+
+    @property
+    def gone(self) -> bool:
+        """No tester to ask: the output is dead, or a signal is stopping the run."""
+        return self.dead or self.stopped_by is not None
+
+
+_CONSOLE = _Console()
+
+
+def _say(*parts: object) -> None:
+    """``print``, flushed, that never raises (see :class:`_Console`)."""
+    if _CONSOLE.dead or _CONSOLE.stopped_by == "SIGHUP":   # a hang-up: the terminal is gone
+        return
+    try:
+        print(*parts, flush=True)
+    except (OSError, ValueError):   # EIO from a closed tty, EPIPE, a closed stream
+        _CONSOLE.dead = True
 
 
 # -- the library under test ---------------------------------------------------------------------
@@ -168,7 +210,9 @@ async def _readline(prompt: str, reader: Callable[[str], str] | None = None) -> 
     """``reader(prompt)`` (``input``, or ``getpass`` for a secret) on a daemon thread. ``asyncio.to_thread``
     would run it in the default executor, which ``asyncio.run`` joins on the way out: after a Ctrl-C at a
     prompt the tool would hang, its summary printed, until the tester pressed Enter. Nothing joins a
-    daemon thread."""
+    daemon thread. With the console gone (:class:`_Console`) nobody can answer: ``""`` at once."""
+    if _CONSOLE.gone:
+        return ""
     loop = asyncio.get_running_loop()
     fut: asyncio.Future[str] = loop.create_future()
 
@@ -195,12 +239,19 @@ async def _readline(prompt: str, reader: Callable[[str], str] | None = None) -> 
 
 
 async def _ask(question: str, enabled: bool, free_text: bool = False) -> str | None:
-    """y / n / s(kip), or a free-text answer; None when prompting is disabled."""
-    if not enabled:
+    """y / n / s(kip), or a free-text answer; None when prompting is disabled or the console is gone (a
+    hang-up, a signal, a terminal that fails to read or write: :class:`_Console`). End of input raises."""
+    if not enabled or _CONSOLE.gone:
         return None
     hint = "describe what you see" if free_text else "y = yes, n = no, s = skip"
     while True:
-        raw = (await _readline(f"    ? {question} [{hint}]: ")).strip()
+        try:
+            raw = (await _readline(f"    ? {question} [{hint}]: ")).strip()
+        except OSError:   # EIO: the terminal went away under the prompt
+            _CONSOLE.dead = True
+            return None
+        if _CONSOLE.gone:
+            return None
         if free_text:
             return raw or "(no answer)"
         if raw.lower() in ("y", "n", "s"):
@@ -257,11 +308,11 @@ async def discover(
     SKU is the one to test (``sku`` if given, else detected), or None if it can't be told. The
     advertisements are already masked (address and the MAC digits in the name)."""
     seconds = float(DISCOVER_OPTIONS.get("seconds") or SCAN_SECONDS)
-    print(f"Scanning for {seconds:.0f} s ...")
+    _say(f"Scanning for {seconds:.0f} s ...")
     heard = await _survey.survey(seconds, target=address, generic=bool(DISCOVER_OPTIONS.get("generic")))
     seen = [_heard_row(h) for h in heard]
     for h in heard:
-        print(f"  heard {mask_name(h.name)!r:28s} sku={h.sku} tier={h.tier} rssi={h.rssi} "
+        _say(f"  heard {mask_name(h.name)!r:28s} sku={h.sku} tier={h.tier} rssi={h.rssi} "
               f"{mask_address(h.address)}")
     hits: list[tuple[_survey.Heard, str | None]] = []
     for h in heard:
@@ -283,7 +334,7 @@ async def discover(
         return None, None, seen, None
     if len(hits) > 1:
         kinds = sorted({s or "?" for _, s in hits})
-        print(f"  more than one candidate ({', '.join(kinds)}); using the strongest "
+        _say(f"  more than one candidate ({', '.join(kinds)}); using the strongest "
               "(pass --address or --sku to choose)")
     best, found = max(hits, key=lambda t: t[0].rssi if t[0].rssi is not None else -999)
     return best.ble, best.adv, seen, found
@@ -323,6 +374,7 @@ class Policy:
     settle: float = 1.0
     route: str = "mac"
     gate: bool = False        # --all: a device that can't be reached is "not reached", not a failure
+    unattended: bool = False  # --unattended: --all may write visibly with no terminal on stdin (recorded)
     writes_off: str | None = None   # --all started outside the window without --yes: no write all run
 
     @property
@@ -333,8 +385,9 @@ class Policy:
         """Why ``h`` is not connected to now: every connect of its row makes a visible write
         (``h.connect_visible``) and writes are not allowed (outside the window, a run started there without
         ``--yes``, a read-only run). None: it connects as any other device."""
+        off = "with no terminal" if self.writes_off == NO_TERMINAL else "outside the window"
         return connect_skip(h.connect_visible, read_only=self.read_only,
-                            writes_allowed=not self.writes_off and self.window.allows_writes())
+                            writes_allowed=not self.writes_off and self.window.allows_writes(), off=off)
 
 
 def _window(args: argparse.Namespace) -> Window:
@@ -347,7 +400,16 @@ def _policy(args: argparse.Namespace, window: Window, *, gate: bool) -> Policy:
     ask = "none" if args.no_prompt else (args.ask or ("unverifiable" if gate else "all"))
     retries = args.retries if args.retries is not None else (3 if gate else 1)
     return Policy(window=window, ask=ask, read_only=bool(args.read_only), generic=bool(args.generic),
-                  retries=max(1, int(retries)), settle=float(args.settle), route=args.route, gate=gate)
+                  retries=max(1, int(retries)), settle=float(args.settle), route=args.route, gate=gate,
+                  unattended=bool(getattr(args, "unattended", False)))
+
+
+def _on_a_terminal() -> bool:
+    """Whether stdin is a terminal: someone who can answer, and stop the run."""
+    try:
+        return bool(sys.stdin.isatty())
+    except (AttributeError, ValueError):   # no stdin, or a closed one
+        return False
 
 
 def _read_secrets(path: str | None) -> dict[str, bytes]:
@@ -400,7 +462,7 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
                 policy.secrets[h.address.upper()] = file_secrets[key]
     unknown = [k for k in allow if not any(_wanted(h, {k}) for h in targets)]
     if unknown:
-        print(f"  --toggle-plugs: {len(unknown)} entr{'y is' if len(unknown) == 1 else 'ies are'} not among "
+        _say(f"  --toggle-plugs: {len(unknown)} entr{'y is' if len(unknown) == 1 else 'ies are'} not among "
               "the devices to test (ignored)")
     for h in targets:
         if h.kind != "plug" or not _wanted(h, allow):
@@ -410,12 +472,12 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
             line += (f" ({h.outlets} outlets, switched together: it toggles only if they all start on, or "
                      "all off)")
         if not policy.prompts:
-            print(f"{line}: allow-listed, but a relay toggle needs the run-time confirmation: read-only")
+            _say(f"{line}: allow-listed, but a relay toggle needs the run-time confirmation: read-only")
             continue
-        print(f"{line}: allow-listed for a relay toggle")
+        _say(f"{line}: allow-listed for a relay toggle")
         await _ask("What is plugged into it? (not saved anywhere)", True, free_text=True)
         if await _ask("Toggle it off and back on?", True) != "yes":
-            print("    read-only")
+            _say("    read-only")
             continue
         policy.toggle.add(h.address.upper())
         if h.address.upper() not in policy.secrets:
@@ -427,7 +489,7 @@ async def _confirm_plugs(targets: list[_survey.Heard], args: argparse.Namespace,
             if len(secret) == 8:
                 policy.secrets[h.address.upper()] = secret
             else:
-                print("    no usable secret: its toggle steps are skipped (no secret)")
+                _say("    no usable secret: its toggle steps are skipped (no secret)")
 
 
 # -- one device ---------------------------------------------------------------------------------
@@ -466,7 +528,7 @@ async def _restore_with(plan: SkuPlan, dev: Device, st: Snapshot, address: str |
 
 def _flush_frame_log(timeout: float = FRAME_LOG_FLUSH_SECONDS) -> None:
     """Wait (bounded) until the library's frame-log writer thread has written every queued record
-    (``framelog.flush``): ``Device.stop()`` doesn't drain it, and :func:`redact_frames` must see (and
+    (``framelog.flush``): ``Device.stop()`` doesn't drain it, and :func:`redact_capture` must see (and
     replace) the whole capture, or records queued by the restore would land unredacted after the
     rewrite. If the flush itself fails, :func:`_finish` redacts straight away."""
     from govee_ble_local.transport import framelog
@@ -543,7 +605,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
     skip = _skip_reason(step, run)
     if skip is not None:
         rec.update(sent=None, writes=0, fields={}, verdict="skipped", basis=None, reason=skip)
-        print(f"    skipped: {skip}")
+        _say(f"    skipped: {skip}")
         return rec
     mark = run.watch.mark()
     raised: BaseException | None = None
@@ -560,7 +622,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
         else:
             sent_error = _err(err, run.address, run.names, run.secrets)
             rec["sent"] = sent_error
-            print(f"    send failed: {sent_error}")
+            _say(f"    send failed: {sent_error}")
     finally:
         run.wrote = run.wrote or bool(run.watch.writes(mark))   # a refusal that sent something after all
     writes = len(run.watch.writes(mark))
@@ -585,7 +647,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
             except Exception as err:
                 rec["readback"] = _err(err, run.address, run.names, run.secrets)
                 rec["readback_matches"] = False
-        print(f"    read-back: {rec['readback']}  match={rec['readback_matches']}")
+        _say(f"    read-back: {rec['readback']}  match={rec['readback_matches']}")
     field_results: dict[str, str] = {}
     fails: list[str] = []
     if step.fields and post is not None and intent is not None:
@@ -611,7 +673,7 @@ async def _run_step(step: Step, run: _Run) -> dict[str, Any]:
                basis=final.basis, reason=final.reason and mask_text(final.reason, None, (), run.secrets))
     if post is not None and run.kind != "card":
         run.pre = _state_copy(dev, post)
-    print(f"    {final.verdict}" + (f" ({final.basis})" if final.basis else "")
+    _say(f"    {final.verdict}" + (f" ({final.basis})" if final.basis else "")
           + (f": {rec['reason']}" if rec["reason"] else ""))
     return rec
 
@@ -677,7 +739,7 @@ async def _carry_on(aw: Coroutine[Any, Any, T], run: _Run) -> T:
                 run.abandon = True
                 task.cancel()
                 raise
-            print("\nInterrupted: this device's restore and clean-up carry on, then the run stops (a second "
+            _say("\nInterrupted: this device's restore and clean-up carry on, then the run stops (a second "
                   "Ctrl-C abandons them) ...")
 
 
@@ -692,7 +754,7 @@ def _abandoned(report: dict[str, Any]) -> None:
     if "restore_check" not in report:
         report["restore_check"] = RestoreCheck(
             "abandoned", errors=["a second Ctrl-C abandoned the restore"]).as_dict()
-    print("  restore: abandoned (second Ctrl-C)")
+    _say("  restore: abandoned (second Ctrl-C)")
 
 
 async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, initial: Snapshot | None,
@@ -714,7 +776,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
         except asyncio.CancelledError:
             if not _absorb(run):
                 raise
-            print("\nInterrupted: the question is left unanswered; the run stops after this device.")
+            _say("\nInterrupted: the question is left unanswered; the run stops after this device.")
             return None
 
     try:
@@ -726,7 +788,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
         elif not run.generic and initial is not None and run.wrote:
             restore = _plan_restore(run, initial)
         if restore is not None:
-            print("  restoring the start state ...")
+            _say("  restoring the start state ...")
             outcome = await _carry_on(restore, run)
             joined = "; ".join(outcome.errors)
             report["restore"] = ("ok" if not outcome.errors
@@ -753,7 +815,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
                                      errors=list(outcome.errors))
             report["restore_check"] = check.as_dict()
             notes = f" ({'; '.join(check.unrestorable)})" if check.unrestorable else ""
-            print(f"  restore: {check.result}{notes}")
+            _say(f"  restore: {check.result}{notes}")
             # One more poll, for the record: never one that would connect (a device the run did not
             # connect to, or one whose connect writes visibly once writes are not allowed).
             if run.kind != "card" and run.connected and run.connect_skip() is None:
@@ -775,7 +837,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
                     await _carry_on(asyncio.to_thread(_flush_frame_log), run)
             finally:
                 run.watch.detach()
-                report["frames_redacted"] = redact_frames(frames_path, run.address)
+                report["frames_redacted"] = redact_capture(frames_path, run.address)
                 report["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
@@ -801,7 +863,7 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         "python": sys.version.split()[0], "platform": platform.platform(),
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "session": {"route": policy.route, "ask": policy.ask, "read_only": policy.read_only,
-                    "writes_off": policy.writes_off},
+                    "writes_off": policy.writes_off, "unattended": policy.unattended},
         "window": policy.window.as_dict(), "tier": target.tier, "kind": target.kind, "steps": [],
     }
     rec: dict[str, Any] = {"ref": target.ref, "sku": sku, "tier": target.tier, "kind": target.kind,
@@ -830,14 +892,14 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
             rec["errors"].append(rec["result"])
         return rec
 
-    print(f"\n== {target.ref} {sku} ({target.tier}, {target.kind or '?'}, plan {target.plan}) "
+    _say(f"\n== {target.ref} {sku} ({target.tier}, {target.kind or '?'}, plan {target.plan}) "
           f"{mask_name(target.name)!r} {mask_address(address)}")
     # Its connect itself would change the device visibly (the bulbs' 33 25 stops a running effect): checked
     # at its turn, again before every connect attempt (_connect), and before each poll after that
     # (_Run.connect_skip), so a run that crosses the window's edge connects to it only inside the window.
     skip = policy.connect_skip_reason(target)
     if skip is not None:
-        print(f"  {skip}")
+        _say(f"  {skip}")
         return done(skip)
     try:
         if not await _survey.acquire(target, policy.retries):
@@ -847,7 +909,9 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         if task is not None:
             task.uncancel()
         return done("interrupted", interrupted=True)
-    kwargs: dict[str, Any] = {"idle_disconnect": 0, "frame_log": str(frames_path)}
+    # The library writes the capture under a hidden name; only its redaction (_finish) writes frames_path,
+    # so a run killed before that leaves no raw capture under the name a tester attaches.
+    kwargs: dict[str, Any] = {"idle_disconnect": 0, "frame_log": str(raw_capture(frames_path))}
     if target.tier == "modelled":
         kwargs["allow_modelled"] = True
     if secret:
@@ -880,9 +944,9 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
 
     watch = FrameWatch(address).attach()
     run = _Run(dev, plan, is_generic, kind, policy, watch, address, names, secrets, extra, target=target)
-    print(plan.title)
+    _say(plan.title)
     if plan.intro:
-        print(f"  {plan.intro}")
+        _say(f"  {plan.intro}")
     start: StartState | None = None
     initial: Snapshot | None = None
     result = "aborted: not started"
@@ -898,30 +962,30 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
         report["initial_state"] = initial
         report["start"] = start.summary()
         run.pre = _state_copy(dev, st)
-        print(f"Connected ({getattr(dev, 'encryption', '?')}); current state: {initial}\n")
+        _say(f"Connected ({getattr(dev, 'encryption', '?')}); current state: {initial}\n")
         save()
         ctx = PlanContext(dev, plan.sku, codes, kind=kind, tier=target.tier, adv=target.adv, start=start,
                           toggle_ok=address.upper() in policy.toggle, has_secret=bool(secret),
                           prompts=policy.prompts, watch=watch)
         for i, step in enumerate(plan.build_steps(ctx), 1):
-            print(f"[{i:2d}] {step.name}" + (f"  ({step.note})" if step.note else ""))
+            _say(f"[{i:2d}] {step.name}" + (f"  ({step.note})" if step.note else ""))
             report["steps"].append(await _run_step(step, run))
             save()
         result = "completed"
     except asyncio.CancelledError:
         result = "interrupted"
         if _absorb(run):
-            print("\nInterrupted: restoring this device (a second Ctrl-C abandons the restore) ...")
+            _say("\nInterrupted: restoring this device (a second Ctrl-C abandons the restore) ...")
     except GoveeBleAuthError as err:
         result = f"auth failed: {describe_error(err, address, names)}"
     except ConnectSkipped as err:   # the window closed while it was scanned for or between connect attempts
         result = str(err)
-        print(f"  {result}")
+        _say(f"  {result}")
     except Exception as err:
         unreached = policy.gate and not run.connected   # --all: a device Home Assistant holds, say
         result = (f"not reached: connect failed: {describe_error(err, address, names)}" if unreached
                   else f"aborted: {describe_error(err, address, names)}")
-        print(f"\n{result}")
+        _say(f"\n{result}")
     finally:
         if run.warnings:
             report["warnings"] = sorted(set(run.warnings))
@@ -937,12 +1001,12 @@ async def run_device(target: _survey.Heard, n: int | None, args: argparse.Namesp
 
 
 def _print_steps(report: dict[str, Any]) -> None:
-    print("\nSteps")
+    _say("\nSteps")
     for rec in report["steps"]:
-        print(f"  {rec['step']:30s} {rec.get('verdict') or '?':12s} sent={rec.get('sent')!s:6.6s} "
+        _say(f"  {rec['step']:30s} {rec.get('verdict') or '?':12s} sent={rec.get('sent')!s:6.6s} "
               f"readback={rec.get('readback_matches')!s:5s} observed={rec.get('observed')}")
     rc = report.get("restore_check") or {}
-    print(f"  restore: {report.get('restore')} ({rc.get('result')})  result: {report.get('result')}")
+    _say(f"  restore: {report.get('restore')} ({rc.get('result')})  result: {report.get('result')}")
 
 
 # -- modes --------------------------------------------------------------------------------------
@@ -953,7 +1017,8 @@ def _base_summary(args: argparse.Namespace, policy: Policy, lib: dict[str, Any])
             "python": sys.version.split()[0], "platform": platform.platform(),
             "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "window": policy.window.as_dict(),
             "options": {"allow_modelled": bool(args.allow_modelled), "toggle_plugs": len(policy.toggle),
-                        "ask": policy.ask, "generic": policy.generic, "read_only": policy.read_only}}
+                        "ask": policy.ask, "generic": policy.generic, "read_only": policy.read_only,
+                        "unattended": policy.unattended}}
 
 
 def _exit_code(data: dict[str, Any], interrupted: bool) -> int:
@@ -972,21 +1037,21 @@ def _print_listing(heard: list[_survey.Heard],
                    skip: Callable[[_survey.Heard], str | None] | None = None) -> None:
     """The listing; ``skip`` marks a device that would not be connected to now
     (``Policy.connect_skip_reason``)."""
-    print(f"\nGovee devices heard: {len(heard)}")
-    print(f"  {'ref':6s} {'sku':6s} {'tier':11s} {'pact':6s} {'kind':5s} {'plan':7s} {'rssi':>4s}  "
+    _say(f"\nGovee devices heard: {len(heard)}")
+    _say(f"  {'ref':6s} {'sku':6s} {'tier':11s} {'pact':6s} {'kind':5s} {'plan':7s} {'rssi':>4s}  "
           "name / address")
     for h in heard:
         pact = f"{h.pact[0]},{h.pact[1]}" if h.pact else "-"
         rssi = str(h.rssi) if h.rssi is not None else "?"
         why = h.reason or (skip(h) if skip is not None and h.plan else None)
-        print(f"  {h.ref:6s} {h.sku or '?':6s} {h.tier:11s} {pact:6s} {h.kind or '-':5s} {h.plan or '-':7s} "
+        _say(f"  {h.ref:6s} {h.sku or '?':6s} {h.tier:11s} {pact:6s} {h.kind or '-':5s} {h.plan or '-':7s} "
               f"{rssi:>4s}  {mask_name(h.name)} {mask_address(h.address)}" + (f"  ({why})" if why else ""))
     plugs = [h for h in heard if h.kind == "plug"]
     if plugs:
-        print("\nPlugs (a relay toggles only with --toggle-plugs REF and the run-time confirmation):")
+        _say("\nPlugs (a relay toggles only with --toggle-plugs REF and the run-time confirmation):")
         for h in plugs:
             word = "outlet" if h.outlets == "1" else "outlets"
-            print(f"  {h.ref} {h.sku} {mask_name(h.name)} {mask_address(h.address)} {h.outlets} {word}")
+            _say(f"  {h.ref} {h.sku} {mask_name(h.name)} {mask_address(h.address)} {h.outlets} {word}")
 
 
 async def list_devices(args: argparse.Namespace, out_dir: Path, stamp: str) -> int:
@@ -995,7 +1060,7 @@ async def list_devices(args: argparse.Namespace, out_dir: Path, stamp: str) -> i
     and writes are not allowed: the window, ``--read-only``) is marked ``skipped``."""
     seconds = args.scan_seconds or SURVEY_SECONDS
     policy = Policy(window=_window(args), read_only=bool(args.read_only))
-    print(f"Scanning for {seconds:.0f} s ...")
+    _say(f"Scanning for {seconds:.0f} s ...")
     heard = await _survey.survey(seconds, generic=bool(args.generic))
     _print_listing(heard, policy.connect_skip_reason)
     path = out_dir / f"fieldtest-list-{stamp}.json"
@@ -1003,7 +1068,7 @@ async def list_devices(args: argparse.Namespace, out_dir: Path, stamp: str) -> i
     text = json.dumps({"tool_version": TOOL_VERSION, "listed": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                        "window": policy.window.as_dict(), "heard": rows}, indent=1) + "\n"
     write_text_atomic(path, mask_text_all(text, _masks(heard)))
-    print(f"\nListing -> {path}")
+    _say(f"\nListing -> {path}")
     return EXIT_OK if heard else EXIT_NOTHING
 
 
@@ -1019,16 +1084,16 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     ``--allow-modelled`` each opt-in one), one at a time, each over its own connection."""
     policy = _policy(args, window, gate=True)
     file_secrets = _read_secrets(args.secrets_file)
-    print(f"Release-gate pass (route {policy.route}): {window.banner()}")
-    print("Ctrl-C once restores the current device and stops; a second Ctrl-C abandons that restore.")
+    _say(f"Release-gate pass (route {policy.route}): {window.banner()}")
+    _say("Ctrl-C once restores the current device and stops; a second Ctrl-C abandons that restore.")
     heard: list[_survey.Heard] = []
     seconds = args.scan_seconds or SURVEY_SECONDS
     for attempt in range(policy.retries):
-        print(f"Scanning for {seconds:.0f} s ...")
+        _say(f"Scanning for {seconds:.0f} s ...")
         heard = await _survey.survey(seconds, generic=policy.generic)
         if heard or attempt + 1 >= policy.retries:
             break
-        print("  nothing heard; scanning again")
+        _say("  nothing heard; scanning again")
     summary = Summary(out_dir / f"fieldtest-summary-{stamp}.json", _base_summary(args, policy, lib))
     summary.mask = _masks(heard)
     summary.data["heard"] = [h.masked() for h in heard]
@@ -1038,7 +1103,7 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     chosen = [h for h in heard if h.tier in tiers and (not only or _wanted(h, only)) and not _wanted(h, skip)]
     if not chosen:
         summary.save()
-        print(f"\nNothing to test. Summary -> {summary.path}")
+        _say(f"\nNothing to test. Summary -> {summary.path}")
         return EXIT_NOTHING
     await _confirm_plugs(chosen, args, policy, file_secrets)
     summary.secrets = list(policy.secrets.values())
@@ -1046,24 +1111,30 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
     order = sorted(chosen, key=lambda h: (KIND_ORDER.get(h.kind or "light", 0),
                                           -(h.rssi if h.rssi is not None else -999)))
     visible = [h for h in order if h.kind != "plug" or h.address.upper() in policy.toggle]
-    if visible and not policy.read_only and not args.yes:
-        if not window.allows_writes():
-            # The start confirmation is the run's: a run started before the window opens without --yes
-            # writes nothing visible all the way through, even once the window opens.
-            policy.writes_off = f"started outside {window.label()} without --yes: read steps only this run"
-            print(f"{len(visible)} device(s) would change visibly, but the run started outside "
-                  f"{window.label()} without --yes: read steps only, for the whole run.")
-        elif not policy.prompts:
+    writes = bool(visible) and not policy.read_only
+    if writes and not args.yes and not window.allows_writes():
+        # The start confirmation is the run's: a run started before the window opens without --yes
+        # writes nothing visible all the way through, even once the window opens.
+        policy.writes_off = f"started outside {window.label()} without --yes: read steps only this run"
+        _say(f"{len(visible)} device(s) would change visibly, but the run started outside "
+             f"{window.label()} without --yes: read steps only, for the whole run.")
+    elif writes and not policy.unattended and not _on_a_terminal():
+        # Nobody at a terminal (a cron job, a detached session, stdin redirected): no visible change without
+        # the explicit, recorded --unattended.
+        policy.writes_off = NO_TERMINAL
+        _say(f"{len(visible)} device(s) would change visibly, but no terminal is attached: read steps only "
+             "(pass --unattended to allow visible writes).")
+    elif writes and not args.yes:
+        if not policy.prompts:
             summary.save()
-            print(f"{len(visible)} device(s) would change visibly: a run without prompts needs --yes.")
+            _say(f"{len(visible)} device(s) would change visibly: a run without prompts needs --yes.")
             return EXIT_REFUSED
-        else:
-            reply = await _ask(f"{len(visible)} device(s) will change visibly (each is restored after); "
-                               "start?", True)
-            if reply != "yes":
-                summary.save()
-                print("Not started.")
-                return EXIT_REFUSED
+        reply = await _ask(f"{len(visible)} device(s) will change visibly (each is restored after); "
+                           "start?", True)
+        if reply != "yes":
+            summary.save()
+            _say("Not started.")
+            return EXIT_REFUSED
     summary.data["options"]["writes_off"] = policy.writes_off
     summary.save()
     interrupted = False
@@ -1072,14 +1143,14 @@ async def run_all(args: argparse.Namespace, out_dir: Path, stamp: str, window: W
             summary.add_device(_not_run(target))
             continue
         if not window.allows_writes() and not policy.read_only and not policy.writes_off:
-            print(f"\n({window.banner()})")
+            _say(f"\n({window.banner()})")
         rec = await run_device(target, n, args, out_dir, stamp, policy, lib)
         summary.add_device(rec)
         interrupted = bool(rec.get("interrupted"))
     summary.save()
-    print("\nSummary")
-    print(console_table(summary.data, summary.path))
-    print("\nAttach the summary (and any device's report and frame capture): addresses, names, serials, "
+    _say("\nSummary")
+    _say(console_table(summary.data, summary.path))
+    _say("\nAttach the summary (and any device's report and frame capture): addresses, names, serials, "
           "Wi-Fi MACs and secrets are masked.")
     return _exit_code(summary.data, interrupted)
 
@@ -1116,7 +1187,7 @@ async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Wi
         report["result"] = "device not found"
         save()
         looking = args.sku or "a device with a plan or a supported SKU"
-        print(f"\nNo device found (looking for: {looking}). "
+        _say(f"\nNo device found (looking for: {looking}). "
               f"Report (with every Govee device heard) -> {report_path}")
         return EXIT_NOTHING
     names: Names = (getattr(adv, "local_name", None), getattr(ble, "name", None))
@@ -1129,11 +1200,11 @@ async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Wi
     if target is None or why is not None:
         report["result"] = why
         save(ble.address, names)
-        print(f"\nFound {mask_address(ble.address)} but {why}. Pass --sku (hand-written plans: "
+        _say(f"\nFound {mask_address(ble.address)} but {why}. Pass --sku (hand-written plans: "
               f"{', '.join(sorted(PLANS))}; any supported SKU uses the generic plan). "
               f"Report -> {report_path}")
         return EXIT_NOTHING
-    print(window.banner())
+    _say(window.banner())
     await _confirm_plugs([target], args, policy, file_secrets)
     summary = Summary(out_dir / f"fieldtest-summary-{stamp}.json", _base_summary(args, policy, lib))
     summary.mask = _masks([target])
@@ -1141,9 +1212,9 @@ async def run(args: argparse.Namespace, out_dir: Path, stamp: str, *, window: Wi
     summary.data["heard"] = [target.masked()]
     rec = await run_device(target, None, args, out_dir, stamp, policy, lib)
     summary.add_device(rec)
-    print("\nSummary")
-    print(console_table(summary.data, summary.path))
-    print("\nPlease attach the report and the frame capture (and the summary) to the GitHub issue "
+    _say("\nSummary")
+    _say(console_table(summary.data, summary.path))
+    _say("\nPlease attach the report and the frame capture (and the summary) to the GitHub issue "
           f"(addresses, serial and Wi-Fi MAC are masked):\n  {out_dir / str(rec['report'])}\n"
           f"  {out_dir / str(rec['frames'])}")
     if rec.get("interrupted"):
@@ -1207,6 +1278,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                          "default for --all: only where nothing was read back), none")
     ap.add_argument("--yes", action="store_true",
                     help="skip the 'N devices will change visibly; start?' question")
+    ap.add_argument("--unattended", action="store_true",
+                    help="--all: allow visible writes with no terminal on stdin (recorded in the summary); "
+                         "without it such a run is read-only")
     ap.add_argument("--library", choices=("auto", "checkout", "installed"), default="auto",
                     help="the library to test: auto (this checkout once its classes are generated, else the "
                          "installed one), checkout, or installed (the release-candidate wheel; refuses a "
@@ -1222,11 +1296,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _main_with_signals(main: Coroutine[Any, Any, int]) -> int:
+    """``asyncio.run(main)`` with SIGHUP and SIGTERM handled as the first Ctrl-C is: the main task is
+    cancelled once, so the current device is restored and the run stops after it (the summary saved, exit
+    130). The terminal closing, the app quitting or a dropped SSH session sends SIGHUP: the console is gone
+    then, so nothing more is printed or asked (:class:`_Console`). A repeat of either signal changes nothing
+    (the restore in progress carries on); a second Ctrl-C still abandons it."""
+    async def guarded() -> int:
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        installed: list[int] = []
+
+        def stop(name: str) -> None:
+            if _CONSOLE.stopped_by is not None:
+                return
+            _say(f"\n{name}: restoring the current device, then stopping ...")
+            _CONSOLE.stopped_by = name
+            if task is not None:
+                task.cancel()
+
+        for name in ("SIGHUP", "SIGTERM"):
+            sig = getattr(signal, name, None)
+            if sig is None:
+                continue
+            try:
+                loop.add_signal_handler(sig, stop, name)
+            except (NotImplementedError, RuntimeError, ValueError):   # no signal support (Windows)
+                continue
+            installed.append(sig)
+        try:
+            return await main
+        finally:
+            for sig in installed:
+                with contextlib.suppress(Exception):
+                    loop.remove_signal_handler(sig)
+
+    return asyncio.run(guarded())
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    # A capture a killed run left raw (its device's redaction never ran) is redacted before anything else.
+    for path in redact_leftovers(out):
+        _say(f"Redacted a frame capture a stopped run left raw: {path.name}")
+    if pinned_clock_ignored():
+        _say(f"{PINNED_NOW_ENV} is set but ignored: only the test suite pins the clock")
     try:
         _select_library(args.library)
         lib = library_info(args.library)
@@ -1234,20 +1351,24 @@ def main(argv: list[str] | None = None) -> int:
             raise Refused(f"the library under test is {lib.get('version')} ({lib.get('source')}), "
                           f"not {args.expect_version}")
     except Refused as err:
-        print(f"Refused: {err}")
+        _say(f"Refused: {err}")
         return EXIT_REFUSED
     window = _window(args)
-    print(f"Library under test: govee-ble-local {lib.get('version')} ({lib.get('source')}"
+    _say(f"Library under test: govee-ble-local {lib.get('version')} ({lib.get('source')}"
           + (f", {lib['wheel']}" if lib.get("wheel") else "") + ")")
     try:
         if args.list:
-            return asyncio.run(list_devices(args, out, stamp))
+            return _main_with_signals(list_devices(args, out, stamp))
         if args.all:
-            return asyncio.run(run_all(args, out, stamp, window, lib))
-        return asyncio.run(run(args, out, stamp, window=window, lib=lib))
+            return _main_with_signals(run_all(args, out, stamp, window, lib))
+        return _main_with_signals(run(args, out, stamp, window=window, lib=lib))
     except Refused as err:
-        print(f"Refused: {err}")
+        _say(f"Refused: {err}")
         return EXIT_REFUSED
-    except KeyboardInterrupt:
-        print("\nInterrupted.")
+    except (KeyboardInterrupt, asyncio.CancelledError):   # before or between devices (a signal: Cancelled)
+        _say("\nInterrupted.")
         return EXIT_INTERRUPTED
+    finally:
+        if _CONSOLE.dead:   # stdout is broken: point it at /dev/null, so its flush at exit doesn't complain
+            with contextlib.suppress(Exception):
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
