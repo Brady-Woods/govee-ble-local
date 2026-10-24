@@ -158,9 +158,9 @@ def test_passive_matcher_constants_agree_with_identify() -> None:
     # The public tuple keeps its value (LOCAL_NAME_PREFIXES is semver API) ...
     assert LOCAL_NAME_PREFIXES == ("ihoment_", "Govee_", "Minger_", "GVH", "GVR", "GV", "GBK_")
     # ... and identify() accepts a well-formed name under every prefix in it ...
-    names = {"ihoment_": "ihoment_H5083_A2D1", "Govee_": "Govee_H5083_A2D1",
-             "Minger_": "Minger_H5083_A2D1", "GBK_": "GBK_H5083_A2D1", "GVH": "GVH5083_A2D1",
-             "GVR": "GVR5083_A2D1", "GV": "GV50831A2B"}
+    names = {"ihoment_": "ihoment_H5083_5383", "Govee_": "Govee_H5083_5383",
+             "Minger_": "Minger_H5083_5383", "GBK_": "GBK_H5083_5383", "GVH": "GVH5083_5383",
+             "GVR": "GVR5083_5383", "GV": "GV50835383"}
     assert set(names) == set(LOCAL_NAME_PREFIXES)
     for prefix, name in names.items():
         assert name.startswith(prefix) and sku_from_local_name(name) is not None, prefix

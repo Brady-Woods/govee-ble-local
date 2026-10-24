@@ -300,6 +300,8 @@ model, from which the shipped readers are generated).
   segment-brightness slider is hidden (`Config.I[202][3]` false, `DelegateColorV2Part.Z0`). Not hardware-verified.
 
 ### Changed
+- Tests and docs: the advertised-name examples (`identify.sku_from_local_name`, the scanner docs, the
+  identify, scanner, cloud and prefix tests) use made-up suffixes. No library change.
 - **What changes for a SKU 1.7.0 admits.** Of its 309 (235 by default, 74 behind `allow_modelled`), twelve
   resolve to a changed profile:
   - H60A4 / H80A4 (h60ax 302) and H8015 (bulblightv3 328), behind `allow_modelled` at 1.7.0, are admitted by

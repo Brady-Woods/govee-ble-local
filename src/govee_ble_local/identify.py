@@ -96,9 +96,9 @@ def sku_from_local_name(name: str) -> str | None:
     """Extract the SKU from a Govee local name — a port of ``BaseBleProcessor.parse``.
 
     - name contains ``ihoment_`` / ``Govee_`` / ``Minger_``, or starts with ``GBK_``: split on
-      ``_``; exactly 3 parts, SKU = the middle one (``ihoment_H5083_A2D1`` -> ``H5083``). (c(), d())
+      ``_``; exactly 3 parts, SKU = the middle one (``ihoment_H5083_5383`` -> ``H5083``). (c(), d())
     - ``GVH`` / ``GVR`` with an ``_``: SKU = ``name[2:index('_')]`` (``GVH6188_1A2B`` -> ``H6188``);
-      without one: needs >= 11 chars, SKU = ``name[2:7]`` (``GVH60A67457`` -> ``H60A6``). (e(), f())
+      without one: needs >= 11 chars, SKU = ``name[2:7]`` (``GVH60A65357`` -> ``H60A6``). (e(), f())
     - otherwise ``GV``: needs >= 10 chars, SKU = ``"H" + name[2:6]`` (``GV61881A2B`` -> ``H6188``).
       (g())
 
