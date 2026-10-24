@@ -107,19 +107,21 @@ model, from which the shipped readers are generated).
   **H60A1 / H80A1** (h60ax 235): h60a1 `Info4Detail.Q` (music v2_default), the illumination tab's Kelvin +
   brightness pair, 14 pieces, admitted by default with the app's numeric Kelvin compare (below). Not
   hardware-verified.
-- **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized as
-  the app sizes it, and H61A9 is admitted by default (`app_traced`), no longer behind `allow_modelled` as at
-  1.7.0.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
-  keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d`
-  -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws (an
-  IC field of 0x1000 or more) the app walks nothing, and now neither does the library, nor when the aa 40 read
-  goes unanswered (it has no count to size the walk with). New
-  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`). The
-  aa 40 read keeps its place in the poll. The frames are 1.7.0's for a section sum of 0 or 13-15 on 141 (groups
-  of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static). Rgbiclight
-  141's promotion on the H61C3 bench reading (the user's decision 1, 1.7.0's Spec) stands; this makes
-  its connect walk exact on every unit. Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no non-zero
-  sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
+- **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized
+  as the app sizes it, and H61A9 is admitted by default (`app_traced`), no longer behind `allow_modelled` as
+  at 1.7.0.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
+  keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes
+  (`ControllerIcNum.d` -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0.
+  Where that reader throws (an IC field of 0x1000 or more) the app walks nothing, and now neither does the
+  library, nor when the aa 40 read goes unanswered (it has no count to size the walk with). New
+  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces:
+  sections`), and `DeviceProfile.ic_num_read_only` is now False on these rows, since the section sum replaces
+  the fixed-piece read (frames unchanged). The aa 40 read keeps its place in the poll. The frames are 1.7.0's
+  for a section sum of 0 or 13-15 on 141 (groups of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20
+  on 204 (groups of 4, 18 static). Rgbiclight 141's promotion on the H61C3 bench reading (the user's decision
+  1, 1.7.0's Spec) stands; this makes its connect walk exact on every unit. Source-modelled: no H61A9, H61C2
+  or H61C5 is on the bench, and no non-zero sum has been read. The live-IC rows (H6641 and the other h61d3
+  rows) keep their walk.
 - **H7061 (h7050 98), a two-head flood light, admitted by default (`app_traced`).** Its aa 05 0x15 report is two
   `[bri s8][r g b]` head records (`bri_rgb_pair_15`), which the library decoded but did not fold. It now folds
   them as the colour page holds them (`H70606162Info4Detail.I`; `H7061ColorMode.updateColor` /
@@ -749,6 +751,8 @@ model, from which the shipped readers are generated).
   `allow_modelled`. Not hardware-verified.
 
 ### Changed
+- Tests and docs: the advertised-name examples (`identify.sku_from_local_name`, the scanner docs, the
+  identify, scanner, cloud and prefix tests) use made-up suffixes. No library change.
 - **What changes for a SKU 1.7.0 admits.** Of its 309 (235 by default, 74 behind `allow_modelled`), 188
   resolve to a changed profile beyond `DeviceProfile.skus` (a v1.7.0 export of every SKU's profile at every route,
   compared field by field), each change in its entry:

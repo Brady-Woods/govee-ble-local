@@ -29,16 +29,16 @@ def _adv(local_name: str | None, rssi: int | None, mfg: dict | None = None) -> S
 
 
 def test_supported() -> None:
-    assert supported("ihoment_H5083_A2D1", _MFG) is True
-    assert supported("ihoment_H9999_A2D1", _MFG) is False  # Govee but unknown SKU
+    assert supported("ihoment_H5083_5383", _MFG) is True
+    assert supported("ihoment_H9999_5383", _MFG) is False  # Govee but unknown SKU
     assert supported("NotGovee", _MFG) is False
 
 
 def test_match_properties_and_fallback_to_device_name() -> None:
-    hit = match(_dev("AA:01", "Govee_H61A8_631F"), _adv(None, -50))
+    hit = match(_dev("AA:01", "Govee_H61A8_53A8"), _adv(None, -50))
     assert isinstance(hit, DiscoveredDevice)
     assert (hit.address, hit.sku, hit.name, hit.rssi, hit.supported) == (
-        "AA:01", "H61A8", "Govee_H61A8_631F", -50, True,
+        "AA:01", "H61A8", "Govee_H61A8_53A8", -50, True,
     )
     # advertisement_data without attributes at all
     hit2 = match(_dev("AA:02", "ihoment_H5083_0001"), object())
