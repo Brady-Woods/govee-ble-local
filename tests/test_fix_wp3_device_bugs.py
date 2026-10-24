@@ -41,12 +41,13 @@ def run(coro: Any) -> Any:
 _IC_70: Replies = {0x40: [_frame(0xAA, 0x40, 0x00, 70, 0x00)]}
 
 
-def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> Device:
+def _dev(sku: str, replies: Replies | None = None, *, allow_modelled: bool = False,
+         **profile_overrides: Any) -> Device:
     """Device with a mocked connection. ``replies`` maps the request's command byte (frame[1]) to
     reply frames, or to a function of the request frame returning them."""
-    if profile_overrides:
+    if profile_overrides or allow_modelled:
         # A changed profile is a new Device: the profile is read-only after construction.
-        profile = profile_for(sku)
+        profile = profile_for(sku, allow_modelled=allow_modelled)
         assert profile is not None
         d: Device | None = Device(dataclasses.replace(profile, **profile_overrides),
                                   ble_device("AA:BB:CC:DD:EE:3A", sku), sku=sku)
@@ -940,7 +941,18 @@ def _status(ic: int | None, groups: int, *extra: bytes) -> list[bytes]:
 _A1 = 0xA1   # the H707A status read's segment-info TLV (form_a1 segment_info): [count][IC per segment]
 
 
+def _confirmed(d: Device) -> bool:
+    """Whether a device read set the Device's segment count (the public flag, read in one place)."""
+    return d.segment_count_confirmed
+
+
 @pytest.mark.parametrize(("sku", "replies", "count", "asked", "poll"), [
+    # aa 41 (H6062's sectionNum) at its profile's 33: only the flag tells the read from the default
+    ("H6062", {0x41: [_frame(0xAA, 0x41, 0x00, 0x38, 33)]}, 33, [0x41], False),
+    # ac a1 (goodsType 180's special-info read, behind allow_modelled): six segments
+    ("H706A", {0xA1: [bytes.fromhex("ac00010007a10b060a0a0a0a0a0a000000000006")]}, 6, [0xA1], False),
+    # aa 40 on H6641: IC 70 is its profile's 14 pieces
+    ("H6641", _IC_70, 14, [0x40], False),
     ("H7067", None, None, [0x40], False),                                             # no aa 40 reply
     ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0x00, 0x00)]}, None, [0x40], False),   # IC 0: no pieces
     # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
@@ -973,19 +985,41 @@ def test_a_device_counted_write_takes_its_count_or_sends_nothing(
     # reads the device's count (its IC, whose pieces size the strip, ColorPieceConfig.c; the aa 0f string
     # count; or the 0xAC status read's TLV 0xA1), and without a usable count nothing is sent, as on H6062's
     # aa 41.
-    d = _dev(sku, replies)
+    # segment_count_confirmed: True only once a usable count came back, even one equal to profile.segments.
+    d = _dev(sku, replies, allow_modelled=sku == "H706A")
+    assert not _confirmed(d) and d.segment_count == d.profile.segments
     if poll:
         run(d.update())
     if count is None:
         with pytest.raises(GoveeBleError, match="not sending a colour frame"):
             run(d.set_rgb((1, 2, 3)))
         assert _sent(d) == [] and [q[1] for q in _queried(d)] == asked
+        assert not _confirmed(d) and d.segment_count == d.profile.segments
     else:
         run(d.set_rgb((1, 2, 3)))
-        assert d.segment_count == count and [q[1] for q in _queried(d)] == asked
+        assert d.segment_count == count and [q[1] for q in _queried(d)] == asked and _confirmed(d)
         # One send_many: the transport sends an 0xA3 run and the write after it as one unit.
         d._conn.send_many.assert_awaited_once_with(  # type: ignore[attr-defined]
             build.color_rgb_frames(1, 2, 3, d.profile.color_scheme, count))
+
+
+def test_the_confirmed_flag_follows_the_count_a_read_set() -> None:
+    # H7041's aa 0f (2 strings x 25 bulbs): a good read confirms, a failed one keeps the count and the flag,
+    # a negative count drops both, and a caller's count (set_segment_count, either form) is never confirmed.
+    reply: list[bytes] = []
+    d = _dev("H7041", {0x0F: lambda _f: reply})
+    assert not _confirmed(d) and d.segment_count == 50
+    for strings, count, confirmed in [(1, 25, True), (None, 25, True), (0x80, 50, False), (2, 50, True)]:
+        reply[:] = [] if strings is None else [_frame(0xAA, 0x0F, strings)]
+        run(d._read_light_num())
+        assert (d.segment_count, _confirmed(d)) == (count, confirmed)
+    d.set_segment_count(5)
+    assert (d.segment_count, _confirmed(d)) == (5, False)
+    reply[:] = [_frame(0xAA, 0x0F, 1)]
+    run(d._read_light_num())
+    assert (d.segment_count, _confirmed(d)) == (25, True)
+    d.set_segment_count(None)
+    assert (d.segment_count, _confirmed(d)) == (50, False)
 
 
 @pytest.mark.parametrize(("sku", "bursts", "aa40", "reads", "count", "pieces"), [

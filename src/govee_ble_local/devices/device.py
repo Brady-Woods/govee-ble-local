@@ -211,6 +211,9 @@ class Device:
         self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
+        # Whether _segment_count is a count a device read set (_adopt_segment_count), not a caller's
+        # (set_segment_count) or none.
+        self._segment_count_read = False
         # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
         # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
         self._polled_color_mode: bool | None = None
@@ -510,7 +513,27 @@ class Device:
         if count is not None:
             _check_segment_count(count, build.piece_cap(self.profile.color_scheme))
         self._segment_count = count
+        self._segment_count_read = False   # the caller's count, not the device's
         self._light_num_pieces = None   # the walk takes this count too, until the next aa 0f read
+
+    @property
+    def segment_count_confirmed(self) -> bool:
+        """Whether :attr:`segment_count` is a count a read from the device set on this Device: the aa 41
+        section count, the ac a1 special-info read, the aa 40 live IC, a status read's TLV 0x40 (or the aa 40
+        reads around it), the aa 0f string count, or a status read's TLV 0xA1 / 0x40 (each profile's read in
+        :attr:`segment_count`), at a poll or the lazy read before a masked write. False otherwise: for the
+        profile's static count (a new Device until its first such read, and always on a profile whose count
+        is static), after an aa 0f read whose count is negative drops the count, and after
+        :meth:`set_segment_count` (either form) until the next such read. A read that gives no usable count
+        leaves the count and this as they were. No I/O; nothing persists past this Device. A caller that
+        offers one entity per segment sizes them from :attr:`segment_count` while this is True and keeps
+        them while it is False."""
+        return self._segment_count_read
+
+    def _adopt_segment_count(self, count: int) -> None:
+        """A device read's segment count: it becomes :attr:`segment_count`, confirmed."""
+        self._segment_count = count
+        self._segment_count_read = True
 
     @property
     def min_kelvin(self) -> int | None:
@@ -2537,7 +2560,7 @@ class Device:
         whatever a setter did meanwhile; no count leaves it as it was."""
         pieces = await _readback.read_live_ic(self, lambda f: self._read_reply(f, budget))
         if self.profile.color_writes_live_ic and pieces is not None and pieces >= 1:
-            self._segment_count = min(pieces, build.piece_cap(self.profile.color_scheme))
+            self._adopt_segment_count(min(pieces, build.piece_cap(self.profile.color_scheme)))
         return pieces
 
     def _wants_color_groups(self) -> bool:
@@ -2619,7 +2642,7 @@ class Device:
             _LOGGER.debug("%s (%s): IC count %d gives no colour pieces; keeping the counts", self.address,
                           self._sku, ic)
         if pieces is not None:
-            self._segment_count = min(pieces, build.piece_cap(self.profile.color_scheme))
+            self._adopt_segment_count(min(pieces, build.piece_cap(self.profile.color_scheme)))
         if readback is not None:
             self._status_count = readback
             self._state.segments = [seg for seg in self._state.segments if seg.index < readback]
@@ -2789,7 +2812,7 @@ class Device:
             _LOGGER.debug("%s (%s): aa 41 section-count read gave no usable count (%s)",
                           self.address, self._sku, None if sc is None else sc.section_num)
             return False
-        self._segment_count = sc.section_num
+        self._adopt_segment_count(sc.section_num)
         return True
 
     async def _read_special_info(self, budget: ConnectBudget | None = None) -> bool:
@@ -2810,7 +2833,7 @@ class Device:
             _LOGGER.debug("%s (%s): ac a1 special-info read gave no usable segment count (%s)",
                           self.address, self._sku, count)
             return False
-        self._segment_count = count
+        self._adopt_segment_count(count)
         return True
 
     @property
@@ -2846,9 +2869,10 @@ class Device:
                           self.address, self._sku, count)
             if count is not None:
                 self._segment_count = self._light_num_pieces = None
+                self._segment_count_read = False
             return False
         self._light_num_pieces = count * self.profile.light_num_per_unit
-        self._segment_count = min(self._light_num_pieces, build.MAX_MASK_SEGMENTS)
+        self._adopt_segment_count(min(self._light_num_pieces, build.MAX_MASK_SEGMENTS))
         return True
 
     def _adopt_status_segments(self, st: reassemble.StatusReply) -> None:
@@ -2869,7 +2893,7 @@ class Device:
         if st.segment_count is not None:
             self._status_ic, count = st.segment_ic_total, st.segment_count   # G0 keeps the IC sum; n6
         if count is not None and count >= 1:
-            self._segment_count = min(count, build.MAX_MASK_SEGMENTS)
+            self._adopt_segment_count(min(count, build.MAX_MASK_SEGMENTS))
 
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
