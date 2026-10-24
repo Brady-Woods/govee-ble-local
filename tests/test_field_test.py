@@ -665,8 +665,11 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
         st = h6047.snapshot()
         st.gradual = flag
         ctx = ft.PlanContext(h6047, "H6047", {}, start=restore.StartState(st, frozenset()))
-        skips = {s.name: bool(s.skip) for s in ft.PLANS["H6047"].build_steps(ctx)}
+        built = ft.PLANS["H6047"].build_steps(ctx)
+        skips = {s.name: bool(s.skip) for s in built}
         assert (skips["gradual_on"], skips["gradual_off"]) == (skipped, skipped)
+        # its gradual steps change the flag, so a flag the restore's check didn't read back is unread there
+        assert [runner._changes(s) for s in built if s.name.startswith("gradual_")] == [["gradual"]] * 2
     # a hand-written plan's restore (the default one and the H6047's) puts a scene start back by its catalog
     # name, its segment colours first; one the catalog doesn't list comes back unrestorable, and no bare
     # 33 05 04 (a scene by code) is ever sent

@@ -128,15 +128,18 @@ def build_steps(ctx: PlanContext) -> list[Step]:
         expect=lambda st: (st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None
                            and _kelvin(st, 4000, 4000))))
     # The gradual flag only from a start the first poll read: the library holds none where it read none (its
-    # aa a3 reply lost), and nothing could put an unknown flag back.
+    # aa a3 reply lost), and nothing could put an unknown flag back. Both steps name their field: a step with
+    # none counts as changing colour, brightness and power only (runner._changes), so the restore check
+    # would not count an unread flag after the restore as one the run changed.
     unknown = ctx.start is not None and getattr(ctx.start.state, "gradual", None) is None
     skip = "gradual not read at the start: it couldn't be restored" if unknown else ""
     s.append(Step("gradual_on", partial(dev.set_gradual, True), state_is("gradual", True),
                   "Did the light carry on normally (no flicker, no colour change)?",
-                  note="33 a3 01; read-back aa a3 (no visible effect expected)", skip=skip))
+                  note="33 a3 01; read-back aa a3 (no visible effect expected)", fields=("gradual",),
+                  skip=skip))
     s.append(Step("gradual_off", partial(dev.set_gradual, False), state_is("gradual", False),
                   "Did the light carry on normally (no flicker, no colour change)?",
-                  note="33 a3 00", skip=skip))
+                  note="33 a3 00", fields=("gradual",), skip=skip))
     return s
 
 

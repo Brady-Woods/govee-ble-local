@@ -55,7 +55,8 @@ model, from which the shipped readers are generated).
     compared), `partial` (a field differs, or a start field the run changed didn't read back
     after the restore: a lost or rejected reply, a start segment no reply set, recorded as `unread`, so an
     acked write the device didn't apply is retried and printed `NOT RESTORED`, never passed as `exact`; a
-    hand-written plan's step, judged on no field, counts as changing colour, brightness and power),
+    hand-written plan's step, judged on no field, counts as changing colour, brightness and power, and the
+    H6047 plan's gradual steps name their field, so its flag counts as changed too),
     `failed`, `unverified` or `not_needed`. A scene start is put back as the
     library activates one, by name with its upload where it needs one, after its segment colours and the
     segment levels the run changed, and checked with its segment colours: they are the colour-mode memory,

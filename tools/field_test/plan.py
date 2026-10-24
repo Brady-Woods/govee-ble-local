@@ -56,7 +56,9 @@ class Step:
       gate it; ``"read"`` only reads (a connect, a poll, an advertisement) and runs at any hour.
     * ``fields``: the state fields the step is judged on, compared with what the library intended
       (``Device.snapshot()`` right after the action) wherever the row reads that field back. Empty: the
-      step is judged on ``expect`` (hand-written plans) or the tester's answer.
+      step is judged on ``expect`` (hand-written plans) or the tester's answer. They also say what the step
+      changes for the restore check (``runner._changes``): a step with none counts as changing colour,
+      brightness and power, so a step that writes anything else (the gradual flag) names its field.
     * ``refusal``: the exception the action must raise before any I/O (``GoveeBleNotSupported``); the
       step passes when it does and the device was sent nothing.
     * ``touched``: the segment indices a segment step writes (the others are judged unchanged).
