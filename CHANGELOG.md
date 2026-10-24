@@ -63,7 +63,12 @@ model, from which the shipped readers are generated).
     segment levels the run changed, and checked with its segment colours: they are the colour-mode memory,
     which a scene leaves and `aa a5` reads (firmware-sourced: the H6047 image's 0xa5 handler `0x01004c20`
     returns the RGB stored at `cfg+0x1c`), so the run's colour writes change them under a scene too; a row
-    that can't write segment colours notes them unrestorable. A hand-written plan's restore (the default
+    that can't write segment colours notes them unrestorable. Segments the start's poll didn't read (one
+    group reply lost at the start, or a whole segment read that failed, such as a live IC read) are noted
+    unrestorable too (`segments: [8, 9] were not read at the start ...`: their levels, and their colours but
+    under a Kelvin start, whose whole-device Kelvin puts every segment's colour back), the segments a later
+    poll of the run set among them, so a restore that put back only the segments read no longer reports
+    `exact` while the others are left as the run made them. A hand-written plan's restore (the default
     one, the H6047's) puts a scene start back the same way (`plan.restore_scene`, with the start's scene
     name added to its snapshot), never by a bare code, and returns what it can't put back. A `close` restore of something the run wrote and could never put back (a start colour,
     brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`

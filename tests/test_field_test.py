@@ -452,11 +452,16 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
             levels = "segments" in caps and getattr(dev, "supports_segment_brightness", True)
             order = [*([dev.set_segment_rgb] if "segments" in caps else []),
                      *([dev.set_segment_brightness] if levels else []), dev.set_scene_by_name]
-            for name, want, notes in ((listed[0], order, [] if "segments" in caps else [
-                    restore.SEGMENT_COLOURS_NOTE]), (None, [], [restore.scene_unlisted(1)])):
+            # a scene start whose segments the start didn't read notes them (the colour-mode memory)
+            unread = [restore.segments_unread(None, "colours and levels" if levels else "colours")]
+            for name, want, notes, read in (
+                    (listed[0], order, [] if "segments" in caps else [restore.SEGMENT_COLOURS_NOTE],
+                     {"scene_code", "segments"}),
+                    (None, [], [restore.scene_unlisted(1)], {"scene_code", "segments"}),
+                    (listed[0], [dev.set_scene_by_name], unread if "segments" in caps else [],
+                     {"scene_code"})):
                 noted = restore.Outcome()
-                scened = restore.StartState(state, frozenset({"scene_code", "segments"}), kind,
-                                            active_scene=name)
+                scened = restore.StartState(state, frozenset(read), kind, active_scene=name)
                 acts = restore._colour_actions(dev, scened, noted, None)
                 if [a[1] for a in acts] != want or noted.unrestorable != notes or (
                         acts and acts[-1][2] != (listed[0],)):
@@ -597,6 +602,14 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     assert (await restore.check_restore(painted, lit, restore.Outcome(), watch)).result == "exact"
     painted.capabilities, painted.supports_segment_brightness = ("segments",), True
     painted.set_segment_brightness = power
+    # segments a poll of the run set that the start's didn't (a group lost at the start) are noted: their
+    # colours and levels, or a Kelvin start's levels alone (its Kelvin puts every segment's colour back)
+    part, warm = (restore.StartState(DeviceState(color_temp_kelvin=k, segments=[Segment(0, red, 100)]),
+                                     frozenset({"segments", "color_temp_kelvin"}),
+                                     segments_set=frozenset({0})) for k in (None, 4000))
+    assert [restore.segment_gaps(painted, st, {0, 1, 2}) for st in (part, warm)] == [
+        [restore.segments_unread([1, 2], "colours and levels")], [restore.segments_unread([1, 2], "levels")]]
+    assert restore.segment_gaps(painted, part, {0}) == []
     levels = restore.StartState(DeviceState(segments=[Segment(1, blue, 60)]), frozenset({"segments"}))
     painted.state = DeviceState(segments=[Segment(1, blue, 60)])
     assert [a[2] for a in restore._segment_levels(painted, levels, frozenset())] == [([1], 60)]

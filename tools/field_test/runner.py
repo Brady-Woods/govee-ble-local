@@ -77,6 +77,7 @@ from .restore import (
     capture_start,
     check_restore,
     restore_start,
+    segment_gaps,
     unrestorable_written,
 )
 from .summary import Summary, console_table, counts, gate_verdict
@@ -909,6 +910,8 @@ async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None, 
     restore sends nothing and only records what can't be restored."""
     st = {**initial, "active_scene": start.active_scene} if start is not None else initial
     result, notes = await _restore_with(run.plan, run.dev, st, run.address, run.names)
+    if start is not None:   # the segments the start didn't read, which no plan's restore can put back
+        notes += [g for g in segment_gaps(run.dev, start, run.seen_segments) if g not in notes]
     out = Outcome(["the plan's restore"], [] if result == "ok" else [result], notes)
     if follow and start is not None and getattr(run.dev, "profile", None) is not None:
         try:
@@ -919,7 +922,7 @@ async def _plan_restore(run: _Run, initial: Snapshot, start: StartState | None, 
         off = frozenset(check.diffs) | frozenset(check.unread)
         out.actions.append(f"the plan's restore checked: {check.result}"
                            + (f", the generic restore puts back {', '.join(sorted(off))}" if off else ""))
-        generic = await restore_start(run.dev, start, run.describe, only=off)
+        generic = await restore_start(run.dev, start, run.describe, only=off, seen=run.seen_segments)
         out.actions += generic.actions
         out.errors += generic.errors
         out.unrestorable += [u for u in generic.unrestorable if u not in out.unrestorable]
@@ -1000,7 +1003,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
 
     def restore() -> Coroutine[Any, Any, Outcome] | None:
         if run.generic and start is not None:
-            return restore_start(dev, start, run.describe)
+            return restore_start(dev, start, run.describe, seen=run.seen_segments)
         if not run.generic and initial is not None:
             return _plan_restore(run, initial, start, follow=run.policy.gate)
         return None

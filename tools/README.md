@@ -194,7 +194,9 @@ Notes:
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
   scene the catalog doesn't list is not re-activated, since the app sends no bare `33 05 04` for one, so
   its colour is left as the run made it and not compared; or the start colour, brightness or gradual flag
-  was never read back),
+  was never read back; or some segments: those the start's poll didn't read, a group reply lost or a
+  whole read that failed, whose levels and colours, but a Kelvin start's colour, nothing can put back:
+  `segments: [8, 9] were not read at the start ...`, a scene start's colour-mode memory included),
   `partial` (fields differ, or a start field the run changed didn't read back after the restore: a lost or
   rejected reply, a start segment no reply set, listed `not read back` in the `NOT RESTORED` line and as
   the report's `restore_check.unread`), `failed`, `unverified` (nothing to compare), or `not_needed`. A scene start is
