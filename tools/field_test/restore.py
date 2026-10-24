@@ -13,7 +13,9 @@ outlets' relay bits too; in a scene, the segments' levels but not their colours,
 Each unrestorable entry starts with what it is about (``colour:``, ``scene:``, ``brightness:``, ``power:``,
 ``relay:``, ``gradual:``): :func:`unrestorable_written` tells which the run's writes changed. Segments are
 compared only where the poll set them (:attr:`.readback.Poll.segments`): a status burst that lost a colour
-group keeps the segments it held, a write's intent among them.
+group keeps the segments it held, a write's intent among them. A start field that poll didn't read back (a
+lost or rejected reply, a segment no reply set) and that the run's writes changed is ``unread``, which
+makes the check ``partial``: an acked write the device didn't apply would otherwise pass unseen.
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ import dataclasses
 from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
-from .readback import FIELDS, FrameWatch, carried, outlet_mask, poll, relay_bits
+from .readback import FIELDS, FrameWatch, carried, not_set, outlet_mask, poll, relay_bits
 
 SCENE_NOTE = ("scene: re-activated by code (the bundled catalog doesn't list it at this scene set), so a DIY "
               "or uploaded effect shows whatever the device now holds for that code")
@@ -32,6 +34,11 @@ CHANGES: dict[str, str] = {
     "rgb_color": "colour", "color_temp_kelvin": "colour", "segments": "colour", "scene_code": "colour",
     "zone_color_temp_kelvin": "colour", "brightness": "brightness", "segment_brightness": "brightness",
     "is_on": "power", "zone_power": "power", "gradual": "gradual"}
+# What a run's writes change in each state field the restore check compares (``segments``: their colours and
+# their levels).
+_CHANGED_BY: dict[str, frozenset[str]] = {
+    **{field: frozenset({about}) for field, about in CHANGES.items()},
+    "segments": frozenset({"colour", "brightness"})}
 _ABOUT = {"colour": "colour", "scene": "colour", "brightness": "brightness", "power": "power",
           "relay": "power", "gradual": "gradual"}
 Ask = Callable[[str], Awaitable[str | None]]
@@ -258,6 +265,8 @@ class RestoreCheck:
     errors: list[str] = dataclasses.field(default_factory=list)
     actions: list[str] = dataclasses.field(default_factory=list)
     basis: str | None = None    # "readback" / "observed"
+    # start fields the run changed and the check's poll didn't read back: {field: {"start", "why"}}
+    unread: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -290,8 +299,10 @@ def _show(field: str, value: Any) -> Any:
 
 
 async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, watch: FrameWatch | None,
-                        *, ask: Ask | None = None) -> RestoreCheck:
-    """Poll once more and compare what it reads back with the start."""
+                        *, ask: Ask | None = None, changed: Collection[str] = ()) -> RestoreCheck:
+    """Poll once more and compare what it reads back with the start. ``changed``: what the run's writes
+    changed (:data:`CHANGES` values); a start field among those that this poll didn't read back (its reply
+    lost or rejected, a start segment it didn't set) is ``unread``, and makes the check ``partial``."""
     if outcome is None:
         return RestoreCheck("not_needed")
     check = RestoreCheck("exact", list(outcome.unrestorable), {}, list(outcome.errors), list(outcome.actions))
@@ -315,12 +326,21 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
     in_scene = "scene_code" in start.read and start.state.scene_code is not None
     compared = 0
     for field in FIELDS:
-        if field not in start.read or now.get(field) is not None:
+        if field not in start.read:
+            continue
+        want, got = getattr(start.state, field, None), getattr(post, field, None)
+        why = now.get(field)
+        if why is not None:   # not read back: what the run changed there may not be put back
+            if _CHANGED_BY[field] & set(changed):
+                check.unread[field] = {"start": _show(field, want), "why": why}
             continue
         compared += 1
-        want, got = getattr(start.state, field, None), getattr(post, field, None)
         if field == "segments" and segments is not None:   # only the segments this poll set
             got = [s for s in got or [] if s.index in segments]
+        if field == "segments" and _CHANGED_BY[field] & set(changed):
+            lost = sorted({s.index for s in want or []} - {s.index for s in got or []})
+            if lost:
+                check.unread[field] = {"start": _show(field, want), "why": not_set(lost)}
         if _differs(field, want, got, raw, colours=not in_scene):
             check.diffs[field] = {"start": _show(field, want), "end": _show(field, got)}
     end_bits = relay_bits(watch.window(mark)) if watch is not None else None
@@ -334,7 +354,7 @@ async def check_restore(dev: Any, start: StartState, outcome: Outcome | None, wa
     check.basis = "readback" if compared else None
     if check.errors:
         check.result = "failed"
-    elif check.diffs:
+    elif check.diffs or check.unread:
         check.result = "partial"
     elif not compared:
         check.result = "unverified"

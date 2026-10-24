@@ -546,6 +546,15 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     two = restore.StartState(DeviceState(segments=[Segment(0, (9, 9, 9), 100), Segment(1, blue, 100)]),
                              frozenset({"segments"}))
     assert (await restore.check_restore(painted, two, restore.Outcome(), watch)).result == "exact"
+    # a start field the run changed that this poll didn't read back (its reply lost) is unread, as is a start
+    # segment it didn't set: the check is partial (the retry and NOT RESTORED path), never exact
+    lit = restore.StartState(DeviceState(brightness=50, segments=two.state.segments),
+                             frozenset({"brightness", "segments"}))
+    lost = await restore.check_restore(painted, lit, restore.Outcome(), watch, changed={"brightness"})
+    assert lost.result == "partial" and set(lost.unread) == {"brightness", "segments"} and not lost.diffs
+    assert runner.not_restored(lost)[0] == (
+        "brightness: start 50, not read back (no aa 04 brightness reply in this poll)")
+    assert (await restore.check_restore(painted, lit, restore.Outcome(), watch)).result == "exact"
     painted.capabilities, painted.supports_segment_brightness = ("segments",), True
     painted.set_segment_brightness = power
     levels = restore.StartState(DeviceState(segments=[Segment(1, blue, 60)]), frozenset({"segments"}))
@@ -563,14 +572,14 @@ async def test_the_generic_plan_follows_every_profile(ft: Any) -> None:
     was_on = restore.StartState(DeviceState(is_on=True), frozenset({"is_on"}), "plug")
     assert (await restore.restore_start(lamp, was_on, str)).actions == ["relay on"] and relay == [True]
     # a row with the app's empty unlock check needs no secret once that check was sent and acked; a step with
-    # no field (a hand-written plan's) may change any colour or brightness
+    # no field (a hand-written plan's) may change any colour, brightness or power
     acked = readback.FrameWatch("AA:BB:CC:DD:EE:01")
     acked.frames += [readback.Frame(0.0, "tx", "33b2"), readback.Frame(0.0, "rx", "33b2", 0)]
     empty, needs = (SimpleNamespace(requires_secret=True, empty_secret_check=e) for e in (True, False))
     assert [runner._no_secret(p, s, w) for p, s, w in (
         (empty, None, acked), (empty, None, watch), (needs, None, acked), (needs, b"\x01" * 8, watch))] == [
         False, True, True, False]
-    assert runner._changes(ft.Step("hand", generic._nothing, None, "")) == ["brightness", "colour"]
+    assert runner._changes(ft.Step("hand", generic._nothing, None, "")) == ["brightness", "colour", "power"]
     # only the second counted Ctrl-C abandons a restore; after a SIGHUP or SIGTERM no uncounted cancellation
     # does either (a write's ack timeout firing with it); with neither, any cancellation after the first does
     first = SimpleNamespace(interrupted=True)

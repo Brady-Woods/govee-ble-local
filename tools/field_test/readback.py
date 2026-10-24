@@ -555,7 +555,7 @@ def _value(attr: str, seg: Any) -> Any:
     return tuple(value) if attr == "rgb" and value is not None else value
 
 
-def _not_set(indices: Iterable[int]) -> str:
+def not_set(indices: Iterable[int]) -> str:
     return f"segments {sorted(indices)} not set by this poll's replies (no reply carried their group)"
 
 
@@ -568,7 +568,7 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str,
     held, wanted, before = _segments(post), _segments(intent), _segments(pre)
     after = held if read is None else {i: s for i, s in held.items() if i in read}
     if not after:
-        return "not read: " + ("no segments in the read-back" if not held else _not_set(held)), None
+        return "not read: " + ("no segments in the read-back" if not held else not_set(held)), None
     bad: list[str] = []
     for i, seg in sorted(after.items()):
         ref = wanted.get(i) if i in step.touched else before.get(i)
@@ -585,7 +585,7 @@ def _judge_segments(step: Step, pre: Any, intent: Any, post: Any, attr: str,
         return "fail", "; ".join(bad[:4])
     unset = [i for i in step.touched if i not in after]
     if unset:
-        return f"not read: {_not_set(unset)}", None
+        return f"not read: {not_set(unset)}", None
     if step.kind == "write" and all(i in before and i in wanted and _value(attr, before[i]) is not None
                                     and _value(attr, before[i]) == _value(attr, wanted[i])
                                     for i in step.touched):
@@ -627,7 +627,7 @@ def judge_fields(step: Step, dev: Any, pre: Any, intent: Any, post: Any,
                 out[field] = "fail"
                 fails.append(f"rgb_color (segments): {len(off)} of {len(segs)} segments not {tuple(want)}")
             elif len(segs) < len(held):   # the whole device was written: a segment not read proves nothing
-                out[field] = f"not read: {_not_set(set(held) - set(segs))}"
+                out[field] = f"not read: {not_set(set(held) - set(segs))}"
             elif step.kind == "write" and was and all(
                     s.rgb is not None and tuple(s.rgb) == tuple(want) for s in was.values()):
                 out[field] = f"not read: {UNCHANGED}"

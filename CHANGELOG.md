@@ -41,7 +41,11 @@ model, from which the shipped readers are generated).
   - **Restore** (`restore.py`): the start state (power, brightness, colour or Kelvin, zones, segment colours and
     levels, scene) is put back at the end, also after an error or Ctrl-C, then checked with one more poll:
     `exact`, `close` (what can't be restored exactly is listed, such as a scene the catalog doesn't list,
-    re-activated by code), `partial`, `failed`, `unverified` or `not_needed`. A scene start is put back as the
+    re-activated by code), `partial` (a field differs, or a start field the run changed didn't read back
+    after the restore: a lost or rejected reply, a start segment no reply set, recorded as `unread`, so an
+    acked write the device didn't apply is retried and printed `NOT RESTORED`, never passed as `exact`; a
+    hand-written plan's step, judged on no field, counts as changing colour, brightness and power),
+    `failed`, `unverified` or `not_needed`. A scene start is put back as the
     library activates one, by name with its upload where it needs one, after the segment levels the run
     changed. A `close` restore of something the run wrote and could never put back (a start colour,
     brightness or power never read) keeps the gate `incomplete`, an `unverified` one fails it. Under `--all`

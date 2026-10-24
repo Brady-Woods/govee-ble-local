@@ -654,9 +654,9 @@ class _Run:
 
 def _changes(step: Step) -> list[str]:
     """What a write step changes (``restore.CHANGES`` of its fields); a step judged on no field (the tester's
-    answer, a hand-written plan's) may change any colour or brightness."""
+    answer, a hand-written plan's) may change any colour, brightness or power."""
     if not step.fields:
-        return ["brightness", "colour"]
+        return ["brightness", "colour", "power"]
     return sorted({CHANGES.get(f, "other") for f in step.fields})
 
 
@@ -911,9 +911,10 @@ async def _reconnect(run: _Run, wait: float) -> None:
 
 
 def not_restored(check: RestoreCheck, written: Collection[str] = (), wrote: bool = False) -> list[str]:
-    """What a ``partial`` or ``failed`` restore left changed: its fields' start and end, and its errors; for
-    an ``abandoned`` one (a second Ctrl-C) after the run wrote (``wrote``), what its writes changed
-    (``written``: :data:`.restore.CHANGES` values), all of it left as the run made it."""
+    """What a ``partial`` or ``failed`` restore left changed: its fields' start and end, the start fields the
+    run changed that its check didn't read back, and its errors; for an ``abandoned`` one (a second Ctrl-C)
+    after the run wrote (``wrote``), what its writes changed (``written``: :data:`.restore.CHANGES` values),
+    all of it left as the run made it."""
     if check.result == "abandoned":
         what = ", ".join(sorted(written)) or "a write in flight"
         return [f"restore abandoned (a second Ctrl-C): what the run changed ({what}) is left as the run "
@@ -921,6 +922,8 @@ def not_restored(check: RestoreCheck, written: Collection[str] = (), wrote: bool
     if check.result not in RESTORE_FAILED:
         return []
     out = [f"{field}: start {d.get('start')!r}, now {d.get('end')!r}" for field, d in check.diffs.items()]
+    out += [f"{field}: start {d.get('start')!r}, not read back ({d.get('why')})"
+            for field, d in check.unread.items()]
     return out + list(check.errors) or [check.result]
 
 
@@ -970,7 +973,7 @@ async def _finish(report: dict[str, Any], run: _Run, start: StartState | None, i
             return RestoreCheck("failed" if outcome.errors else "unverified", errors=list(outcome.errors))
         try:
             return await check_restore(dev, start, outcome, run.watch,
-                                       ask=ask if run.policy.prompts else None)
+                                       ask=ask if run.policy.prompts else None, changed=run.changed)
         except asyncio.CancelledError:
             if not _absorb(run):
                 raise
@@ -1091,7 +1094,8 @@ async def _run_device(target: _survey.Heard, n: int | None, args: argparse.Names
                          "basis": s.get("basis"), "reason": s.get("reason")} for s in report["steps"]]
         rec["counts"] = counts(report["steps"])
         rc = report.get("restore_check") or {}
-        rec["restore"] = {k: rc.get(k) for k in ("result", "unrestorable", "diffs", "errors")} if rc else None
+        rec["restore"] = ({k: rc.get(k) for k in ("result", "unrestorable", "diffs", "unread", "errors")}
+                          if rc else None)
         written = _written(report["steps"]) | set(changed)   # a write a Ctrl-C cut short has no record
         if rec["restore"] is not None:
             # what the run wrote and can never put back: a close or unverified restore doesn't clear the gate

@@ -177,7 +177,9 @@ Notes:
 - A restore is `exact`, `close` (every field read back matches, but something can't be restored exactly: a
   scene the catalog doesn't list is re-activated by code, or the start colour, brightness or gradual flag
   was never read back),
-  `partial` (fields differ), `failed`, `unverified` (nothing to compare), or `not_needed`. A scene start is
+  `partial` (fields differ, or a start field the run changed didn't read back after the restore: a lost or
+  rejected reply, a start segment no reply set, listed `not read back` in the `NOT RESTORED` line and as
+  the report's `restore_check.unread`), `failed`, `unverified` (nothing to compare), or `not_needed`. A scene start is
   put back as the library activates one: by its catalog name, with its upload where it needs one, after
   the segment levels the run changed; in a scene the check compares the segments' levels, not their
   colours (the scene paints them). When the run wrote something it can never put back (a start colour,
