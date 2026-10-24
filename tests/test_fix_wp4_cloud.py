@@ -19,7 +19,7 @@ from govee_ble_local.cloud.account import CloudDevice, GoveeCloudAccount  # noqa
 from govee_ble_local.exceptions import GoveeCloudAuthError, GoveeCloudError  # noqa: E402
 from govee_ble_local.wire import build  # noqa: E402
 
-_SECRET = bytes.fromhex("615521090b735c54")
+_SECRET = bytes.fromhex("0123456789abcdef")
 _DEVICES = (200, {"data": {"devices": [{"sku": "H6008", "device": "AA"}]}})
 
 
@@ -209,12 +209,12 @@ async def test_deeply_nested_error_body_keeps_the_http_status() -> None:
 
 
 def test_parse_non_ascii_secret_is_ignored() -> None:
-    dev = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "secretCode": "YVUhCQtzXFQé"})
+    dev = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "secretCode": "ASNFZ4mrze8é"})
     assert dev.secret is None
 
 
 def test_secret_len_is_the_wire_constant() -> None:
     assert acc.SECRET_LEN is build.SECRET_LEN
-    settings = json.dumps({"secretCode": "YVUhCQtzXFQ="})
+    settings = json.dumps({"secretCode": "ASNFZ4mrze8="})
     dev = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "deviceExt": {"deviceSettings": settings}})
     assert dev.secret is not None and len(dev.secret) == build.SECRET_LEN

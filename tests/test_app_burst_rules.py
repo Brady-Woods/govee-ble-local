@@ -23,11 +23,12 @@ from govee_ble_local.wire import _spec, build, describe, parse
 from govee_ble_local.wire import reassemble as r
 
 # Real captured H60A6 0xAC status burst (13 segments, both zones on, brightness 80).
+# Device ids and MACs in it are made-up examples (checksums recomputed).
 _BURST = [bytes.fromhex(h) for h in (
     "ac000a000c0300010101040150050415010000e8",
-    "ac010707065774f453e75c0711105674f453e7f0",
-    "ac025cdb2d0100290104030000070d115ce753d9",
-    "ac03f474560100290104031104001e0f0f120749",
+    "ac010707065753005e00020711105653005e00ae",
+    "ac0202a60a0100290104030000070d1102005e69",
+    "ac030053560100290104031104001e0f0f12079a",
     "ac04ff640000800f00231000000080000000808f",
     "ac0500000080000000804102020130020101a57e",
     "ac06110132ff00006400ff00640000ff64ff00ec",
@@ -353,12 +354,12 @@ def test_the_h703a_one_record_tlv_is_the_colour_the_mode_then_decides(
     assert (state.rgb_color, state.color_temp_kelvin) == (rgb, kelvin)
 
 
-_BASIC = bytes([0x07, 0x11, 0x10, 0x56, 0x74, 0xF4, 0x53, 0xE7, 0x5C, 0xDB, 0x2D,
+_BASIC = bytes([0x07, 0x11, 0x10, 0x56, 0x53, 0x00, 0x5E, 0x00, 0x02, 0xA6, 0x0A,
                 1, 0, 41, 1, 4, 3, 0, 0])
 _BASIC_2 = bytes([0x07, 0x11, 0x10, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09,
                   2, 0, 5, 3, 0, 7, 0, 0])
 _BASIC_ZERO = bytes([0x07, 0x11, 0x10, *bytes(16)])
-_WIFI = bytes([0x07, 0x0D, 0x11, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 2, 0, 9, 3, 0, 1])
+_WIFI = bytes([0x07, 0x0D, 0x11, 0x02, 0x00, 0x5E, 0x00, 0x53, 0x56, 2, 0, 9, 3, 0, 1])
 _WIFI_ZERO = bytes([0x07, 0x0D, 0x11, *bytes(12)])
 
 
@@ -370,9 +371,9 @@ def test_the_last_device_info_block_wins() -> None:
     # A zero UID leaves the serial; zero versions are none (the app sets "").
     st = _status(_BASIC + _BASIC_ZERO)
     assert (st.serial_number, st.firmware_version, st.hardware_version) == (
-        "2D:DB:5C:E7:53:F4:74:56", None, None)
+        "0A:A6:02:00:5E:00:53:56", None, None)
     assert _status(_WIFI + _WIFI_ZERO).wifi_mac is None
-    assert _status(_WIFI_ZERO + _WIFI).wifi_mac == "5C:E7:53:F4:74:56"
+    assert _status(_WIFI_ZERO + _WIFI).wifi_mac == "02:00:5E:00:53:56"
 
 
 async def test_an_incomplete_burst_on_a_device_retries_then_stays_stale() -> None:

@@ -1,7 +1,8 @@
 """Device-info reads match the Govee app: aa 06 firmware, aa 07 03 hardware, aa 07 02 device id.
 
-The reply frames below were captured live (2026-10-15) from real devices; the app-side sources are
-SoftVersionController / HardVersionController / SnController.parseValidBytes.
+The reply frames below were captured live (2026-10-15); their device ids are made-up examples
+(checksums recomputed). The app-side sources are SoftVersionController / HardVersionController /
+SnController.parseValidBytes.
 """
 from __future__ import annotations
 
@@ -28,15 +29,15 @@ from govee_ble_local.wire import build, parse  # noqa: E402
 # run against its firmware image instead (test_h5083_firmware.test_device_info_is_read_once_per_device).
 CAPTURES = {
     "H6047": ("aa06312e30302e3132000000000000000000009e", "aa0703332e30322e30310000000000000000009e",
-              "aa07027e17383732d4d671000000000000000088", "1.00.12", "3.02.01", "71:D6:D4:32:37:38:17:7E"),
+              "aa07024753005e0002470a0000000000000000aa", "1.00.12", "3.02.01", "0A:47:02:00:5E:00:53:47"),
     "H61A8": ("aa06332e30332e31380000000000000000000095", "aa0703332e30312e31300000000000000000009d",
-              "aa0702ff1f6306c2c7d10f0000000000000000f1", "3.03.18", "3.01.10", "0F:D1:C7:C2:06:63:1F:FF"),
+              "aa0702a853005e0002a80a0000000000000000aa", "3.03.18", "3.01.10", "0A:A8:02:00:5E:00:53:A8"),
     "H6052": ("aa06322e30302e31390000000000000000000096", "aa0703332e30322e30320000000000000000009d",
-              "aa0702773446c50ed51aeb000000000000000045", "2.00.19", "3.02.02", "EB:1A:D5:0E:C5:46:34:77"),
+              "aa07025253005e0002520a0000000000000000aa", "2.00.19", "3.02.02", "0A:52:02:00:5E:00:53:52"),
     "H6006": ("aa06312e30302e35390000000000000000000091", "aa0703312e30322e30300000000000000000009d",
-              "aa0702ae603c3c1798b72c000000000000000075", "1.00.59", "1.02.00", "2C:B7:98:17:3C:3C:60:AE"),
+              "aa07020653005e0002060a0000000000000000aa", "1.00.59", "1.02.00", "0A:06:02:00:5E:00:53:06"),
     "H60A6": ("aa06312e30302e34310000000000000000000098", "aa0703312e30342e303300000000000000000098",
-              "aa07025674f453e75cdb2d000000000000000067", "1.00.41", "1.04.03", "2D:DB:5C:E7:53:F4:74:56"),
+              "aa07025653005e0002a60a00000000000000005a", "1.00.41", "1.04.03", "0A:A6:02:00:5E:00:53:56"),
 }
 # H60A6 answers aa 07 10 / 11 with all zeros (no UID, versions or Wi-Fi MAC).
 H60A6_BASIC_ZEROS = bytes.fromhex("aa071000000000000000000000000000000000bd")
@@ -180,7 +181,7 @@ def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(sku: 
     assert _info_reads(frames) == sent
     st = d.state
     assert (st.firmware_version, st.hardware_version, st.serial_number) == (
-        "1.00.41", "1.04.03", "2D:DB:5C:E7:53:F4:74:56")
+        "1.00.41", "1.04.03", "0A:A6:02:00:5E:00:53:56")
 
 
 def test_h60a6_device_id_comes_from_the_sn_read_despite_zeroed_basic() -> None:
@@ -204,7 +205,7 @@ def test_h60a6_device_id_comes_from_the_sn_read_despite_zeroed_basic() -> None:
 def test_no_basic_or_wifi_read_even_when_the_app_reads_are_unanswered() -> None:
     # WAS: aa 07 10 was a fallback for unknown versions. It has no firmware handler (H60A6 echoes the
     # request as zeros), so it is never sent; a device that answers only it gives nothing.
-    basic = frame(0xAA, 0x07, 0x10, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0, 1, 2, 3, 1, 0, 5)
+    basic = frame(0xAA, 0x07, 0x10, 0x02, 0x00, 0x5E, 0x00, 0x53, 0x56, 0, 0, 1, 2, 3, 1, 0, 5)
 
     d, sent = _dev("H60A6", lambda fr: [basic] if fr[1:3] == b"\x07\x10" else [])
     asyncio.run(d._read_device_info())

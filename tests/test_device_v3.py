@@ -435,11 +435,12 @@ def _frame(*payload: int) -> bytes:
 # Real captured H60A6 0xAC status burst (13 segments, both zones on, brightness 0x50).
 # H60A6-specific — H6047/H6641 do NOT answer the 0xAC status burst at all (source-confirmed;
 # see their profile.py comments), so this is not reused for those SKUs.
+# Device ids and MACs in it are made-up examples (checksums recomputed).
 _STATUS_BURST = [bytes.fromhex(h) for h in (
     "ac000a000c0300010101040150050415010000e8",
-    "ac010707065774f453e75c0711105674f453e7f0",
-    "ac025cdb2d0100290104030000070d115ce753d9",
-    "ac03f474560100290104031104001e0f0f120749",
+    "ac010707065753005e00020711105653005e00ae",
+    "ac0202a60a0100290104030000070d1102005e69",
+    "ac030053560100290104031104001e0f0f12079a",
     "ac04ff640000800f00231000000080000000808f",
     "ac0500000080000000804102020130020101a57e",
     "ac06110132ff00006400ff00640000ff64ff00ec",
@@ -552,16 +553,16 @@ def test_device_info_populates_state_once() -> None:
     def _info(frame: bytes, **_kw: object) -> list[bytes]:
         sel = frame[2]
         if sel == 0x10:
-            return [_frame(0xAA, 0x07, 0x10, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0, 1, 2, 3, 1, 0, 5)]
+            return [_frame(0xAA, 0x07, 0x10, 0x02, 0x00, 0x5E, 0x00, 0x53, 0x56, 0, 0, 1, 2, 3, 1, 0, 5)]
         if sel == 0x11:
             return [_frame(0xAA, 0x07, 0x11, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 4, 5, 6, 7, 8, 9)]
         if sel == 0x02:
-            return [_frame(0xAA, 0x07, 0x02, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0)]
+            return [_frame(0xAA, 0x07, 0x02, 0x02, 0x00, 0x5E, 0x00, 0x53, 0x56, 0, 0)]
         return []
 
     d._conn.query = AsyncMock(side_effect=_info)  # type: ignore[attr-defined]
     asyncio.run(d._read_device_info())
-    assert d.state.serial_number == "56:74:F4:53:E7:5C"
+    assert d.state.serial_number == "56:53:00:5E:00:02"
     # aa 07 10 / 11 are not sent (no firmware handler, no app sender): no Wi-Fi MAC or basic versions.
     assert d.state.wifi_mac is None
     assert d.state.firmware_version is None and d.state.hardware_version is None
@@ -604,10 +605,10 @@ def test_read_status_populates_device_info() -> None:
     d = _dev("H60A6")
     d._conn.query = AsyncMock(return_value=_STATUS_BURST)  # type: ignore[attr-defined]
     asyncio.run(d._read_status())
-    assert d.state.wifi_mac == "5C:E7:53:F4:74:56"
+    assert d.state.wifi_mac == "02:00:5E:00:53:56"
     assert d.state.hardware_version == "1.04.03"
     assert d.state.firmware_version == "1.00.41"
-    assert d.state.serial_number == "2D:DB:5C:E7:53:F4:74:56"
+    assert d.state.serial_number == "0A:A6:02:00:5E:00:53:56"
 
 
 def _status_frames(d: Device) -> list[bytes]:

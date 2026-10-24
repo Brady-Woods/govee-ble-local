@@ -251,8 +251,8 @@ def test_parse_malformed_secret_yields_none_and_warns(caplog: pytest.LogCaptureF
     with caplog.at_level(logging.WARNING):
         dev = GoveeCloudAccount._parse({"device": "AA", "deviceExt": {"deviceSettings": settings}})
     assert dev.secret is None and "AA:BB:CC:DD:EE:FF" in caplog.text
-    ok = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "secretCode": "YVUhCQtzXFQ="})
-    assert ok.secret == bytes.fromhex("615521090b735c54")
+    ok = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "secretCode": "ASNFZ4mrze8="})
+    assert ok.secret == bytes.fromhex("0123456789abcdef")
     assert GoveeCloudAccount._parse({"sku": "H1", "device": "AA"}).secret is None
 
 
@@ -358,14 +358,14 @@ async def test_get_devices_bad_secret_yields_none_and_one_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # WAS (N-7): one bad secretCode made get_devices() raise for the whole account.
-    good = {"sku": "H6008", "device": "AA", "secretCode": "YVUhCQtzXFQ="}
+    good = {"sku": "H6008", "device": "AA", "secretCode": "ASNFZ4mrze8="}
     bad = {"sku": "H5083", "device": "BB", "secretCode": "!!notbase64"}
     a = _acct(token="t")
     _stub_post(a, [(200, {"devices": [good, bad]})])
     with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
         devs = await a.get_devices()
     assert [d.sku for d in devs] == ["H6008", "H5083"]
-    assert devs[0].secret == bytes.fromhex("615521090b735c54") and devs[1].secret is None
+    assert devs[0].secret == bytes.fromhex("0123456789abcdef") and devs[1].secret is None
     warns = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warns) == 1
     assert "H5083" in warns[0].getMessage() and "notbase64" not in warns[0].getMessage()

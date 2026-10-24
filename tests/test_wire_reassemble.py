@@ -8,11 +8,12 @@ import pytest
 from govee_ble_local.wire import reassemble as r
 
 # Real captured H60A6 0xAC status burst (segments set to a cycling R/G/B pattern).
+# Device ids and MACs in it are made-up examples (checksums recomputed).
 _BURST = [
     "ac000a000c0300010101040150050415010000e8",
-    "ac010707065774f453e75c0711105674f453e7f0",
-    "ac025cdb2d0100290104030000070d115ce753d9",
-    "ac03f474560100290104031104001e0f0f120749",
+    "ac010707065753005e00020711105653005e00ae",
+    "ac0202a60a0100290104030000070d1102005e69",
+    "ac030053560100290104031104001e0f0f12079a",
     "ac04ff640000800f00231000000080000000808f",
     "ac0500000080000000804102020130020101a57e",
     "ac06110132ff00006400ff00640000ff64ff00ec",
@@ -77,10 +78,10 @@ def test_parse_status_extracts_device_info() -> None:
     # BLE-only devices (H60A6) report device-info ONLY in the 0xAC stream, via the 0x07 TLV
     # (parsed by the generated device_info_read reader — no MAC-anchor heuristic, no address).
     st = r.parse_status([bytes.fromhex(h) for h in _BURST])
-    assert st.wifi_mac == "5C:E7:53:F4:74:56"       # 0x11 wifi TLV
+    assert st.wifi_mac == "02:00:5E:00:53:56"       # 0x11 wifi TLV
     assert st.hardware_version == "1.04.03"          # matches the old anchor's value
     assert st.firmware_version == "1.00.41"          # bonus vs the anchor (sw was not extracted before)
-    assert st.serial_number == "2D:DB:5C:E7:53:F4:74:56"   # 0x10 basic uid
+    assert st.serial_number == "0A:A6:02:00:5E:00:53:56"   # 0x10 basic uid
     assert not hasattr(r, "anchor_device_info")      # heuristic retired
 
 
@@ -91,11 +92,12 @@ def test_empty_and_short() -> None:
 
 # Real H60A6 burst (live capture). The device very often loses the 0xFF terminator
 # on the first query of a session, and occasionally drops a chunk mid-burst.
+# Device ids and MACs in it are made-up examples (checksums recomputed).
 _LIVE = [bytes.fromhex(h) for h in [
     "ac000a000c0300010100040164050415010a8c5b",
-    "ac010707065774f453e75c0711105674f453e7f0",
-    "ac025cdb2d0100290104030000070d115ce753d9",
-    "ac03f474560100290104031104001e0f0f120749",
+    "ac010707065753005e00020711105653005e00ae",
+    "ac0202a60a0100290104030000070d1102005e69",
+    "ac030053560100290104031104001e0f0f12079a",
     "ac04ff640000800f00231000000080000000808f",
     "ac0500000080000000804102020130020000a57e",
     "ac06110164ffae5464ffae5464ffae5464ffaeee",

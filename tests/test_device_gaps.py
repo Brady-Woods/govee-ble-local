@@ -495,7 +495,7 @@ def test_live_ic_read_failure_skips_segment_readback() -> None:
 
 
 def test_device_info_serial_falls_back_to_sn_selector() -> None:
-    sn = _frame(0xAA, 0x07, 0x02, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0)
+    sn = _frame(0xAA, 0x07, 0x02, 0x02, 0x00, 0x5E, 0x00, 0x53, 0x56, 0, 0)
     d = _dev("H60A6")
     # Only the SN (0x02) selector answers; basic (0x10) / wifi (0x11) carry nothing.
 
@@ -504,7 +504,7 @@ def test_device_info_serial_falls_back_to_sn_selector() -> None:
 
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     asyncio.run(d._read_device_info())
-    assert d.state.serial_number == "56:74:F4:53:E7:5C"
+    assert d.state.serial_number == "56:53:00:5E:00:02"
 
 
 def test_update_status_logs_debug_state_after_first_poll(caplog: pytest.LogCaptureFixture) -> None:
