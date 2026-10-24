@@ -130,6 +130,8 @@ Notes:
 - A device's frame capture is written under a hidden name (`.<sku>-NN-frames-<time>.jsonl.raw`) and only
   its redaction writes `<sku>-NN-frames-<time>.jsonl`, so a run killed outright (SIGKILL, a crash) leaves no
   raw capture under the name you attach; the next start (any mode, same `--out`) redacts what it left.
+  Until then it is git-ignored (`*.jsonl.raw`), as is the pass's `--out gate-X.Y.Z` folder (`gate-*/`),
+  so a `git add -A` in the checkout stages neither.
 - A run with no terminal on stdin (cron, a detached session, stdin redirected), one device or `--all`,
   sends no visible write unless `--unattended` is given; the summary and every report record it
   (`options.unattended`, `options.writes_off`).

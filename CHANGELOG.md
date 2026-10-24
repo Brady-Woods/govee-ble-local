@@ -90,7 +90,9 @@ model, from which the shipped readers are generated).
     beside each device's report and frame capture (`<sku>-<NN>-…` under `--all`), and a console table. Plug
     secrets are scrubbed from every file. The library writes each capture under a hidden `.….jsonl.raw` name
     that only its redaction turns into the capture, so a killed run leaves no raw capture under an attachable
-    name, and the next start redacts any it left. A run with no terminal on stdin, one device or `--all`,
+    name, and the next start redacts any it left; until then `.gitignore` covers it (`*.jsonl.raw`), and the
+    pass's `gate-*/` output folders too, so `git add -A` in the checkout stages neither. A run with no
+    terminal on stdin, one device or `--all`,
     writes nothing visible unless `--unattended` (recorded in the summary and every report). `--library checkout` / `installed` and `--expect-version` pick and
     pin the library under test; `installed` refuses a source tree or an editable install. `TOOL_VERSION`
     is 3.

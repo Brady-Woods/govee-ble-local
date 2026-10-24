@@ -663,6 +663,8 @@ def test_all_and_list_modes_guard_writes_and_plugs_and_restore_after_an_interrup
     listed = tmp_path / "listed"
     listed.mkdir()
     left = listed / ".h6047-01-frames-X.jsonl.raw"   # what a killed run leaves: redacted at the next start
+    ignored = (TOOLS.parent / ".gitignore").read_text().splitlines()   # and until then, never staged
+    assert "*.jsonl.raw" in ignored and "gate-*/" in ignored
     left.write_text(json.dumps({"ts": 1, "addr": "AA:BB:CC:DD:EE:47", "dir": "tx", "plain": "3301",
                                 "wire": "e701ab", "enc": "none"}) + "\n")
     rc = runner.main(["--list", "--out", str(listed)])

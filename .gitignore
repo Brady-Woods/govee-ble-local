@@ -22,6 +22,10 @@ field-test-ref.key
 *.jsonl
 btsnoop*.log
 govee_capture/
+# tools/field_test: the hidden raw capture a killed run leaves (.<sku>-NN-frames-<time>.jsonl.raw: full
+# address, serial, Wi-Fi MAC), and the release-gate pass's --out folders (gate-X.Y.Z/)
+*.jsonl.raw
+gate-*/
 # private local operating guide (personal preferences; not shared)
 CLAUDE.local.md
 # generated API reference (pdoc) — regenerate on demand via tools/gen_docs.sh
